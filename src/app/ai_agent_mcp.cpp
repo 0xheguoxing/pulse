@@ -1,6 +1,7 @@
 // ai_agent_mcp.cpp - Pulse 助手's run_actions for AI apps (ai_mcp_run.h): timers, questions and the run.
 // Split from ai_assistant_agent.cpp; the shared parts are in ai_agent_internal.h.
 #include "ai_agent_internal.h"
+#include "ai_confirm.h"
 
 namespace pulse {
 namespace ai_agent {
@@ -72,6 +73,7 @@ void McpAsk(AppState& s, std::shared_ptr<CtlRun> run, ui::ConfirmDialogSpec spec
     McpLater(s, mcp, 1, [mcp, spec = std::move(spec), done = std::move(done)](AppState& s2) mutable {
         std::weak_ptr<app::ai::McpActionsRun> weak = mcp;
         spec.on_open = [weak](HWND dialog) {
+            app::ai::NoteMcpQuestion(dialog);   // the AI chip brings it forward
             const auto m = weak.lock();
             if (!m) return;
             std::lock_guard lock(m->mu);
@@ -87,6 +89,10 @@ void McpAsk(AppState& s, std::shared_ptr<CtlRun> run, ui::ConfirmDialogSpec spec
             FlashWindowEx(&flash);
         }
         const ui::ConfirmChoice choice = ui::ShowConfirmDialogEx(s2.hwnd, spec, s2.darkMode, s2.accentColor);
+        {
+            std::lock_guard lock(mcp->mu);
+            app::ai::ForgetMcpQuestion(mcp->dialog);
+        }
         if (mcp->cancelled) return -1;
         done(s2, choice);
         return -1;
@@ -111,6 +117,8 @@ std::wstring McpSummary(const CtlRun& run, const std::wstring& last = {}) {
     for (const std::wstring& piece : run.mcp_steps) add(piece);
     if (!run.fail_title.empty()) add(Fill(Text(I::AiMcpSumFailed), L"{title}", run.fail_title));
     add(last);
+    // Every step found it so already: say so instead of an empty line.
+    if (line.empty() && run.mcp_already > 0) line = Text(I::AiMcpSumAlready);
     if (!run.mcp_clicked.empty()) line += L" \u00B7 " + Fill(Text(I::AiMcpSumClicked), L"{button}", run.mcp_clicked);
     else if (run.mcp_by_rule) line += L" \u00B7 " + Text(I::AiMcpSumByRule);
     if (line.size() > 160) line = line.substr(0, 159) + L"\u2026";
@@ -313,12 +321,22 @@ void McpStart(AppState& s, std::shared_ptr<app::ai::McpActionsRun> mcp) {
     // Every step must be allowed before any runs: a call is all or nothing up front.
     size_t file_steps = 0;
     std::string moved_by;   // the first step that may change the folder Pulse shows
+    // Refused before anything ran: the AI page's line says which step and why
+    // (本次运行: 2 步 / 新建文件夹 · 要先打开文件夹，再新建).
+    auto refuse = [&](const char* code, const std::string& message, const std::wstring& step, I why) {
+        ToolOutcome out = ToolOutcome::Fail(code, message);
+        out.summary = Fill(Text(I::AiMcpSumSteps), L"{n}", Num(run->queue.size())) + L"\n" +
+                      (step.empty() ? Text(why) : step + L" \u00B7 " + Text(why));
+        return out;
+    };
     for (size_t i = 0; i < run->queue.size(); ++i) {
         const std::string id = StepAction(run->queue[i]);
         const std::string what = McpWhat(*run, i);
         if (id.empty() || !app::actions::FindAction(id)) {
-            app::ai::FinishMcpRun(*mcp, ToolOutcome::Fail("invalid_args", what + ": no such action (find_actions lists "
-                                                                         "them); nothing of this call was done"));
+            ToolOutcome out = refuse("invalid_args", what + ": no such action (find_actions lists them); nothing of "
+                                                           "this call was done", {}, I::AiMcpWhyUnknown);
+            out.summary = Fill(out.summary, L"{id}", json::Wide(id));
+            app::ai::FinishMcpRun(*mcp, std::move(out));
             return;
         }
         const std::wstring target = id == "nav.open" ? OpenTarget(s, StepArgs(run->queue[i])) : std::wstring();
@@ -338,8 +356,9 @@ void McpStart(AppState& s, std::shared_ptr<app::ai::McpActionsRun> mcp) {
             return;
         }
         if (gate == Gate::Plan && !app::actions::IsFileOp(id)) {
-            app::ai::FinishMcpRun(*mcp, ToolOutcome::Fail("unsupported", what + " is not available to AI apps: the user "
-                                                                        "does it in Pulse. Nothing of this call was done."));
+            app::ai::FinishMcpRun(*mcp, refuse("unsupported", what + " is not available to AI apps: the user does it "
+                                                                   "in Pulse. Nothing of this call was done.",
+                                               StepTitle(s, id), I::AiMcpWhyUserOnly));
             return;
         }
         if (!mcp->allowed[static_cast<size_t>(group)]) {
@@ -352,27 +371,29 @@ void McpStart(AppState& s, std::shared_ptr<app::ai::McpActionsRun> mcp) {
         // earlier step may move it, and it must be a real folder (not Settings).
         if (id == "file.new_folder" || id == "file.new_file") {
             if (!moved_by.empty()) {
-                app::ai::FinishMcpRun(*mcp, ToolOutcome::Fail("invalid_args", what + " makes it in the folder Pulse shows, and " +
-                                                                             moved_by + " changes that folder first: open the "
-                                                                             "folder in one call, then make it in the next. "
-                                                                             "Nothing of this call was done."));
+                app::ai::FinishMcpRun(*mcp, refuse("invalid_args", what + " makes it in the folder Pulse shows, and " +
+                                                                       moved_by + " changes that folder first: open the "
+                                                                       "folder in one call, then make it in the next. "
+                                                                       "Nothing of this call was done.",
+                                                   StepTitle(s, id), I::AiMcpWhyOpenFirst));
                 return;
             }
             const app::Tab* shown = ActiveTab(s);
             if (!shown || shown->current_path.empty() || fs::IsVirtualPath(NormDir(shown->current_path))) {
-                app::ai::FinishMcpRun(*mcp, ToolOutcome::Fail("invalid_args", what + ": the active tab shows no folder (a "
-                                                                             "Pulse page such as Settings), so there is "
-                                                                             "nowhere to make it. Open a folder first "
-                                                                             "(nav.go in a call of its own). Nothing of "
-                                                                             "this call was done."));
+                app::ai::FinishMcpRun(*mcp, refuse("invalid_args", what + ": the active tab shows no folder (a Pulse "
+                                                                       "page such as Settings), so there is nowhere to "
+                                                                       "make it. Open a folder first (nav.go in a call "
+                                                                       "of its own). Nothing of this call was done.",
+                                                   StepTitle(s, id), I::AiMcpWhyNoFolder));
                 return;
             }
         }
         if (moved_by.empty() && McpMovesFolder(id)) moved_by = what;
     }
     if (file_steps > 1) {
-        app::ai::FinishMcpRun(*mcp, ToolOutcome::Fail("invalid_args", "one file step (move, copy, rename, delete, restore) "
-                                                                     "per run_actions call: call again for the next"));
+        app::ai::FinishMcpRun(*mcp, refuse("invalid_args", "one file step (move, copy, rename, delete, restore) per "
+                                                           "run_actions call: call again for the next",
+                                           {}, I::AiMcpWhyOneFile));
         return;
     }
     // The questions, before anything runs: Create steps (unless a rule covers

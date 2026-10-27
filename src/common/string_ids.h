@@ -4293,5 +4293,20 @@
 #define IDS_AI_MCP_SUM_NONE                                                              5500
 #define IDS_AI_SNACK_RUN_DONE                                                            5501
 #define IDS_AI_MCP_SUM_BY_RULE                                                           5502
+#define IDS_AI_OUTCOME_NOT_RUN                                                           5503
+#define IDS_AI_OUTCOME_NOT_UNDONE                                                        5504
+#define IDS_AI_OUTCOME_BUSY                                                              5505
+#define IDS_AI_OUTCOME_CANNOT                                                            5506
+#define IDS_AI_MCP_WHY_UNKNOWN                                                           5507
+#define IDS_AI_MCP_WHY_ONE_FILE                                                          5508
+#define IDS_AI_MCP_WHY_OPEN_FIRST                                                        5509
+#define IDS_AI_MCP_WHY_NO_FOLDER                                                         5510
+#define IDS_AI_MCP_WHY_USER_ONLY                                                         5511
+#define IDS_AI_UNDO_NOTHING                                                              5512
+#define IDS_AI_UNDO_NOT_AI                                                               5513
+#define IDS_AI_UNDO_GONE                                                                 5514
+#define IDS_AI_UNDO_WINDOW_CLOSED                                                        5515
+#define IDS_AI_UNDO_NOT_NEWEST                                                           5516
+#define IDS_AI_MCP_SUM_ALREADY                                                           5517
 
 #endif  // PULSE_STRING_IDS_H

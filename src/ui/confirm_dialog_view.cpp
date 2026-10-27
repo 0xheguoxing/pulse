@@ -416,7 +416,9 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                 if (visual.show_focus && !visual.focus_glide && visual.focus == row_id)
                     painter.DrawFocusRing(row, radius);
             } else if (!more_row) {
-                painter.DrawGlyph(glyph, D2D1::RectF(row.left + Dip(scale, 10.0f), row.top,
+                const std::wstring_view own = i < spec.item_glyphs.size() && !spec.item_glyphs[i].empty()
+                    ? std::wstring_view(spec.item_glyphs[i]) : glyph;
+                painter.DrawGlyph(own, D2D1::RectF(row.left + Dip(scale, 10.0f), row.top,
                                                      row.left + Dip(scale, 30.0f), row.bottom),
                                   theme.text_secondary);
             }

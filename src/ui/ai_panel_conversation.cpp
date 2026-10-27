@@ -927,8 +927,11 @@ void AiPanelView::DrawConversation(Compositor* compositor, const AiPanelViewMode
                 if (visible(r.top, r.bottom)) {
                     card(r, pal.line);
                     const float iy = r.top + 1.0f * s + 9.0f * s;
-                    c.Fill(D2D1::RectF(il + 12.0f * s, iy, il + 36.0f * s, iy + 24.0f * s), 8.0f * s, pal.accent_soft);
-                    c.Icon(b.danger ? AiIcon::Check : AiIcon::Shield, il + 17.0f * s, iy + 5.0f * s, 14.0f * s, pal.ok);
+                    // Declined or stopped: a muted ✕ - nothing was done, so no ✓.
+                    c.Fill(D2D1::RectF(il + 12.0f * s, iy, il + 36.0f * s, iy + 24.0f * s), 8.0f * s,
+                           b.declined ? pal.hover : pal.accent_soft);
+                    c.Icon(b.declined ? AiIcon::Close : b.danger ? AiIcon::Check : AiIcon::Shield, il + 17.0f * s,
+                           iy + 5.0f * s, 14.0f * s, b.declined ? pal.text3 : pal.ok);
                     line(b.title, formats_.body13, il + 46.0f * s, iy, ir - 12.0f * s, 24.0f * s, pal.text2);
                 }
                 y += h;

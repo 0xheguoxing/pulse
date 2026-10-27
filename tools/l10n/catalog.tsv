@@ -4300,3 +4300,18 @@ AiMcpSumSettings	IDS_AI_MCP_SUM_SETTINGS	5499	设置 · {n} 项	Settings · {n}	
 AiMcpSumNone	IDS_AI_MCP_SUM_NONE	5500	没有找到	nothing found	沒有找到
 AiSnackRunDone	IDS_AI_SNACK_RUN_DONE	5501	{client}：{summary}	{client}: {summary}	{client}：{summary}
 AiMcpSumByRule	IDS_AI_MCP_SUM_BY_RULE	5502	按「始终允许」	per “Always allow”	按「始終允許」
+AiOutcomeNotRun	IDS_AI_OUTCOME_NOT_RUN	5503	没有执行	Not run	沒有執行
+AiOutcomeNotUndone	IDS_AI_OUTCOME_NOT_UNDONE	5504	没有撤销	Not undone	沒有復原
+AiOutcomeBusy	IDS_AI_OUTCOME_BUSY	5505	Pulse 正忙	Pulse was busy	Pulse 正忙
+AiOutcomeCannot	IDS_AI_OUTCOME_CANNOT	5506	做不了	Can't do this	做不了
+AiMcpWhyUnknown	IDS_AI_MCP_WHY_UNKNOWN	5507	没有「{id}」这个动作	There's no action “{id}”	沒有「{id}」這個動作
+AiMcpWhyOneFile	IDS_AI_MCP_WHY_ONE_FILE	5508	一次只能做一个文件操作	One file operation per call	一次只能做一個檔案操作
+AiMcpWhyOpenFirst	IDS_AI_MCP_WHY_OPEN_FIRST	5509	要先打开文件夹，再新建	Open the folder first, then create	要先開啟資料夾，再新增
+AiMcpWhyNoFolder	IDS_AI_MCP_WHY_NO_FOLDER	5510	当前显示的不是文件夹	The tab doesn't show a folder	目前顯示的不是資料夾
+AiMcpWhyUserOnly	IDS_AI_MCP_WHY_USER_ONLY	5511	只能你在 Pulse 里自己做	Only you can do this, in Pulse	只能你在 Pulse 裡自己做
+AiUndoNothing	IDS_AI_UNDO_NOTHING	5512	没有可撤销的改动	Nothing to undo	沒有可復原的變更
+AiUndoNotAi	IDS_AI_UNDO_NOT_AI	5513	最新的改动是你自己做的	The newest change is yours	最新的變更是你自己做的
+AiUndoGone	IDS_AI_UNDO_GONE	5514	那次改动已经不能撤销	That change can't be undone any more	那次變更已經不能復原
+AiUndoWindowClosed	IDS_AI_UNDO_WINDOW_CLOSED	5515	那次改动所在的窗口已经关闭	The window it changed is closed	那次變更所在的視窗已經關閉
+AiUndoNotNewest	IDS_AI_UNDO_NOT_NEWEST	5516	之后又有了新的改动	A newer change came after it	之後又有了新的變更
+AiMcpSumAlready	IDS_AI_MCP_SUM_ALREADY	5517	都已经是这样，没有改动	Already so; nothing changed	都已經是這樣，沒有變更

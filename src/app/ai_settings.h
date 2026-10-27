@@ -25,7 +25,6 @@ enum class ClientGrant : uint8_t {
 struct ClientRecord {
     std::wstring name;
     ClientGrant grant = ClientGrant::Ask;
-    uint64_t last_call = 0;   // Unix seconds
 };
 
 struct AllowRule {

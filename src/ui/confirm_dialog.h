@@ -29,6 +29,9 @@ struct ConfirmDialogSpec {
     // are listed (0: items.size()). The card then ends with "and N more".
     size_t items_total = 0;
     std::wstring item_glyph;
+    // Optional: one glyph per listed item (a folder among files); an empty
+    // entry, or a row past the end, uses item_glyph.
+    std::vector<std::wstring> item_glyphs;
     // Optional: the item rows become check boxes, one flag per item (at most
     // kConfirmMaxItemRows items, no items_total). Clicks and Space toggle them
     // and the dialog writes the ticks back here; the confirm and secondary

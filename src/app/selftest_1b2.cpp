@@ -5560,6 +5560,7 @@ void TestActionPolicy() {
     add("settings.set", L"显示文件夹大小").key = "size_bars";
     add("settings.set", L"显示隐藏的文件").key = "show_hidden";
     add("settings.set", L"列表行高").key = "row_height";
+    add("tab.close_others", L"关闭其他标签页", false);
     {
         const auto hits = act::FindActions(views, L"详情面板", 8);
         Check(!hits.empty() && hits.front()->id == "details.toggle", L"find_actions: a title finds its action");
@@ -5578,10 +5579,15 @@ void TestActionPolicy() {
         const json::Value row = act::ActionJson(views[0]);
         Check(row.get_string("id") == "details.toggle" && row.get_string("now") == "\xE5\x85\xB3" && row.find("args"),
               L"find_actions: a row has its id, current value and args");
-        const json::Value off = act::ActionJson(views[2]);
+        const json::Value off = act::ActionJson(views[6]);
         const json::Value* enabled = off.find("enabled");
         Check(enabled && enabled->is_bool() && !enabled->as_bool() && !off.get_string("why").empty(),
               L"find_actions: a row that cannot run says why");
+        // A file step takes its items as arguments: the selection's state is
+        // only what happens without them, not "cannot run".
+        const json::Value file = act::ActionJson(views[2]);
+        Check(!file.find("enabled") && file.get_string("without_args").find("items") != std::string::npos,
+              L"find_actions: a file step without a selection still runs with items");
         const json::Value set = act::ActionJson(views[4]);
         Check(set.get_string("id") == "settings.set" && set.get_string("key") == "show_hidden" &&
                   set.get_string("values") == "true|false",
@@ -5705,6 +5711,23 @@ void TestFilePlans() {
     Check(p.ok && p.count == 2 && !p.files_only, L"file plans: a permanent delete lists its items");
     p = act::PlanFileOp(s, "recycle.restore", json::Value::Object(), nullptr);
     Check(!p.ok, L"file plans: a restore needs the Recycle Bin open");
+    {
+        // Emptying the bin: a plan only - it reads the bin and empties nothing.
+        SHQUERYRBINFO before{};
+        before.cbSize = sizeof(before);
+        const bool read = SUCCEEDED(SHQueryRecycleBinW(nullptr, &before));
+        const act::FilePlan e = act::PlanFileOp(s, "recycle.empty", json::Value::Object(), nullptr);
+        Check(!read || (e.ok && e.op == act::FileOp::EmptyBin && e.count == static_cast<size_t>(before.i64NumItems) &&
+                        e.skip == (before.i64NumItems == 0) && (!e.skip || !e.why.empty())),
+              L"file plans: emptying the bin counts what is in it; an empty bin is nothing to do");
+        SHQUERYRBINFO after{};
+        after.cbSize = sizeof(after);
+        Check(!read || (SUCCEEDED(SHQueryRecycleBinW(nullptr, &after)) && after.i64NumItems == before.i64NumItems),
+              L"file plans: planning to empty the bin empties nothing");
+        Check(act::McpGroupOf("recycle.empty") == act::McpGroup::Files &&
+                  act::AiPolicy("recycle.empty").risk == act::ActionRisk::PermanentDelete,
+              L"file plans: emptying the bin is a permanent delete in the files group");
+    }
 
     for (const wchar_t* f : {L"\\a.txt", L"\\b.txt", L"\\sub\\x.txt", L"\\sub\\y.txt"}) DeleteFileW((root + f).c_str());
     RemoveDirectoryW(sub.c_str());

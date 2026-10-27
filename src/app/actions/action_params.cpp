@@ -217,8 +217,14 @@ json::Value ActionJson(const ActionView& v) {
     }
     if (!v.value.empty()) row.set("now", Utf8Of(v.value));
     if (!v.enabled) {
-        row.set("enabled", false);
-        row.set("why", Utf8Of(v.why));
+        // A file step names its items (and dest) in its arguments: the row's
+        // state (现在只有一栏, nothing selected) only holds without them.
+        if (IsFileOp(v.id) && ArgSpec(v.id).find("item") != std::string_view::npos) {
+            row.set("without_args", Utf8Of(v.why) + " - pass items (and dest) to use it anyway");
+        } else {
+            row.set("enabled", false);
+            row.set("why", Utf8Of(v.why));
+        }
     }
     const Policy p = AiPolicy(v.id);
     row.set("risk", RiskName(p.risk));

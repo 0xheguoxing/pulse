@@ -4285,6 +4285,21 @@ enum class StringId : UINT {
     AiMcpSumNone = IDS_AI_MCP_SUM_NONE,
     AiSnackRunDone = IDS_AI_SNACK_RUN_DONE,
     AiMcpSumByRule = IDS_AI_MCP_SUM_BY_RULE,
+    AiOutcomeNotRun = IDS_AI_OUTCOME_NOT_RUN,
+    AiOutcomeNotUndone = IDS_AI_OUTCOME_NOT_UNDONE,
+    AiOutcomeBusy = IDS_AI_OUTCOME_BUSY,
+    AiOutcomeCannot = IDS_AI_OUTCOME_CANNOT,
+    AiMcpWhyUnknown = IDS_AI_MCP_WHY_UNKNOWN,
+    AiMcpWhyOneFile = IDS_AI_MCP_WHY_ONE_FILE,
+    AiMcpWhyOpenFirst = IDS_AI_MCP_WHY_OPEN_FIRST,
+    AiMcpWhyNoFolder = IDS_AI_MCP_WHY_NO_FOLDER,
+    AiMcpWhyUserOnly = IDS_AI_MCP_WHY_USER_ONLY,
+    AiUndoNothing = IDS_AI_UNDO_NOTHING,
+    AiUndoNotAi = IDS_AI_UNDO_NOT_AI,
+    AiUndoGone = IDS_AI_UNDO_GONE,
+    AiUndoWindowClosed = IDS_AI_UNDO_WINDOW_CLOSED,
+    AiUndoNotNewest = IDS_AI_UNDO_NOT_NEWEST,
+    AiMcpSumAlready = IDS_AI_MCP_SUM_ALREADY,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

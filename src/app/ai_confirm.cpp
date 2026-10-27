@@ -140,15 +140,20 @@ CreateAnswer AskToCreate(HWND host, const ConfirmRequest& request, const std::at
         // name is what the archive will be called unless the folder changes.
         ZipPlan plan;
         ToolOutcome ignored;
-        std::vector<std::wstring> names;
+        std::vector<std::wstring> names, glyphs;
         if (PlanZip(request.args, plan, ignored)) {
             for (const std::wstring& source : plan.sources) {
                 names.push_back(LeafName(source));
+                // A folder in the archive shows as a folder, not the document mark.
+                const DWORD attrs = GetFileAttributesW(source.c_str());
+                glyphs.push_back(attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) ? L"\xE8B7"
+                                                                                                         : L"");
                 if (names.size() >= kListedItems) break;
             }
         }
         q->spec = CreateZipQuestionSpec(request.client, names, plan.sources.size(), LeafName(plan.zip_path),
                                         request.folder);
+        q->spec.item_glyphs = std::move(glyphs);
     } else {
         using I = l10n::StringId;
         q->spec.title = request.client;
@@ -169,18 +174,28 @@ CreateAnswer AskToCreate(HWND host, const ConfirmRequest& request, const std::at
     }
 }
 
+namespace {
+HWND g_mcp_dialog = nullptr;   // UI thread only (McpAsk, the chip)
+}
+
+void NoteMcpQuestion(HWND dialog) { g_mcp_dialog = dialog; }
+
+void ForgetMcpQuestion(HWND dialog) {
+    if (g_mcp_dialog == dialog) g_mcp_dialog = nullptr;
+}
+
 bool BringAiQuestionToFront() {
     std::shared_ptr<Question> q;
     {
         std::lock_guard lock(g_open_mu);
         q = g_open.lock();
     }
-    if (!q) return false;
     HWND dialog = nullptr;
-    {
+    if (q) {
         std::lock_guard lock(q->mu);
         dialog = q->dialog;
     }
+    if (!dialog || !IsWindow(dialog)) dialog = g_mcp_dialog;
     if (!dialog || !IsWindow(dialog)) return false;
     if (IsIconic(GetWindow(dialog, GW_OWNER))) ShowWindow(GetWindow(dialog, GW_OWNER), SW_RESTORE);
     SetForegroundWindow(dialog);

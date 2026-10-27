@@ -4275,6 +4275,21 @@ BEGIN
     IDS_AI_MCP_SUM_NONE "没有找到"
     IDS_AI_SNACK_RUN_DONE "{client}：{summary}"
     IDS_AI_MCP_SUM_BY_RULE "按「始终允许」"
+    IDS_AI_OUTCOME_NOT_RUN "没有执行"
+    IDS_AI_OUTCOME_NOT_UNDONE "没有撤销"
+    IDS_AI_OUTCOME_BUSY "Pulse 正忙"
+    IDS_AI_OUTCOME_CANNOT "做不了"
+    IDS_AI_MCP_WHY_UNKNOWN "没有「{id}」这个动作"
+    IDS_AI_MCP_WHY_ONE_FILE "一次只能做一个文件操作"
+    IDS_AI_MCP_WHY_OPEN_FIRST "要先打开文件夹，再新建"
+    IDS_AI_MCP_WHY_NO_FOLDER "当前显示的不是文件夹"
+    IDS_AI_MCP_WHY_USER_ONLY "只能你在 Pulse 里自己做"
+    IDS_AI_UNDO_NOTHING "没有可撤销的改动"
+    IDS_AI_UNDO_NOT_AI "最新的改动是你自己做的"
+    IDS_AI_UNDO_GONE "那次改动已经不能撤销"
+    IDS_AI_UNDO_WINDOW_CLOSED "那次改动所在的窗口已经关闭"
+    IDS_AI_UNDO_NOT_NEWEST "之后又有了新的改动"
+    IDS_AI_MCP_SUM_ALREADY "都已经是这样，没有改动"
 END
 
 LANGUAGE 0x09, 0x01
@@ -8549,6 +8564,21 @@ BEGIN
     IDS_AI_MCP_SUM_NONE "nothing found"
     IDS_AI_SNACK_RUN_DONE "{client}: {summary}"
     IDS_AI_MCP_SUM_BY_RULE "per “Always allow”"
+    IDS_AI_OUTCOME_NOT_RUN "Not run"
+    IDS_AI_OUTCOME_NOT_UNDONE "Not undone"
+    IDS_AI_OUTCOME_BUSY "Pulse was busy"
+    IDS_AI_OUTCOME_CANNOT "Can't do this"
+    IDS_AI_MCP_WHY_UNKNOWN "There's no action “{id}”"
+    IDS_AI_MCP_WHY_ONE_FILE "One file operation per call"
+    IDS_AI_MCP_WHY_OPEN_FIRST "Open the folder first, then create"
+    IDS_AI_MCP_WHY_NO_FOLDER "The tab doesn't show a folder"
+    IDS_AI_MCP_WHY_USER_ONLY "Only you can do this, in Pulse"
+    IDS_AI_UNDO_NOTHING "Nothing to undo"
+    IDS_AI_UNDO_NOT_AI "The newest change is yours"
+    IDS_AI_UNDO_GONE "That change can't be undone any more"
+    IDS_AI_UNDO_WINDOW_CLOSED "The window it changed is closed"
+    IDS_AI_UNDO_NOT_NEWEST "A newer change came after it"
+    IDS_AI_MCP_SUM_ALREADY "Already so; nothing changed"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

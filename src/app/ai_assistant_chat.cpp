@@ -965,6 +965,7 @@ void AiChatStop(AppState& s) {
             if (st.state == ui::AiStepState::Running) { st.state = ui::AiStepState::Failed; st.progress = -1.0f; }
         if (b.kind == AiBlockKind::Confirm && !b.done && b.id == c.confirm_id) {
             b.done = true;
+            b.declined = true;
             b.title = Text(I::AiAsstStopped);
         }
         if (b.kind == AiBlockKind::Error && !b.done && b.id == c.pause_id) {
@@ -1037,6 +1038,7 @@ void AiChatActivate(AppState& s, ui::AiPanelPart part, int block) {
             break;
         }
         if (b.id == c.confirm_id && c.on_confirm) {
+            b.declined = part == P::ConfirmDeny;   // the done card: a muted ✕ (每张卡的处理函数只改标题)
             auto fn = c.on_confirm;   // the handler clears itself
             fn(s, part == P::ConfirmAccept);
         }

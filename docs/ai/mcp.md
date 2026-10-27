@@ -57,6 +57,7 @@ Pulse 通过 stdio 提供 MCP 服务：`pulse.exe --mcp-stdio`。它只负责转
 | `args` | 参数和取值说明 |
 | `now` | 当前值（有的话） |
 | `enabled` / `why` | 现在能不能用；不能用时给出原因 |
+| `without_args` | 只出现在文件步骤上：不传参数时现在做不了（例如没有选中项目、只有一栏），但传了 `items` / `dest` 仍然可以执行 |
 | `risk` | `read`、`view`、`organize`、`create`、`move`、`system`、`external`、`delete`、`permanent_delete`、`user_only` 之一 |
 | `asks_user` / `shows_plan` / `locked` | Pulse 会先确认 / 会先显示计划卡 / 只能用户自己做 |
 | `shortcut` | 用户自己的快捷键 |

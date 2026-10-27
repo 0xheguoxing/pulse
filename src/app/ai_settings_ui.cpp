@@ -80,6 +80,19 @@ void Outcome(const ai::AiCallEntry& e, ui::AiCallRowView& row) {
     } else if (e.code == "cancelled") {
         row.outcome = Text(I::AiOutcomeCancelled);
         row.tone = T::Declined;
+    } else if (e.code == "invalid_args") {
+        // Refused before anything ran; the line under it says why.
+        row.outcome = Text(I::AiOutcomeNotRun);
+        row.tone = T::Declined;
+    } else if (e.code == "not_ai_operation") {
+        row.outcome = Text(I::AiOutcomeNotUndone);
+        row.tone = T::Declined;
+    } else if (e.code == "unsupported") {
+        row.outcome = Text(I::AiOutcomeCannot);
+        row.tone = T::Declined;
+    } else if (e.code == "busy") {
+        row.outcome = Text(I::AiOutcomeBusy);
+        row.tone = T::Failed;
     } else {
         row.outcome = Fill(Text(I::AiOutcomeFailed), L"{code}", json::Wide(e.code));
         row.tone = T::Failed;
@@ -362,9 +375,9 @@ void StageAiShot(int variant) {
     cache.can_uninstall = true;
     cache.settings = {};
     cache.settings.mcp_enabled = true;
-    cache.settings.clients = {{L"Claude", ai::ClientGrant::Allowed, 0},
-                              {L"Cursor", ai::ClientGrant::Ask, 0},
-                              {L"Old Helper", ai::ClientGrant::Denied, 0}};
+    cache.settings.clients = {{L"Claude", ai::ClientGrant::Allowed},
+                              {L"Cursor", ai::ClientGrant::Ask},
+                              {L"Old Helper", ai::ClientGrant::Denied}};
     cache.settings.allow = {{L"Claude", "pulse.create_zip", L"D:\\Projects\\Reports"}};
     ai::ResetAiStatusForTest();
     ai::SetAiListening(true);

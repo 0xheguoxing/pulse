@@ -295,6 +295,7 @@ struct CtlRun {
     std::vector<std::wstring> mcp_steps;   // 本次运行's summary: what each done step did
     std::wstring mcp_clicked;              // the button the user pressed last (你点了「移动」)
     bool mcp_by_rule = false;              // a 始终允许 rule answered instead of the user
+    int mcp_already = 0;                   // steps that found it so already (nothing to do)
 };
 
 // ai_agent_actions.cpp

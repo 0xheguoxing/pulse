@@ -85,10 +85,8 @@ Settings ParseSettings(std::string_view utf8, bool* malformed) {
             if (s.clients.size() >= kMaxClients) break;
             const std::wstring name = json::Wide(c.get_string("name"));
             if (name.empty() || name.size() > kMaxName) continue;
-            ClientRecord record{name, GrantFrom(c.get_string("grant")), 0};
-            int64_t last = 0;
-            if (const auto* v = c.find("last_call"); v && v->get_int(last, 0)) record.last_call = static_cast<uint64_t>(last);
-            s.clients.push_back(std::move(record));
+            // An older file's "last_call" (never filled in) is dropped on the next save.
+            s.clients.push_back({name, GrantFrom(c.get_string("grant"))});
         }
     }
     if (const auto* allow = root.find("allow"); allow && allow->is_array()) {
@@ -164,7 +162,6 @@ std::string SerializeSettings(const Settings& s) {
         json::Value v = json::Value::Object();
         v.set("name", json::Utf8(c.name));
         v.set("grant", GrantName(c.grant));
-        v.set("last_call", c.last_call);
         clients.push(std::move(v));
     }
     root.set("clients", std::move(clients));

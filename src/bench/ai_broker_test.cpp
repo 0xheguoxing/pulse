@@ -119,14 +119,13 @@ int main() {
         Settings s;
         s.mcp_enabled = true;
         s.log_days = 45;
-        s.clients = {{L"Claude", ClientGrant::Allowed, 1700000000}, {L"Other", ClientGrant::Session, 0},
-                     {L"Bad", ClientGrant::Denied, 0}};
+        s.clients = {{L"Claude", ClientGrant::Allowed}, {L"Other", ClientGrant::Session}, {L"Bad", ClientGrant::Denied}};
         s.allow = {{L"Claude", "pulse.create_zip", L"C:/Work/../Work/"}};
         Check(SaveSettings(s), "SaveSettings writes ai.json");
         bool malformed = true;
         const Settings back = LoadSettings(&malformed);
         Check(!malformed && back.mcp_enabled && back.log_days == 45 && back.clients.size() == 3 &&
-              back.clients[0].grant == ClientGrant::Allowed && back.clients[0].last_call == 1700000000 &&
+              back.clients[0].grant == ClientGrant::Allowed &&
               back.clients[1].grant == ClientGrant::Ask && back.clients[2].grant == ClientGrant::Denied,
               "ai.json round-trips; a session approval is not remembered");
         Check(back.allow.size() == 1 && back.allow[0].folder == L"C:\\Work", "allow folders are normalized");

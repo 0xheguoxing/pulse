@@ -138,6 +138,9 @@ ToolOutcome CreateZip(const AiToolsHost& host, const ToolCall& call) {
     if (!PlanZip(call.args, plan, error)) return error;
     ToolOutcome out = RunZip(plan, call.cancelled);
     if (!out.ok) return out;
+    // The AI page's line under 打包: the archive it made.
+    const size_t slash = plan.zip_path.find_last_of(L"\\/");
+    out.summary = L"\n" + (slash == std::wstring::npos ? plan.zip_path : plan.zip_path.substr(slash + 1));
     if (host.ops) {
         const uint64_t group = NewAiUndoGroup();
         std::wstring label = l10n::Get(l10n::StringId::AiUndoCreateZip).c_str();
@@ -148,6 +151,24 @@ ToolOutcome CreateZip(const AiToolsHost& host, const ToolCall& call) {
         out.data.set("undo", "undo_last moves the archive to the Recycle Bin");
     }
     return out;
+}
+
+// undo_last's line on the AI page (本次运行): what it undid, or why not.
+std::wstring UndoLine(l10n::StringId id) { return L"\n" + std::wstring(l10n::Get(id)); }
+
+ToolOutcome UndoFail(const char* code, const char* message, l10n::StringId why) {
+    ToolOutcome out = ToolOutcome::Fail(code, message);
+    out.summary = UndoLine(why);
+    return out;
+}
+
+// What the ops undo stack calls the change, without its 撤销 / Undo: the
+// notification and the AI page say 撤销了「新建文件夹 …」 themselves.
+std::wstring UndoneName(std::wstring label) {
+    const std::wstring cn = l10n::Cn(L"\u64A4\u9500");
+    if (label.rfind(cn, 0) == 0) return label.substr(cn.size());
+    if (label.rfind(L"Undo ", 0) == 0) return label.substr(5);
+    return label;
 }
 
 // The newest run_actions call, when it is the newest AI change: its steps
@@ -162,8 +183,9 @@ bool UndoRun(const AiToolsHost& host, ToolBroker& broker, const ToolCall& call, 
     }
     if (record.ops_group && host.ops &&
         (!host.ops->CanUndo() || host.ops->TopUndoGroup() != record.ops_group)) {
-        out = ToolOutcome::Fail("not_ai_operation",
-                                "The newest change in Pulse was not made by an AI client; only the user can undo it.");
+        out = UndoFail("not_ai_operation",
+                       "The newest change in Pulse was not made by an AI client; only the user can undo it.",
+                       l10n::StringId::AiUndoNotAi);
         return true;
     }
     bool window = false;
@@ -196,10 +218,28 @@ bool UndoRun(const AiToolsHost& host, ToolBroker& broker, const ToolCall& call, 
     }
     if (record.ops_group) broker.ForgetAiUndoGroup(record.ops_group);
     if (!window) {
-        out = ToolOutcome::Fail("not_ai_operation", "The window that call changed is closed; nothing was undone.");
+        out = UndoFail("not_ai_operation", "The window that call changed is closed; nothing was undone.",
+                       l10n::StringId::AiUndoWindowClosed);
         return true;
     }
+    std::wstring done;   // what that call did: 选中 6 项 → 6 项已移到「2026」
+    {
+        std::lock_guard lock(run->mu);
+        const size_t cut = run->outcome.summary.find(L'\n');
+        if (cut != std::wstring::npos) done = run->outcome.summary.substr(cut + 1);
+    }
+    // Only what was done: 「· 你点了「新建」」 / 「· 按「始终允许」」 was about
+    // the call itself, not about this undo.
+    if (const size_t dot = done.rfind(L" \u00B7 "); dot != std::wstring::npos) {
+        const std::wstring tail = done.substr(dot + 3);
+        const std::wstring clicked = l10n::Get(l10n::StringId::AiMcpSumClicked).c_str();
+        const std::wstring clicked_head = clicked.substr(0, clicked.find(L"{button}"));
+        if ((!clicked_head.empty() && tail.rfind(clicked_head, 0) == 0) ||
+            tail == l10n::Get(l10n::StringId::AiMcpSumByRule).c_str())
+            done.resize(dot);
+    }
     out = ToolOutcome{};
+    out.summary = done.empty() ? UndoLine(l10n::StringId::AiUndoRunLabel) : L"\n" + done;
     out.changed_files = record.ops_group != 0;
     out.data = json::Value::Object();
     // The notification shows it: Claude 撤销了「刚才的一组操作」.
@@ -214,19 +254,21 @@ ToolOutcome UndoLast(const AiToolsHost& host, ToolBroker& broker, const ToolCall
     if (!host.ops) return ToolOutcome::Fail("unsupported", "Undo is not available.");
     const uint64_t top = host.ops->TopUndoGroup();
     if (!host.ops->CanUndo())
-        return ToolOutcome::Fail("not_ai_operation", "There is nothing to undo.");
+        return UndoFail("not_ai_operation", "There is nothing to undo.", l10n::StringId::AiUndoNothing);
     if (!broker.IsAiUndoGroup(top))
-        return ToolOutcome::Fail("not_ai_operation",
-                                 "The newest change in Pulse was not made by an AI client; only the user can undo it.");
-    const std::wstring label = host.ops->UndoLabel();
+        return UndoFail("not_ai_operation",
+                        "The newest change in Pulse was not made by an AI client; only the user can undo it.",
+                        l10n::StringId::AiUndoNotAi);
+    const std::wstring label = UndoneName(host.ops->UndoLabel());
     switch (host.ops->UndoGroup(top)) {
         case ops::OpsManager::GroupUndo::Started: break;
         case ops::OpsManager::GroupUndo::Pending:
             return ToolOutcome::Fail("busy", "That change is still being carried out; try again shortly.", true);
         case ops::OpsManager::GroupUndo::NotOnTop:
-            return ToolOutcome::Fail("not_ai_operation", "Another change became the newest one; nothing was undone.");
+            return UndoFail("not_ai_operation", "Another change became the newest one; nothing was undone.",
+                            l10n::StringId::AiUndoNotNewest);
         case ops::OpsManager::GroupUndo::Unavailable:
-            return ToolOutcome::Fail("not_ai_operation", "That change can no longer be undone.");
+            return UndoFail("not_ai_operation", "That change can no longer be undone.", l10n::StringId::AiUndoGone);
     }
     broker.ForgetAiUndoGroup(top);
     {
@@ -236,6 +278,7 @@ ToolOutcome UndoLast(const AiToolsHost& host, ToolBroker& broker, const ToolCall
     }
     ToolOutcome out;
     out.changed_files = true;
+    if (!label.empty()) out.summary = L"\n" + label;
     out.data = json::Value::Object();
     out.data.set("undone", json::Utf8(label));
     out.data.set("note", "Pulse carries the undo out in the background, like the user's own undo.");

@@ -305,7 +305,7 @@ void SetAiClientGrant(const std::wstring& client, ClientGrant grant) {
                 record.grant = grant;
                 return;
             }
-        settings.clients.push_back({client, grant, 0});
+        settings.clients.push_back({client, grant});
     });
     if (grant == ClientGrant::Denied) DisconnectAiClient(client);
 }

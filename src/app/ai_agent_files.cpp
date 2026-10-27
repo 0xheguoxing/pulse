@@ -599,6 +599,7 @@ void CtlNext(AppState& s, std::shared_ptr<CtlRun> run) {
         run->report.push(std::move(rep));
         ++run->index;
         if (st.ok) ++run->ok;
+        if (run->mcp && st.ok && st.skip) ++run->mcp_already;
         if (run->mcp && st.ok && !st.skip && !st.quiet) {
             const std::wstring title = st.title.empty() ? Display(what) : st.title;
             run->mcp_steps.push_back(st.arg.empty() ? title : title + L" " + st.arg);

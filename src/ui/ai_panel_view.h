@@ -456,6 +456,7 @@ struct AiBlockView {
     std::vector<AiTagView> tags;
     std::wstring deny, accept;        // Confirm buttons; Result: undo, show
     bool done = false;                // Confirm decided; Result undone
+    bool declined = false;            // Confirm: the user said no (or it stopped): a muted ✕, not ✓
     // Error: tone, tile icon, the service's own words (mono box) and buttons.
     AiErrTone tone = AiErrTone::Err;
     AiIcon icon = AiIcon::AlertCircle;

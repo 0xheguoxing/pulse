@@ -23,8 +23,14 @@ ConnectAnswer AskToConnect(HWND host, const std::wstring& client, const std::ato
 CreateAnswer AskToCreate(HWND host, const ConfirmRequest& request, const std::atomic<bool>& cancelled,
                          const std::atomic<bool>& stopping, DWORD timeout_ms);
 
-// UI thread (the status-bar chip): brings the open question's dialog forward.
+// UI thread (the status-bar chip): brings the open question's dialog forward:
+// a connect / create question, else the one an MCP run_actions call has open.
 // False when none is open.
 bool BringAiQuestionToFront();
+
+// UI thread: the dialog an MCP run_actions call opened (ai_agent_mcp.cpp
+// McpAsk), and nullptr when that dialog closes.
+void NoteMcpQuestion(HWND dialog);
+void ForgetMcpQuestion(HWND dialog);
 
 } // namespace pulse::app::ai
