@@ -52,7 +52,6 @@ jobs:
           name: installer-${{ matrix.channel }}
           path: |
             dist/PulseSetup-*.exe
-            dist/Pulse-*-portable-win-x64.zip
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:

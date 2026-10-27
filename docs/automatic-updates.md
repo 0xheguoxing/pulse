@@ -37,9 +37,9 @@ GitHub Actions 的 **Build and publish Pulse** 工作流会构建、测试并打
 | Windows 10 / Windows 11 x64 | `PulseSetup-版本.exe` | `update-manifest.json` |
 | Windows 8.1 x64 | `PulseSetup-版本-win81.exe` | `update-manifest-win81.json` |
 
-Windows 10 / 11 x64 免安装版 `Pulse-版本-portable-win-x64.zip` 由普通版构建一并打包，与安装包使用同一份通过测试的正式构建；Windows 8.1 版不提供免安装包。
+从 1.0.58 起不再发布免安装版 ZIP，两种版本都只提供安装包。已有的免安装副本可以继续使用；要继续获得更新，请改用安装包安装。
 
-增强包不进安装包和 ZIP。每种版本的构建各自生成内容搜索增强包（`content-<渠道>-*.lzms`）和 AI 增强包（`ai-<渠道>-Pulse.AI.exe.lzms`），由 `scripts/check_content_pack.ps1`（AI 增强包用 `-Key ai`）对照编进 `pulse.exe` 的目录核对大小和 SHA-256，发布时两种版本的增强包一起上传并逐个核对。
+增强包不进安装包。每种版本的构建各自生成内容搜索增强包（`content-<渠道>-*.lzms`）和 AI 增强包（`ai-<渠道>-Pulse.AI.exe.lzms`），由 `scripts/check_content_pack.ps1`（AI 增强包用 `-Key ai`）对照编进 `pulse.exe` 的目录核对大小和 SHA-256，发布时两种版本的增强包一起上传并逐个核对。
 
 Release 正文自动提供上述系统说明与下载入口。不要重复覆盖已经公开发布的版本；修复发布问题时递增版本号。
 
