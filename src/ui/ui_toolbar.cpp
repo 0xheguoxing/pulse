@@ -675,7 +675,9 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
     // The network page and a server's share list put 连接服务器 in this slot
     // (same width: the label is no wider than 新建文件夹 in any language).
     const bool connect=vm.pane.connect_server;
-    const bool primary_enabled=vm.pane.can_create || connect;
+    // A phone folder takes 新建文件夹 but no text document (CreateDeviceFolder).
+    const bool text_primary=new_primary_==1 && new_last_text_;
+    const bool primary_enabled=connect || (text_primary ? vm.pane.can_create : vm.pane.can_create_folder);
     const std::wstring label=connect ? pulse::l10n::Get(pulse::l10n::StringId::ConnectServer) : NewButtonLabel();
     const std::wstring primary_glyph=connect ? std::wstring(L"\xE968") : std::wstring(NewButtonGlyph());
     const D2D1_RECT_F newArrow=NewArrowSegment(layout.create,compact);

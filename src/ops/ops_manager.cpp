@@ -2870,6 +2870,8 @@ void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
     const bool dest_shell = IsShellItemId(req.dest_dir);
     HRESULT hr = req.dest_dir.empty() ? E_INVALIDARG : OpenShellItem(req.dest_dir, dest);
     if (FAILED(hr)) {
+        diagnostics::runtime::Event("shell_transfer_failed", {{"stage", 1},
+            {"hresult", static_cast<uint32_t>(hr)}, {"dest_shell", dest_shell}});
         finish(OpPhase::Failed, Win32Message(static_cast<DWORD>(HRESULT_CODE(hr))));
         return;
     }
@@ -2915,6 +2917,8 @@ void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
         ShellItemRef item;
         hr = OpenShellItem(source, item);
         if (FAILED(hr)) {
+            diagnostics::runtime::Event("shell_transfer_failed", {{"stage", 2},
+                {"hresult", static_cast<uint32_t>(hr)}, {"dest_shell", dest_shell}});
             finish(OpPhase::Failed, Win32Message(static_cast<DWORD>(HRESULT_CODE(hr))) + L" | " +
                                         (IsShellItemId(source) ? std::wstring() : source));
             return;
@@ -2933,6 +2937,12 @@ void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
         }
         planned.push_back(std::move(p));
     }
+    diagnostics::runtime::Event("shell_transfer_plan", {{"items", planned.size()},
+        {"self_copy", static_cast<uint64_t>(std::count_if(planned.begin(), planned.end(),
+                                                         [](const Planned& p) { return p.self_copy; }))},
+        {"conflicts", static_cast<uint64_t>(std::count_if(planned.begin(), planned.end(),
+                                                         [](const Planned& p) { return p.conflict; }))},
+        {"dest_shell", dest_shell}});
     if (stop_requested()) {
         finish(OpPhase::Failed, {});
         return;
@@ -3076,9 +3086,16 @@ void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
             names.push_back(p.keep_both ? p.new_name : std::wstring());
         }
         if (sources.empty()) continue;
-        const uint32_t id = client.ShellTransfer(op, pass == 1 ? ipc::STF_RENAME_ON_COLLISION : 0u,
-            ShellParsingName(req.dest_dir), sources, names,
-            [this](uint32_t request) { RegisterShellRequest(request); });
+        // A phone (WPD) refuses a copy into the item's own folder with
+        // FOF_RENAMEONCOLLISION (ERROR_NOT_SUPPORTED); Explorer pastes there
+        // through the folder's drop target, which names it "a - 副本".
+        const bool shell_paste = pass == 1 && dest_shell;
+        if (shell_paste) sources.insert(sources.begin(), ShellParsingName(req.dest_dir));
+        const auto accepted = [this](uint32_t request) { RegisterShellRequest(request); };
+        const uint32_t id = shell_paste
+            ? client.ShellVerb(sources, 0, true, L"drop:copy", accepted)
+            : client.ShellTransfer(op, pass == 1 ? ipc::STF_RENAME_ON_COLLISION : 0u,
+                                   ShellParsingName(req.dest_dir), sources, names, accepted);
         if (id == 0) {
             failure = l10n::Get(l10n::StringId::TheFileOperationServiceIsNotRunning).c_str();
             break;
@@ -3094,7 +3111,7 @@ void OpsManager::RunShellTransfer(const OpRequest& req, uint64_t task_id) {
         }
         diagnostics::runtime::Event("file_operation_shell_transfer", {{"task", task_id},
             {"request", id}, {"hresult", result}, {"cancelled", request_cancelled},
-            {"items", sources.size()}});
+            {"items", sources.size()}, {"pass", static_cast<uint64_t>(pass)}, {"drop", shell_paste}});
         if (request_cancelled) cancelled = true;
         else if (FAILED(static_cast<HRESULT>(result)))
             failure = error.empty() ? l10n::Get(l10n::StringId::OpFailed).c_str() : error;

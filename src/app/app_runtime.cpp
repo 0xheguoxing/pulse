@@ -2671,7 +2671,13 @@ ui::WindowViewModel BuildVm(AppState& s, bool probe_details) {
         s.pane->focused, s.maximized, s.darkMode, &s.places, s.sidebarCollapsedMask,
         SidebarHiddenMaskWithBar(s), s.starredExpanded, &s.sidebarOrder,
         s.sidebarQuickAccessHiddenMask);
-    if (const app::Tab* tab = ActiveTab(s)) FillWallHint(*tab, vm.pane);  // photo wall suggestion
+    if (const app::Tab* tab = ActiveTab(s)) {
+        FillWallHint(*tab, vm.pane);  // photo wall suggestion
+        // A writable phone folder takes 新建文件夹 (CreateDeviceFolder), as its
+        // background menu and Ctrl+Shift+N already do; the toolbar follows.
+        if (IsDeviceTab(tab) && app::DeviceRegistry::Instance().FolderWritable(tab->current_path))
+            vm.pane.can_create_folder = true;
+    }
     app::FillWindowTabStrip(vm, s.window_tabs);
     // Rail: devices found on this network that no window has shown yet.
     if (const int badge = NetworkRailBadge(s); badge > 0) {

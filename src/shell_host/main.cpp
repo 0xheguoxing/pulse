@@ -652,13 +652,18 @@ HRESULT DropDataInto(IDataObject* data, const std::wstring& dir, DWORD wanted) {
     if (SUCCEEDED(hr) && drop) {
         POINTL pt{ 0, 0 };
         DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
-        hr = drop->DragEnter(data, MK_LBUTTON, pt, &effect);
+        // A copy is asked for as Ctrl+drag: items dropped on their own
+        // folder are then copied as "a - 副本" (Explorer's paste there), not
+        // refused as a move onto themselves.
+        const DWORD keys = wanted == DROPEFFECT_MOVE ? MK_LBUTTON | MK_SHIFT
+                         : wanted == DROPEFFECT_COPY ? MK_LBUTTON | MK_CONTROL : MK_LBUTTON;
+        hr = drop->DragEnter(data, keys, pt, &effect);
         // A target that cannot move (some phones) still takes a copy: the
         // source stays, nothing is lost.
         if (SUCCEEDED(hr) && !(effect & wanted)) wanted = effect & DROPEFFECT_COPY;
         if (SUCCEEDED(hr) && wanted) {
             effect = wanted;
-            hr = drop->Drop(data, wanted == DROPEFFECT_MOVE ? MK_LBUTTON | MK_SHIFT : MK_LBUTTON,
+            hr = drop->Drop(data, wanted == DROPEFFECT_MOVE ? MK_LBUTTON | MK_SHIFT : MK_LBUTTON | MK_CONTROL,
                             pt, &effect);
         } else {
             drop->DragLeave();

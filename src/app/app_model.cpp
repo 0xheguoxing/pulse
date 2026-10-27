@@ -2042,6 +2042,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.is_file_system = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
     out.cloud_status_column = out.is_file_system && IsUnderCloudFilesRoot(tab->current_path);
     out.can_create = out.is_file_system && !tab->net_readonly && !IsUncServerRoot(tab->current_path);
+    out.can_create_folder = out.can_create;  // the app adds a writable phone folder
     // The network page and a server's share list: 连接服务器 takes 新建's slot.
     out.connect_server = tab->current_path == L"pulse:networks" || IsUncServerRoot(tab->current_path);
     out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes" ||

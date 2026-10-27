@@ -304,6 +304,7 @@ struct PaneViewModel {
     bool can_go_forward = false;
     bool can_go_up = false;
     bool can_create = false;
+    bool can_create_folder = false;  // 新建文件夹: can_create, or a writable phone folder (the app sets it)
     bool connect_server = false;  // the New button reads 连接服务器 (network page, \\server)
     bool is_file_system = false;
     bool curated_order = false;

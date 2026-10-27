@@ -14,6 +14,7 @@
 #include "../common/text_format.h"
 #include "../common/path_utils.h"
 #include "../common/diagnostics_exporter.h"
+#include "../common/runtime_log.h"
 #include "snapshot_patch.h"
 #include "session.h"
 #include "context_menu.h"
@@ -354,13 +355,21 @@ void PasteIntoCurrent(AppState& s) {
         std::vector<std::wstring> shell_ids;
         bool shell_cut = false;
         if (ops::ReadClipboard(files)) {
-            if (SubmitDeviceTransfer(s, files.paths, tab->current_path, files.cut)) {
+            const bool submitted = SubmitDeviceTransfer(s, files.paths, tab->current_path, files.cut);
+            pulse::diagnostics::runtime::Event("device_paste", {{"route", 1}, {"submitted", submitted},
+                {"items", files.paths.size()}});
+            if (submitted) {
                 if (files.cut) TrackCutClipboard(s, files);  // as a local paste: the cut ends with the move
                 return;
             }
         } else if (ops::ReadClipboardShellItems(shell_ids, shell_cut)) {
-            if (SubmitDeviceTransfer(s, std::move(shell_ids), tab->current_path, shell_cut)) return;
+            const size_t count = shell_ids.size();
+            const bool submitted = SubmitDeviceTransfer(s, std::move(shell_ids), tab->current_path, shell_cut);
+            pulse::diagnostics::runtime::Event("device_paste", {{"route", 2}, {"submitted", submitted},
+                {"items", count}});
+            if (submitted) return;
         }
+        pulse::diagnostics::runtime::Event("device_paste", {{"route", 3}});
         // Anything else (a zip's files, an attachment): the shell's own paste.
         const std::wstring folder_id = devices.FolderShellId(tab->current_path);
         if (!folder_id.empty()) RunDeviceVerb(s, {folder_id}, L"paste", true);
@@ -463,7 +472,13 @@ void DeleteSelected(AppState& s, bool permanent) {
         UnpinSelectedNetworks(s);
         return;
     }
-    if (!caps.del) return;
+    if (!caps.del) {
+        // A phone's rows the shell grants neither delete nor rename.
+        if (caps.kind == app::SelectionKind::Device)
+            pulse::diagnostics::runtime::Event("device_delete_blocked", {{"read_only", 1},
+                {"selected", static_cast<uint64_t>(tab->SelectedCount())}});
+        return;
+    }
     if (caps.kind == app::SelectionKind::Device) {
         DeleteDeviceSelection(s, *tab);
         return;
@@ -518,14 +533,21 @@ static void MarkLeavingRows(AppState& s, const std::vector<std::wstring>& paths,
 // delete?", this location has no Recycle Bin), then Explorer's engine deletes.
 static void DeleteDeviceSelection(AppState& s, const app::Tab& tab) {
     std::vector<std::wstring> ids = SelectedShellIds(tab);
-    if (ids.empty()) return;
+    if (ids.empty()) {
+        // A selected row without its shell id (not listed by the shell).
+        pulse::diagnostics::runtime::Event("device_delete_blocked", {{"missing_id", 1},
+            {"selected", static_cast<uint64_t>(tab.SelectedCount())}});
+        return;
+    }
     const std::vector<std::wstring> rows = SelectedFullPaths(tab);
     std::vector<std::wstring> shown;
     shown.reserve(rows.size());
     for (const auto& path : rows) shown.push_back(DeviceFriendlyPath(path));
-    if (ConfirmPermanentDelete(s, shown, true, false, ui::PermanentDeleteInfo::NoBinReason::Location) !=
-        ui::PermanentDeleteChoice::Delete)
-        return;
+    const ui::PermanentDeleteChoice choice =
+        ConfirmPermanentDelete(s, shown, true, false, ui::PermanentDeleteInfo::NoBinReason::Location);
+    pulse::diagnostics::runtime::Event("device_delete_confirm", {{"choice", static_cast<uint64_t>(choice)},
+        {"selected", ids.size()}});
+    if (choice != ui::PermanentDeleteChoice::Delete) return;
     ops::OpRequest req;
     req.type = ops::OpType::RealDelete;
     req.sources = std::move(ids);

@@ -3213,8 +3213,12 @@ void ShowNewDropdown(AppState& s) {
     // Prototype: Pulse's types, 快捷方式…, then what the system 新建 menu
     // offers (with the file type icons Explorer shows), then 自定义工具栏.
     const auto templates = NewTemplatesForMenu(s);
-    const bool can_create = CanCreateHere(ActiveTab(s));
-    for (auto& item : items) item.enabled = can_create;
+    const app::Tab* active = ActiveTab(s);
+    const bool can_create = CanCreateHere(active);
+    // A writable phone folder takes new folders only, not files (CreateDeviceFolder).
+    const bool phone_folder = !can_create && IsDeviceTab(active) &&
+        app::DeviceRegistry::Instance().FolderWritable(active->current_path);
+    for (auto& item : items) item.enabled = can_create || (phone_folder && item.command == app::CmdNewFolder);
     AppendShellNewRows(items, templates, can_create);
     items.back().separator_after = true;
     // 「新建」按钮的主操作 (was a section of the old customize sheet).
