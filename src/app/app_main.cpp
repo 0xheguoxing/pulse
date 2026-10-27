@@ -289,6 +289,39 @@ constexpr UINT kGraphicsRetryMs = 500;
 // Frames the pump paints (WM_FRAME_PUMP) are not user activity: counting
 // them kept kTimerUi at the display rate for as long as anything moved.
 static thread_local bool t_pump_paint = false;
+// One frame at a time on a UI thread. Render lays the hosted edits out again
+// after Present, and on Windows 10 an IME (Sogou Pinyin) answered that move
+// with a COM call whose modal loop dispatched the next WM_FRAME_PUMP or
+// WM_PAINT, so a frame started inside the frame still running. Each nested
+// frame holds WndProcImpl's whole stack frame, and 47 of them overflowed the
+// stack (crash report 2026-10-25). A frame wanted while one runs is put off;
+// the outer frame repaints that window once it ends.
+static thread_local int t_render_depth = 0;
+static thread_local std::vector<HWND> t_deferred_frames;
+static void DeferFrame(HWND hwnd) {
+    if (hwnd && std::find(t_deferred_frames.begin(), t_deferred_frames.end(), hwnd) == t_deferred_frames.end())
+        t_deferred_frames.push_back(hwnd);
+}
+class FrameScope {
+public:
+    FrameScope() { ++t_render_depth; }
+    ~FrameScope() {
+        if (--t_render_depth != 0) return;
+        std::vector<HWND> windows;
+        windows.swap(t_deferred_frames);
+        for (HWND hwnd : windows)
+            if (IsWindow(hwnd)) InvalidateRect(hwnd, nullptr, FALSE);
+    }
+    FrameScope(const FrameScope&) = delete;
+    FrameScope& operator=(const FrameScope&) = delete;
+};
+static bool TestNestedFrames() {
+    static const bool on = [] {
+        wchar_t v[4]{};
+        return GetEnvironmentVariableW(L"PULSE_TEST_NESTED_FRAME", v, ARRAYSIZE(v)) == 1 && v[0] == L'1';
+    }();
+    return on;
+}
 // Keeps frames coming while anything moves: the display rate, or about 30 fps
 // when only decorative motion runs. Render and the UI timer both decide here.
 static void ArmMotionFrames(AppState& s, bool app_motion) {
@@ -461,6 +494,11 @@ static bool AppMotion(const AppState& s) {
 }
 
 void Render(AppState& s) {
+    if (t_render_depth > 0) {
+        DeferFrame(s.hwnd);
+        return;
+    }
+    FrameScope frame_scope;
     pulse::app::startup_trace::Mark("frame_begin");
     auto t0 = std::chrono::steady_clock::now();
 
@@ -574,6 +612,10 @@ void Render(AppState& s) {
     if (s.filterEditing) LayoutFilterEditor(s);
     AiAssistantLayout(s);
     SyncShellWindows(s);
+    // Test instances: PULSE_TEST_NESTED_FRAME=1 paints again from inside the
+    // frame, the way an IME's modal loop did (stack-overflow regression check).
+    if (s.isolatedTest && TestNestedFrames() && s.hwnd)
+        RedrawWindow(s.hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
 
     if (s.shot.active && !s.timing.first_frame_recorded) {
         s.timing.first_frame_ms = std::chrono::duration<double, std::milli>(
@@ -2123,6 +2165,10 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_FRAME_PUMP: {
         if (!s) return 0;
         s->framePump.FrameConsumed();
+        if (t_render_depth > 0) {  // dispatched by a modal loop inside a frame
+            DeferFrame(hwnd);
+            return 0;
+        }
         if (IsWindowVisible(hwnd) && !IsIconic(hwnd) && WindowCloaked(hwnd)) {
             s->framePump.Disarm();
             SetTimer(hwnd, kTimerCloakPoll, kCloakPollMs, nullptr);
