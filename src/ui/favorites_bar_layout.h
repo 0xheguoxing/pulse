@@ -18,7 +18,11 @@ struct FavoritesBarLayout {
     D2D1_RECT_F more{};              // » (empty when everything fits)
     int first_hidden = -1;           // first favorite in », -1 none
     bool icon_only = false;
+    D2D1_RECT_F dock{};              // 放回侧边栏 at the right end (empty without one)
 };
+
+// The 放回侧边栏 button: 28 square, its own 6 DIP from the favorites.
+inline constexpr float kFavoritesBarDockDip = 28.0f;
 
 // Prototype .fav: 28 high, padding 0 8 0 7, a 16 icon, gap 6, at most 168
 // wide (30 when icons only); the row has padding 0 8 4 10.
@@ -32,17 +36,23 @@ inline constexpr float kFavoritesBarSeparatorDip = 9.0f;
 
 // `band`: the row, full width of the toolbar. `text_widths`: each label's
 // width in pixels (ignored when icon_only). `separators`: which entries are
-// separators (empty: none).
+// separators (empty: none). `dock`: keep the 放回侧边栏 button at the right end.
 inline FavoritesBarLayout MakeFavoritesBarLayout(const D2D1_RECT_F& band, float scale,
                                                  const std::vector<float>& text_widths, bool icon_only,
-                                                 const std::vector<bool>& separators = {}) {
+                                                 const std::vector<bool>& separators = {}, bool dock = false) {
     FavoritesBarLayout out;
     out.icon_only = icon_only;
     out.items.assign(text_widths.size(), D2D1_RECT_F{});
-    if (text_widths.empty()) return out;
     const float h = 28.0f * scale, gap = 2.0f * scale, more_w = 28.0f * scale;
     const float top = std::round(band.top + std::max(0.0f, (band.bottom - band.top - 4.0f * scale - h) * 0.5f));
-    const float left = band.left + 10.0f * scale, right = band.right - 8.0f * scale;
+    const float left = band.left + 10.0f * scale;
+    float right = band.right - 8.0f * scale;
+    if (dock) {
+        const float d = kFavoritesBarDockDip * scale;
+        out.dock = D2D1::RectF(std::round(right - d), top, std::round(right), top + h);
+        right -= d + 6.0f * scale;
+    }
+    if (text_widths.empty()) return out;
     const auto width = [&](size_t i) {
         return i < separators.size() && separators[i] ? kFavoritesBarSeparatorDip * scale
                                                       : FavoritesBarItemWidth(text_widths[i], scale, icon_only);

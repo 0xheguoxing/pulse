@@ -1335,6 +1335,13 @@ void ClearTextWidthCache() {
         return D2D1::RectF(right - size, top, right, top + size);
     }
 
+    // 收藏夹 root: 改成横向收藏栏, just left of the chevron.
+    D2D1_RECT_F SidebarBarSwitchRect(const D2D1_RECT_F& row, float scale) {
+        const D2D1_RECT_F expand = SidebarExpandRect(row, scale);
+        const float right = expand.left - 2.0f * scale;
+        return D2D1::RectF(right - (expand.right - expand.left), expand.top, right, expand.bottom);
+    }
+
     bool PathIsSelfOrChild(const std::wstring& root_in, const std::wstring& path_in) {
         // Sidebar items hold normalized paths (\\?\C:\..., \\?\UNC\...), while the
         // pane path is display text without that prefix; compare both as display

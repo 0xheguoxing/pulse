@@ -837,6 +837,14 @@ bool TestToolbarApps() {
             folded.first_hidden == 2 && folded.items[2].right <= folded.items[2].left &&
             folded.more.left >= folded.items[1].right && folded.more.right <= 516 &&
             icons.items[1].right - icons.items[1].left == 30);
+        // 放回侧边栏 keeps the right end; the favorites and » stop 6 DIP short of it.
+        const D2D1_RECT_F narrow = D2D1::RectF(224, 134, 524, 168);
+        const auto docked = pulse::ui::MakeFavoritesBarLayout(narrow, 1, {80, 80, 80, 80}, false, {}, true);
+        const auto empty = pulse::ui::MakeFavoritesBarLayout(narrow, 1, {}, false, {}, true);
+        ok &= Report("favorites bar: the dock button sits at the right end, even with nothing starred",
+            docked.dock.left == 488 && docked.dock.right == 516 && docked.first_hidden >= 0 &&
+            docked.more.right <= 482 && empty.dock.left == 488 && empty.dock.bottom - empty.dock.top == 28 &&
+            folded.dock.right <= folded.dock.left);
     }
     // The user's separators (自定义工具栏) open a 9 DIP gap before their pin.
     {

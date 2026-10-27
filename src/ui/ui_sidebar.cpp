@@ -3,6 +3,7 @@
 #include "ui_renderer_internal.h"
 #include "../common/localization.h"
 #include "tab_shape.h"
+#include "command_icons.h"
 #include "bloom_accent_picker.h"
 #include "typography.h"
 #include "../app/resource.h"
@@ -785,7 +786,8 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         state.selected = isSelectedSlot(slot);
         state.hovered = IsHovered(vm, HitTestResult::SidebarItem, slot.run) ||
             IsHovered(vm, HitTestResult::SidebarItemAction, slot.run) ||
-            IsHovered(vm, HitTestResult::SidebarItemExpand, slot.run);
+            IsHovered(vm, HitTestResult::SidebarItemExpand, slot.run) ||
+            IsHovered(vm, HitTestResult::SidebarBarSwitch, slot.run);
         // Rows of the section being reordered stay lit like its header, and the
         // dragged pin row reads as held.
         if (vm.sidebar_group_drag_id >= 0 &&
@@ -933,7 +935,8 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     (slot.rc.right - unpin_rc.left) - 6.0f * scale_);
             else if (item.expandable)
                 row.trailing_reserve = (std::max)(0.0f,
-                    (slot.rc.right - expand_rc.left) - 4.0f * scale_);
+                    (slot.rc.right - (item.bar_switch ? SidebarBarSwitchRect(slot.rc, scale_) : expand_rc).left) -
+                    4.0f * scale_);
             painter_.DrawSidebarItem(row);
             if (row_shell_icon) {
                 dc->DrawBitmap(row_shell_icon, &row_icon_rc, 1.0f,
@@ -981,6 +984,19 @@ void MainRenderer::DrawSidebar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     unpin_rc.right - unpin_rc.left, unpin_rc.bottom - unpin_rc.top,
                              kIconPinFilled, L"P", unpin_hot ? theme.accent_hover : theme.accent, 0.72f);
             } else if (item.expandable) {
+                if (item.bar_switch && row_hot) {
+                    // 收藏夹 root: 改成横向收藏栏 (the same switch as Ctrl+Shift+B).
+                    const D2D1_RECT_F sw = SidebarBarSwitchRect(slot.rc, scale_);
+                    const bool switch_hot = IsHovered(vm, HitTestResult::SidebarBarSwitch, slot.run);
+                    if (switch_hot) {
+                        MakeBrush(dc, theme.fill_hover, brFillHover_);
+                        FillRoundedRect(dc, brFillHover_.get(), sw.left, sw.top, sw.right - sw.left,
+                                        sw.bottom - sw.top, 4.0f * scale_);
+                    }
+                    DrawIconText(sw.left, sw.top, sw.right - sw.left, sw.bottom - sw.top,
+                                 command_icons::kGlyphTopBar, L"", switch_hot ? theme.accent : theme.text_secondary,
+                                 0.68f);
+                }
                 const bool expand_hot = IsHovered(vm, HitTestResult::SidebarItemExpand, slot.run);
                 if (expand_hot) {
                     MakeBrush(dc, theme.fill_hover, brFillHover_);

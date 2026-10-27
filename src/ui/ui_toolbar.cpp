@@ -434,10 +434,67 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
         addrState.focused = vm.address_editing && !vm.address_searching;
         addrState.hovered = !vm.address_editing && IsHovered(vm, HitTestResult::AddressBar);
         painter_.DrawTextFieldFrame(addrRc, addrState);
+        // A long path scrolled toward its root eases there, and back to its
+        // end 1.5 s after the pointer leaves (SettleBreadcrumbScroll).
+        const bool addr_hot = IsHovered(vm, HitTestResult::AddressBar) ||
+                              IsHovered(vm, HitTestResult::BreadcrumbSegment);
+        if (addr_hot) crumb_hover_left_ = 0;
+        else if (crumb_scroll_ > 0.0f && crumb_hover_left_ == 0) crumb_hover_left_ = GetTickCount64();
+        if (std::fabs(crumb_scroll_ - crumb_scroll_shown_) > 0.25f) {
+            const float dt = crumb_scroll_tick_ && motion_now_ > crumb_scroll_tick_
+                ? (std::min)(50.0f, static_cast<float>(motion_now_ - crumb_scroll_tick_))
+                : (crumb_scroll_tick_ ? 0.0f : 16.0f);
+            crumb_scroll_shown_ += (crumb_scroll_ - crumb_scroll_shown_) * (1.0f - std::exp(-dt / 70.0f));
+            if (std::fabs(crumb_scroll_ - crumb_scroll_shown_) <= 0.25f) crumb_scroll_shown_ = crumb_scroll_;
+            crumb_scroll_tick_ = motion_now_;
+            toolbar_moving = true;
+        } else {
+            crumb_scroll_shown_ = crumb_scroll_;
+            crumb_scroll_tick_ = 0;
+        }
         dc->PushAxisAlignedClip(addrRc, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         if (!vm.address_editing || vm.address_searching) {
             std::vector<BreadcrumbPlaced> placed;
-            BreadcrumbLayout(vm.pane, rect.right, placed);
+            BreadcrumbStrip strip;
+            BreadcrumbLayout(vm.pane, rect.right, placed, &strip);
+            // The strip shows through the bar; an end with more path past it fades.
+            struct StripScope {
+                ID2D1DeviceContext* dc;
+                bool clip = false, layer = false;
+                ~StripScope() {
+                    if (layer) dc->PopLayer();
+                    if (clip) dc->PopAxisAlignedClip();
+                }
+            } strip_scope{dc};
+            if (strip.overflow > 0.0f) {
+                const D2D1_RECT_F view = D2D1::RectF(strip.view.left - 2.0f * scale_, addrRc.top,
+                                                     strip.view.right + 2.0f * scale_, addrRc.bottom);
+                dc->PushAxisAlignedClip(view, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                strip_scope.clip = true;
+                const bool more_left = strip.offset < strip.overflow - 0.5f;
+                const bool more_right = strip.offset > 0.5f;
+                const float view_w = view.right - view.left;
+                const float f = view_w > 0.0f ? (std::min)(0.3f, 26.0f * scale_ / view_w) : 0.0f;
+                if ((more_left || more_right) && f > 0.0f) {
+                    const D2D1_GRADIENT_STOP stops[] = {
+                        {0.0f, D2D1::ColorF(0, 0, 0, more_left ? 0.0f : 1.0f)},
+                        {f, D2D1::ColorF(0, 0, 0, 1.0f)},
+                        {1.0f - f, D2D1::ColorF(0, 0, 0, 1.0f)},
+                        {1.0f, D2D1::ColorF(0, 0, 0, more_right ? 0.0f : 1.0f)}};
+                    ComPtr<ID2D1GradientStopCollection> collection;
+                    ComPtr<ID2D1LinearGradientBrush> mask;
+                    if (SUCCEEDED(dc->CreateGradientStopCollection(stops, 4, &collection)) &&
+                        SUCCEEDED(dc->CreateLinearGradientBrush(
+                            D2D1::LinearGradientBrushProperties(D2D1::Point2F(view.left, 0.0f),
+                                                                D2D1::Point2F(view.right, 0.0f)),
+                            collection.get(), &mask))) {
+                        dc->PushLayer(D2D1::LayerParameters1(view, nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                             D2D1::IdentityMatrix(), 1.0f, mask.get()),
+                                      nullptr);
+                        strip_scope.layer = true;
+                    }
+                }
+            }
             if (plates) {
                 const int hot_i = vm.breadcrumb_hover >= 0 && vm.breadcrumb_hover < static_cast<int>(placed.size()) &&
                                   vm.breadcrumb_hover != vm.breadcrumb_drop ? vm.breadcrumb_hover : -1;
@@ -541,6 +598,19 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                 DrawTextRect(dc, compositor_->AddressFormat(), brText_.get(), seg.text,
                     text_left, seg.rc.top, seg.rc.right - text_left,
                     seg.rc.bottom - seg.rc.top);
+            }
+            if (strip_scope.layer) { dc->PopLayer(); strip_scope.layer = false; }
+            if (strip_scope.clip) { dc->PopAxisAlignedClip(); strip_scope.clip = false; }
+            if (strip.overflow > 0.0f && addr_hot && strip.width > 0.0f) {
+                // Where in the path the bar is: a short thumb along its foot.
+                const float track = 120.0f * scale_;
+                const float view_w = strip.view.right - strip.view.left;
+                const float thumb = (std::max)(18.0f * scale_, track * (std::min)(1.0f, view_w / strip.width));
+                const float track_left = std::round((strip.view.left + strip.view.right - track) * 0.5f);
+                const float tx = std::round(track_left + (track - thumb) * (1.0f - strip.offset / strip.overflow));
+                painter_.FillRoundedRect(D2D1::RectF(tx, addrRc.bottom - 4.0f * scale_, tx + thumb,
+                                                     addrRc.bottom - 2.0f * scale_),
+                                         scale_, WithAlpha(theme.text_secondary, 0.45f));
             }
             if (placed.empty() && !vm.pane.path.empty()) {
                 MakeBrush(dc, theme.text, brText_);
@@ -964,7 +1034,7 @@ FavoritesBarLayout MainRenderer::FavoritesBarLayoutAt(const WindowViewModel& vm,
         else if (!icon_only && !f.separator) tw=CellTextWidth(f.label,true)+(f.folder && !f.offline ? 12*scale_ : 0.0f);
         widths.push_back(tw);
     }
-    return MakeFavoritesBarLayout(band,scale_,widths,icon_only,separators);
+    return MakeFavoritesBarLayout(band,scale_,widths,icon_only,separators,true);
 }
 
 void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
@@ -976,16 +1046,24 @@ void MainRenderer::DrawFavoritesBar(const WindowViewModel& vm, const D2D1_RECT_F
     icon_box_dip_=kIconBoxDip;
     const float bottom=title_bar_height_+toolbar_height_;
     const float top=bottom-kFavoritesBarHeightDip*scale_;
+    const FavoritesBarLayout lay=FavoritesBarLayoutAt(vm,rect.right);
+    if (lay.dock.right>lay.dock.left) {
+        // 放回侧边栏: the list goes back to the sidebar (Ctrl+Shift+B).
+        const bool hot=IsHovered(vm,HitTestResult::FavoritesBarDock);
+        if (hot) painter_.FillRoundedRect(lay.dock,6*scale_,theme.fill_hover);
+        DrawIconText(lay.dock.left,lay.dock.top,lay.dock.right-lay.dock.left,lay.dock.bottom-lay.dock.top,
+                     L"\xE90C",L"",hot ? theme.text : WithAlpha(theme.text_secondary,0.8f),kIconField);
+    }
     if (vm.favorites_bar.empty()) {
         // Nothing starred yet: say how to add something.
         const float x=EffectiveSidebarWidth(rect.right)+margin_;
         const float h=30*scale_;
+        const float text_right=lay.dock.right>lay.dock.left ? lay.dock.left-6*scale_ : rect.right-margin_;
         DrawIconText(x,top,20*scale_,h,L"\xE734",L"",theme.text_secondary,kIconField);
-        painter_.DrawText(vm.favorites_bar_hint,D2D1::RectF(x+26*scale_,top,rect.right-margin_,top+h),
+        painter_.DrawText(vm.favorites_bar_hint,D2D1::RectF(x+26*scale_,top,text_right,top+h),
                           compositor_->SmallFormat(),theme.text_secondary);
         return;
     }
-    const FavoritesBarLayout lay=FavoritesBarLayoutAt(vm,rect.right);
     const float radius=6*scale_;
     const auto measure=[&](const std::wstring& text) { return CellTextWidth(text,true); };
     ID2D1DeviceContext* dc=compositor_->Dc();

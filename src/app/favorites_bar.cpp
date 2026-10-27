@@ -506,6 +506,13 @@ void FillFavoritesBar(AppState& s, ui::WindowViewModel& vm) {
         // The address bar's ★⌄ shows whether this folder is starred.
         vm.favorites_here = tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path) &&
                             s.places.IsStarred(tab->current_path);
+        // The sidebar's 收藏夹 row offers the bar (an embedded window has none).
+        if (!s.renderer.Embedded()) {
+            const std::wstring root = app::MakeStarredPath();
+            for (auto& group : vm.sidebar)
+                for (auto& row : group.items)
+                    if (row.indent == 0 && row.path == root) row.bar_switch = true;
+        }
         return;
     }
     vm.favorites_bar_icon_only = s.appPrefs.favorites_bar_icon_only;
@@ -595,6 +602,11 @@ bool HandleFavoritesBarPress(AppState& s, const ui::HitTestResult& hit) {
     }
     if (hit.region == ui::HitTestResult::AddressFavorites) {
         ShowFavoritesDropdown(s, BelowControl(s, hit));
+        return true;
+    }
+    // 改成横向收藏栏 / 放回侧边栏: the Ctrl+Shift+B switch, from either side.
+    if (hit.region == ui::HitTestResult::SidebarBarSwitch || hit.region == ui::HitTestResult::FavoritesBarDock) {
+        ToggleFavoritesBar(s);
         return true;
     }
     if (hit.region == ui::HitTestResult::FavoritesBarMore) {

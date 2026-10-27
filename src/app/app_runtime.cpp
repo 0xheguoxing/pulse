@@ -3523,6 +3523,10 @@ std::wstring TooltipForHover(AppState& s) {
         return FavoritesBarTooltip(s, hit);
     }
     case R::FavoritesBarMore: return text(I::FavoritesBarMore);
+    case R::SidebarBarSwitch:
+        return text(I::FavoritesBarMoveToBar) + L" (" + app::ShownShortcut(L"Ctrl+Shift+B") + L")";
+    case R::FavoritesBarDock:
+        return text(I::FavoritesBarMoveToSidebar) + L" (" + app::ShownShortcut(L"Ctrl+Shift+B") + L")";
     case R::FavoritesBarChevron: return text(I::FavoritesBarSubfolders);
     case R::AddressFavorites: return text(I::StarredItems);
     case R::ToolbarSelAction: {

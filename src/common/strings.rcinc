@@ -4299,6 +4299,8 @@ BEGIN
     IDS_SELECTED_IN_FOLDER_FORMAT "在 %s"
     IDS_SETTINGS_TREE_STICKY "滚动时固定上级文件夹"
     IDS_SETTINGS_TREE_STICKY_DESC "展开的文件夹滚出顶部时停在列表上方"
+    IDS_FAVORITES_BAR_MOVE_TO_BAR "改成横向收藏栏"
+    IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR "放回侧边栏"
 END
 
 LANGUAGE 0x09, 0x01
@@ -8597,6 +8599,8 @@ BEGIN
     IDS_SELECTED_IN_FOLDER_FORMAT "in %s"
     IDS_SETTINGS_TREE_STICKY "Pin parent folders while scrolling"
     IDS_SETTINGS_TREE_STICKY_DESC "Expanded folders stay at the top of the list as you scroll past"
+    IDS_FAVORITES_BAR_MOVE_TO_BAR "Show favorites as a bar"
+    IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR "Back to the sidebar"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

@@ -448,6 +448,7 @@ struct SidebarItem {
     bool expanded = false;
     bool starred_child = false;
     bool divider_above = false;    // 收藏夹: the user's separator, a line above the row
+    bool bar_switch = false;       // 收藏夹 root: on hover, 改成横向收藏栏 left of its chevron
     bool tab_row = false;          // vertical tabs: row stands for a window tab
     int tab_number = 0;            // 1-based position, badged on the icon rail
     bool tab_active = false;
@@ -1534,6 +1535,8 @@ struct HitTestResult {
         RowCheck,              // check box in front of a list item: index = entry
         HeaderCheck,           // check box in the Name column header: select all / none
         TreeSticky,            // details tree folder pinned over the list top: index = view row
+        SidebarBarSwitch,      // 收藏夹 root row: move the list to the 收藏栏; index = run
+        FavoritesBarDock,      // 收藏栏's right end: put the list back in the sidebar
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.

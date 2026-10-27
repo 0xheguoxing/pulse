@@ -2358,6 +2358,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 dirty = !s->tooltipText.empty() || dirty;
             }
             if (UpdateTeachTip(*s)) dirty = true;
+            if (s->renderer.SettleBreadcrumbScroll(GetTickCount64())) dirty = true;   // 地址栏 back to its end
             // Staging tray: notice items moved or deleted outside Pulse.
             if (!s->tray.batches().empty() && GetTickCount64() - s->trayProbeAt >= 2000) {
                 s->trayProbeAt = GetTickCount64();
@@ -2518,6 +2519,7 @@ LRESULT CALLBACK WndProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return HandleRButtonUp(s, hwnd, msg, wParam, lParam);
 
     case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL:   // only the 地址栏 takes the sideways wheel
         return HandleMouseWheel(s, hwnd, msg, wParam, lParam);
 
     case WM_APPCOMMAND:

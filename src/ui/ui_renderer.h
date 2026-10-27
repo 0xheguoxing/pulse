@@ -634,7 +634,9 @@ public:
     D2D1_RECT_F NewArrowSegment(const D2D1_RECT_F& create, bool compact) const;
     static constexpr const wchar_t* kNewFolderGlyph = L"\xE8F4";
 
-    // One placed breadcrumb segment (after left-truncation to fit the bar).
+    // One placed breadcrumb segment. A path too long for the bar is one strip
+    // that scrolls under the wheel: segments outside `BreadcrumbStrip::view`
+    // are still placed (clipped when drawn, skipped by hit testing).
     struct BreadcrumbPlaced {
         D2D1_RECT_F rc{};
         std::wstring text;
@@ -644,8 +646,23 @@ public:
     };
     // Shared by DrawToolbar, HitTest and the drop-target logic so the three
     // can never disagree about segment positions.
+    struct BreadcrumbStrip {
+        D2D1_RECT_F view{};     // the part of the address bar the strip shows through
+        float overflow = 0.0f;  // strip width past the view (0: the path fits)
+        float offset = 0.0f;    // shown scroll: 0 = the end in view, overflow = the root
+        float width = 0.0f;     // whole strip
+    };
     void BreadcrumbLayout(const PaneViewModel& vm, float w,
-                          std::vector<BreadcrumbPlaced>& out) const;
+                          std::vector<BreadcrumbPlaced>& out, BreadcrumbStrip* strip = nullptr) const;
+    // Address bar out of edit mode, path longer than the bar: the wheel
+    // (`steps` = notches, positive = toward the root) scrolls it. False when
+    // the path fits, the bar is being edited or the point is outside it.
+    bool ScrollBreadcrumb(const WindowViewModel& vm, float window_w, float x, float y, float steps);
+    // Files dragged to either end of a scrolled path: page that way (paced).
+    bool DragScrollBreadcrumb(const WindowViewModel& vm, float window_w, float x);
+    // The pointer left the address bar 1.5 s ago: scroll back to the end.
+    // Called from the UI timer; true when it started moving back.
+    bool SettleBreadcrumbScroll(uint64_t now_ms);
 
     void Render(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme);
     void InvalidateWallpaper() { material_.Invalidate(); }
@@ -1063,6 +1080,14 @@ private:
     // a newly active tab, so hit testing and drawing always agree.
     mutable float tab_scroll_ = 0.0f;
     mutable int tab_scroll_active_ = -1;
+    // Address bar scroll (see ScrollBreadcrumb): target and shown offsets,
+    // eased per frame; a new path starts at its end again.
+    mutable float crumb_scroll_ = 0.0f;
+    mutable float crumb_scroll_shown_ = 0.0f;
+    mutable std::wstring crumb_scroll_key_;
+    uint64_t crumb_scroll_tick_ = 0;     // last eased frame (motion clock)
+    uint64_t crumb_hover_left_ = 0;      // GetTickCount64 when the pointer left (0: over it)
+    uint64_t crumb_drag_tick_ = 0;       // drag paging pace
     float tab_freeze_w_ = 0.0f, tab_freeze_active_w_ = 0.0f;
     size_t tab_freeze_count_ = 0;
     std::array<uint64_t, 8> folder_size_pending_since_{};

@@ -850,6 +850,11 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
         y >= title_bar_height_ + toolbar_height_ - kFavoritesBarHeightDip * scale_ &&
         y < title_bar_height_ + toolbar_height_) {
         const FavoritesBarLayout bar = FavoritesBarLayoutAt(vm, rect.right);
+        if (bar.dock.right > bar.dock.left && ContainsPt(bar.dock, x, y)) {
+            r.region = HitTestResult::FavoritesBarDock;
+            r.control_bounds = bar.dock;
+            return r;
+        }
         r.region = HitTestResult::FavoritesBarItem;
         r.index = -1;
         for (size_t i = 0; i < bar.items.size(); ++i) {
@@ -911,8 +916,11 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
             }
             if (!vm.address_editing && x < toolbar.address.right-28*scale_) {
                 std::vector<BreadcrumbPlaced> placed;
-                BreadcrumbLayout(vm.pane,rect.right,placed);
-                for (size_t i=0;i<placed.size();++i) if (ContainsPt(placed[i].rc,x,y)) {
+                BreadcrumbStrip strip;
+                BreadcrumbLayout(vm.pane,rect.right,placed,&strip);
+                // A scrolled-away part of a long path is not clickable.
+                const bool in_view=strip.overflow<=0.0f || (x>=strip.view.left && x<strip.view.right);
+                if (in_view) for (size_t i=0;i<placed.size();++i) if (ContainsPt(placed[i].rc,x,y)) {
                     r.region=HitTestResult::BreadcrumbSegment; r.index=(int)i; r.path=placed[i].path; break;
                 }
             }
@@ -1203,6 +1211,13 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     if (!compact && SidebarItemHasUnpin(item) &&
                         ContainsPt(WorkspaceUnpinRect(slot.rc, scale_), x, y)) {
                         r.region = HitTestResult::SidebarItemAction;
+                        r.index = slot.run;
+                        r.path = item.path;
+                        return r;
+                    }
+                    if (!compact && item.bar_switch &&
+                        ContainsPt(SidebarBarSwitchRect(slot.rc, scale_), x, y)) {
+                        r.region = HitTestResult::SidebarBarSwitch;
                         r.index = slot.run;
                         r.path = item.path;
                         return r;

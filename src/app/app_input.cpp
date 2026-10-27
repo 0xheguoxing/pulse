@@ -298,6 +298,12 @@ DWORD ResolveDropTarget(AppState& s, const std::vector<std::wstring>& sources,
     ui::WindowViewModel vm = BuildVm(s);
     D2D1_RECT_F rect = D2D1::RectF(0, 0, (float)s.compositor.Width(), (float)s.compositor.Height());
     ui::HitTestResult hit = s.renderer.HitTest(vm, rect, (float)pt.x, (float)pt.y);
+    // Near either end of a long path in the 地址栏: page it that way.
+    if ((hit.region == ui::HitTestResult::AddressBar || hit.region == ui::HitTestResult::BreadcrumbSegment) &&
+        s.renderer.DragScrollBreadcrumb(vm, rect.right, (float)pt.x)) {
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        hit = s.renderer.HitTest(vm, rect, (float)pt.x, (float)pt.y);
+    }
     DWORD toolbar_effect = DROPEFFECT_NONE;
     if (ResolveToolbarAppDrop(s, vm, hit, sources, pt, key_state, allowed, toolbar_effect)) {
         s.springRow = -1;
@@ -4942,6 +4948,23 @@ LRESULT HandleMouseWheel(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             if (AiAssistantWheel(*s, wp.x, wp.y, msg == WM_MOUSEWHEEL ? GET_WHEEL_DELTA_WPARAM(wParam) : 0))
                 return 0;   // Pulse 助手's conversation scrolls
         }
+        {
+            // 地址栏 out of edit mode: a path longer than the bar scrolls under
+            // the wheel, and under a touchpad's sideways swipe.
+            POINT ap{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ScreenToClient(hwnd, &ap);
+            const float width = static_cast<float>(s->compositor.Width());
+            const D2D1_RECT_F addr = s->renderer.AddressBarRect(width);
+            const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
+            if (static_cast<float>(ap.y) >= addr.top && static_cast<float>(ap.y) < addr.bottom &&
+                static_cast<float>(ap.x) >= addr.left && static_cast<float>(ap.x) < addr.right &&
+                s->renderer.ScrollBreadcrumb(BuildVm(*s, false), width, static_cast<float>(ap.x),
+                                             static_cast<float>(ap.y), msg == WM_MOUSEHWHEEL ? -notches : notches)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
+        if (msg == WM_MOUSEHWHEEL) return DefWindowProcW(hwnd, msg, wParam, lParam);
         s->blankClickTab = nullptr;
         CancelRenameClick(*s);
         {

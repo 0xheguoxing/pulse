@@ -62,6 +62,7 @@ inline constexpr const wchar_t* kGlyphPinNetwork = L"\xF5BF";
 inline constexpr const wchar_t* kGlyphPinToolbar = L"\xF5C0";
 inline constexpr const wchar_t* kGlyphFolderList = L"\xF5C1";   // a 收藏栏 group
 inline constexpr const wchar_t* kGlyphSparkle = L"\xF5C2";
+inline constexpr const wchar_t* kGlyphTopBar = L"\xF5C3";   // a window with a top bar (收藏栏)
 
 inline constexpr bool IsPinned(Icon icon) noexcept {
     return icon >= Icon::PinFavorites && icon <= Icon::PinToolbar;
@@ -165,6 +166,7 @@ inline Icon FromGlyph(std::wstring_view glyph) noexcept {
     case L'\xF5C0': return Icon::PinToolbar;
     case L'\xF5C1': return Icon::FolderList;
     case L'\xF5C2': return Icon::Sparkle;
+    case L'\xF5C3': return Icon::Toolbar;
     case L'\xF168': return Icon::GroupBy;
     case L'\xE8F1': return Icon::FolderList;
     case L'\xE777': return Icon::Reset;
@@ -482,6 +484,7 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
     case Icon::Tray: path({{3,14},{6,5},{18,5},{21,14},{21,20},{3,20},{3,14},{8,14},{10,17},{14,17},{16,14},{21,14}}); break;
     case Icon::Pin: path({{8,3},{16,3},{15,9},{19,13},{19,15},{5,15},{5,13},{9,9},{8,3}}); line(12,15,12,22); break;
     case Icon::Link:
+    case Icon::CopyPath:   // 复制路径 keeps the chain link: two pages would read like 复制
         begin(9.5f,14.5f); curve(7.7f,12.7f,7.7f,10,9.5f,8.2f); to(13,4.7f);
         curve(14.8f,2.9f,17.7f,2.9f,19.5f,4.7f); curve(21.3f,6.5f,21.3f,9.2f,19.5f,11);
         to(17.5f,13); end();
@@ -498,9 +501,6 @@ inline ID2D1PathGeometry* BuildGeometry(ID2D1Factory* factory, Icon icon) noexce
         line(3,18,14,18); line(19,18,21,18); circle(16.5f,18,2.5f); break;
     case Icon::Warning: path({{12,3},{22,21},{2,21},{12,3}}); line(12,9,12,14); dot(12,17.5f); break;
     case Icon::Lock: box(4,10,20,21); arc(12,8,5,180,360); line(7,8,7,10); line(17,8,17,10); line(12,14,12,17); break;
-    case Icon::CopyPath: box(8.5f,8.5f,20,20,2); begin(15.5f,8.5f); to(15.5f,6); arcto(13.5f,4,2,false,false);
-        to(6,4); arcto(4,6,2,false,false); to(4,13.5f); arcto(6,15.5f,2,false,false); to(8.5f,15.5f); end();
-        begin(11.6f,11.8f); to(13.6f,16.8f); end(); begin(15,11.8f); to(17,16.8f); end(); break;
     case Icon::BatchRename: begin(3.5f,5.5f); to(10.5f,5.5f); end(); begin(3.5f,9.5f); to(8.5f,9.5f); end();
         begin(3.5f,13.5f); to(6.5f,13.5f); end(); begin(9.5f,18.5f); to(17,11); to(19.5f,13.5f); to(12,21);
         to(9.5f,21); end(true); begin(15.2f,12.8f); to(17.2f,14.8f); end(); break;

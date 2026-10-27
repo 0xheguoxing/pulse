@@ -4309,6 +4309,8 @@ enum class StringId : UINT {
     SelectedInFolderFormat = IDS_SELECTED_IN_FOLDER_FORMAT,
     SettingsTreeSticky = IDS_SETTINGS_TREE_STICKY,
     SettingsTreeStickyDesc = IDS_SETTINGS_TREE_STICKY_DESC,
+    FavoritesBarMoveToBar = IDS_FAVORITES_BAR_MOVE_TO_BAR,
+    FavoritesBarMoveToSidebar = IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

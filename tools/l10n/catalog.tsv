@@ -4324,3 +4324,5 @@ FrameLookClear	IDS_FRAME_LOOK_CLEAR	5523	通透	Clear	通透
 SelectedInFolderFormat	IDS_SELECTED_IN_FOLDER_FORMAT	5524	在 %s	in %s	在 %s
 SettingsTreeSticky	IDS_SETTINGS_TREE_STICKY	5525	滚动时固定上级文件夹	Pin parent folders while scrolling	捲動時固定上層資料夾
 SettingsTreeStickyDesc	IDS_SETTINGS_TREE_STICKY_DESC	5526	展开的文件夹滚出顶部时停在列表上方	Expanded folders stay at the top of the list as you scroll past	展開的資料夾捲出頂端時停在清單上方
+FavoritesBarMoveToBar	IDS_FAVORITES_BAR_MOVE_TO_BAR	5527	改成横向收藏栏	Show favorites as a bar	改成橫向收藏列
+FavoritesBarMoveToSidebar	IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR	5528	放回侧边栏	Back to the sidebar	放回側邊欄

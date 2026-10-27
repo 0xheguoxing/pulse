@@ -763,8 +763,9 @@ void MainRenderer::DrawFilterTagSuggestions(const WindowViewModel& vm, const D2D
 }
 
 void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
-                                    std::vector<BreadcrumbPlaced>& out) const {
+                                    std::vector<BreadcrumbPlaced>& out, BreadcrumbStrip* strip) const {
     out.clear();
+    if (strip) *strip = BreadcrumbStrip{};
     auto segments = SplitBreadcrumb(vm.is_query_search && vm.has_search_origin ? vm.search_origin : vm.path);
     // 别名: a folder on the way shows its alias; the click still goes to the real path.
     if (!app::AliasStore::Instance().Empty()) {
@@ -826,28 +827,40 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
         ghost_widths[i] = MeasureTextWidth(dwrite, fmt, ghosts[i].text) + segPad * 2;
         ghost_total += ghost_widths[i] + chevronW;
     }
-    // Collapse leading segments until the rest fits (last segment always
-    // kept). The faint tail may take the room of leading segments too; when
-    // even the current folder and the tail do not fit, the tail goes.
-    const auto collapse = [&](float extra) {
-        size_t lead = 0;
+    // The faint tail stays only when the current folder and all of it fit
+    // in the bar together; otherwise it goes.
+    {
         float rest = total;
-        while (rest + extra > avail && lead + 1 < segments.size()) {
+        for (size_t lead = 0; rest + ghost_total > avail && lead + 1 < segments.size(); ++lead)
             rest -= widths[lead] + chevronW;
-            ++lead;
+        if (ghosts.empty() || rest + ghost_total > avail) {
+            ghosts.clear();
+            ghost_total = 0.0f;
         }
-        return std::pair<size_t, float>(lead, rest);
-    };
-    std::pair<size_t, float> fit = collapse(ghost_total);
-    if (ghosts.empty() || fit.second + ghost_total > avail) {
-        ghosts.clear();
-        fit = collapse(0.0f);
     }
-    const size_t first = fit.first;
+    // A path longer than the bar is one strip seen through the bar, resting
+    // on its end; the wheel scrolls it toward the root (ScrollBreadcrumb).
+    const std::wstring key = vm.is_query_search && vm.has_search_origin
+        ? vm.search_origin + L"|" + vm.path : vm.path;
+    if (key != crumb_scroll_key_) {
+        crumb_scroll_key_ = key;
+        crumb_scroll_ = crumb_scroll_shown_ = 0.0f;
+    }
+    const float view_left = addr.left + margin_;
+    const float width = total + ghost_total;
+    const float overflow = std::max(0.0f, width - avail);
+    crumb_scroll_ = std::clamp(crumb_scroll_, 0.0f, overflow);
+    const float offset = std::clamp(crumb_scroll_shown_, 0.0f, overflow);
+    if (strip) {
+        strip->view = D2D1::RectF(view_left, addr.top, view_left + avail, addr.bottom);
+        strip->overflow = overflow;
+        strip->offset = offset;
+        strip->width = width;
+    }
 
-    float x = addr.left + margin_;
-    for (size_t i = first; i < segments.size(); ++i) {
-        if (i > first) x += chevronW;
+    float x = std::round(view_left - (overflow - offset));
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (i > 0) x += chevronW;
         BreadcrumbPlaced p;
         p.rc = D2D1::RectF(x, addr.top + 2 * scale_, x + widths[i], addr.bottom - 2 * scale_);
         p.text = segments[i].text;
@@ -866,6 +879,48 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
         out.push_back(std::move(p));
         x += ghost_widths[i];
     }
+}
+
+bool MainRenderer::ScrollBreadcrumb(const WindowViewModel& vm, float window_w, float x, float y, float steps) {
+    if (vm.address_editing || vm.address_searching || steps == 0.0f) return false;
+    std::vector<BreadcrumbPlaced> placed;
+    BreadcrumbStrip strip;
+    BreadcrumbLayout(vm.pane, window_w, placed, &strip);
+    const D2D1_RECT_F addr = AddressBarRect(window_w);
+    if (strip.overflow <= 0.0f || x < addr.left || x >= strip.view.right || y < addr.top || y >= addr.bottom)
+        return false;
+    // About one segment a notch; a precision touchpad sends fractions.
+    crumb_scroll_ = std::clamp(crumb_scroll_ + steps * 72.0f * scale_, 0.0f, strip.overflow);
+    crumb_hover_left_ = 0;
+    if (!motion::SystemAnimationsEnabled() || IsHighContrast()) crumb_scroll_shown_ = crumb_scroll_;
+    return true;
+}
+
+bool MainRenderer::DragScrollBreadcrumb(const WindowViewModel& vm, float window_w, float x) {
+    if (vm.address_editing || vm.address_searching) return false;
+    std::vector<BreadcrumbPlaced> placed;
+    BreadcrumbStrip strip;
+    BreadcrumbLayout(vm.pane, window_w, placed, &strip);
+    if (strip.overflow <= 0.0f) return false;
+    const float zone = 28.0f * scale_;
+    float dir = 0.0f;
+    if (x < strip.view.left + zone && crumb_scroll_ < strip.overflow) dir = 1.0f;
+    else if (x >= strip.view.right - zone && x < strip.view.right && crumb_scroll_ > 0.0f) dir = -1.0f;
+    const uint64_t now = GetTickCount64();
+    if (dir == 0.0f || now - crumb_drag_tick_ < 90) return false;
+    crumb_drag_tick_ = now;
+    crumb_scroll_ = std::clamp(crumb_scroll_ + dir * 36.0f * scale_, 0.0f, strip.overflow);
+    crumb_hover_left_ = 0;
+    if (!motion::SystemAnimationsEnabled() || IsHighContrast()) crumb_scroll_shown_ = crumb_scroll_;
+    return true;
+}
+
+bool MainRenderer::SettleBreadcrumbScroll(uint64_t now_ms) {
+    if (crumb_scroll_ <= 0.0f || crumb_hover_left_ == 0 || now_ms - crumb_hover_left_ < 1500) return false;
+    crumb_scroll_ = 0.0f;
+    crumb_hover_left_ = 0;
+    if (!motion::SystemAnimationsEnabled() || IsHighContrast()) crumb_scroll_shown_ = 0.0f;
+    return true;
 }
 void MainRenderer::DrawTextRect(ID2D1DeviceContext* dc, IDWriteTextFormat* fmt,
     ID2D1SolidColorBrush* br, std::wstring_view text, float x, float y, float w, float h,
