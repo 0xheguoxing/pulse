@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -159,10 +160,12 @@ int wmain(int argc, wchar_t** argv) {
         return failures ? 1 : 0;
     }
     if (argc > 1 && std::wstring_view(argv[1]) == L"--live-dedup-only") {
-        wchar_t temp[MAX_PATH]{};
-        GetTempPathW(ARRAYSIZE(temp), temp);
+        // Not under %TEMP%: the index leaves temp folders out when the machine's
+        // search settings exclude them, and the fixture would never be found.
         const std::wstring tag = std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
-        const std::wstring base = std::wstring(temp) + L"pulse-live-dedup-" + tag;
+        std::error_code fs_error;
+        std::filesystem::create_directories(L"bench_data", fs_error);
+        const std::wstring base = std::filesystem::absolute(L"bench_data\\pulse-live-dedup-" + tag).wstring();
         const std::wstring files = base + L"\\files", cache = base + L"\\cache";
         CreateDirectoryW(base.c_str(), nullptr);
         CreateDirectoryW(files.c_str(), nullptr);
@@ -232,8 +235,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         if (WaitForSingleObject(host.hProcess, 5000) != WAIT_OBJECT_0) TerminateProcess(host.hProcess, 1);
         CloseHandle(host.hProcess);
-        for (const wchar_t* name : {L"pulsededup-a.txt", L"pulsededup-b.txt", L"pulsededup-c.txt"})
-            DeleteFileW((files + L"\\" + name).c_str());
+        std::filesystem::remove_all(base, fs_error);
         return failures ? 1 : 0;
     }
     const std::wstring token = std::to_wstring(GetCurrentProcessId()) + L"-" +
