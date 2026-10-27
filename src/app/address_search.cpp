@@ -538,6 +538,21 @@ bool TickAddressSearch(AppState& s, ULONGLONG now) {
                     tab->banner_message = status;
                 }
             }
+            // Instant mode has no index revision to trigger a retry when a
+            // disabled drive becomes part of the shared scope again.
+            if (!tab->search_content_stopped && !tab->search_content_active &&
+                !s.addressLiveDue && s.renameIndex < 0 &&
+                (tab->banner_title == l10n::Get(l10n::StringId::ContentIndexNotCovered) ||
+                 tab->banner_title == l10n::Get(l10n::StringId::ContentIndexEmpty))) {
+                index::ContentSearchRequest scope_request;
+                scope_request.root = app::SplitSearchQueryText(rest).path_prefix;
+                if (!index::ContentTaskRoots(s.contentSearch.GetConfig(), scope_request).empty()) {
+                    RequestSearchPage(s, *tab, rest, true);
+                    content_busy = tab->search_content_active;
+                    searched = true;
+                    return;
+                }
+            }
             if (tab->search_content_stopped || tab->content_subscription_error || s.contentSearch.InstantMode() || !progress.revision || tab->search_index_revision == progress.revision ||
                 content_busy || tab->search_live_generation || tab->search_content_active || tab->search_content_empty || tab->search_allow_scan ||
                 s.addressLiveDue || s.renameIndex >= 0) return;

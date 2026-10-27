@@ -8,6 +8,10 @@
 
 namespace pulse::index {
 struct ContentRefreshTestPeer {
+    static void Scope(ContentSearchClient& client, bool enabled) {
+        client.mode_ = ContentAgentMode::Instant;
+        client.config_.roots = enabled ? std::vector<ContentIndexRoot>{{L"C:\\fixture"}} : std::vector<ContentIndexRoot>{};
+    }
     static void Generation(ContentSearchClient& client, uint64_t generation) { client.generation_ = generation; }
     static void Status(ContentSearchClient& client, uint64_t revision) {
         client.status_.revision = revision;
@@ -430,10 +434,45 @@ int RestoreContentSearch(pulse::AppState& s) {
     return failures;
 }
 
+int ScopeRecovery(pulse::AppState& s) {
+    using namespace pulse;
+    s.isolatedTest = true;
+    s.searchHistory.persist = false;
+    s.places.persist = false;
+    int failures = 0;
+    auto check = [&](bool ok, const char* label) {
+        std::cout << (ok ? "[PASS] " : "[FAIL] ") << label << std::endl;
+        if (!ok) ++failures;
+    };
+    ULONGLONG tick = GetTickCount64();
+    for (const auto& query : {std::wstring(L"path:C:\\fixture content:marker"), std::wstring(L"content:marker")}) {
+        auto& tab = *ActiveTab(s);
+        tab = app::Tab{};
+        tab.current_path = app::MakeSearchPath(query);
+        index::ContentRefreshTestPeer::Scope(s.contentSearch, false);
+        RequestSearchPage(s, tab, query, true);
+        check(!tab.search_content_active && !tab.banner_title.empty(), "disabled scope blocks content search");
+        TickAddressSearch(s, tick += 1000);
+        check(!tab.search_content_active, "disabled scope is not repeatedly searched");
+        index::ContentRefreshTestPeer::Scope(s.contentSearch, true);
+        TickAddressSearch(s, tick += 1000);
+        check(tab.search_content_active && tab.pending_generation && tab.banner_title.empty(),
+            "restored scope retries blocked search without an index revision");
+        const auto generation = tab.pending_generation;
+        TickAddressSearch(s, tick += 1000);
+        check(tab.pending_generation == generation, "active search is not restarted on the next tick");
+        MarkContentSearchStopped(tab);
+        TickAddressSearch(s, tick += 1000);
+        check(!tab.search_content_active, "explicitly stopped search stays stopped");
+    }
+    return failures ? 1 : 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
+    const bool scope_only = argc == 2 && std::wstring_view(argv[1]) == L"--scope-recovery";
     const bool automatic_only = argc == 2 && std::wstring_view(argv[1]) == L"--automatic-refresh";
     const bool restore_only = argc == 2 && std::wstring_view(argv[1]) == L"--restore-content";
-    if (argc == 2 && !automatic_only && !restore_only) return LiveLatency(argv[1]);
+    if (argc == 2 && !automatic_only && !restore_only && !scope_only) return LiveLatency(argv[1]);
     using namespace pulse;
     int failures = 0;
     auto check = [&](bool ok, const char* name) {
@@ -444,6 +483,12 @@ int wmain(int argc, wchar_t** argv) {
     s.appPrefs.persist = false;
     s.hwnd = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
     s.window_tabs.EnsureDefault(); s.pane = s.window_tabs.Active()->FocusedPane();
+    if (scope_only) {
+        l10n::Initialize(GetModuleHandleW(nullptr), L"zh-CN");
+        const int result = ScopeRecovery(s);
+        DestroyWindow(s.hwnd); s.hwnd = nullptr;
+        return result;
+    }
     if (restore_only) {
         l10n::Initialize(GetModuleHandleW(nullptr), L"zh-CN");
         const int result = RestoreContentSearch(s);

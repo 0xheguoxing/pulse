@@ -238,6 +238,30 @@ int RunInstantReconcileAudit(const std::filesystem::path& base) {
     return failures ? 1 : 0;
 }
 
+int RunInstantScopeResumeTest(const std::filesystem::path& base) {
+    const auto profile = base / L"scope-profile";
+    std::filesystem::create_directories(profile);
+    SetEnvironmentVariableW(L"LOCALAPPDATA", profile.c_str());
+    ContentSearchClient client;
+    client.Start(nullptr, 0, ContentAgentMode::Instant);
+    Check(Await([&] { return client.ConfigurationReady(); }), "scope configuration loads");
+    VolumeInfo volume; volume.mount_point = L"C:\\"; volume.supported = true;
+    auto disabled = SharedContentScope(client.GetConfig(), {volume}, {L"C:\\excluded"});
+    client.Configure(disabled);
+    Check(Await([&] { return config_storage::SameConfig(client.GetConfig(), disabled); }),
+        "disabled drive and exclusion reach content configuration");
+    client.Suspend();
+    volume.enabled = true;
+    auto enabled = SharedContentScope(disabled, {volume}, {});
+    client.Configure(enabled);
+    Check(Await([&] { return config_storage::SameConfig(client.GetConfig(), enabled); }),
+        "re-enabled drive and cleared exclusions synchronize after suspension");
+    Check(config_storage::SameConfig(LoadContentIndexConfig(), enabled), "restored scope is persisted");
+    Check(Children().empty(), "scope synchronization does not launch a content agent");
+    client.Stop();
+    return failures ? 1 : 0;
+}
+
 int RunInstantLifecycleTests(const std::filesystem::path& base) {
     const auto profile = base / L"profile", files = base / L"files";
     std::filesystem::create_directories(profile); std::filesystem::create_directories(files);

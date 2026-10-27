@@ -260,6 +260,9 @@ void ContentSearchClient::Enqueue(Command command) {
     EnsureWorker();
 }
 void ContentSearchClient::Configure(const ContentIndexConfig& config) {
+    // Instant configuration needs no agent. A tray suspension must not leave
+    // scope updates queued until a search that the stale scope may reject.
+    if (mode_ == ContentAgentMode::Instant) Resume();
     ipc::PayloadWriter writer; content::PutConfig(writer, config);
     Enqueue({content::REQ_CONFIG, writer.data()});
 }
