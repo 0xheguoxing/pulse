@@ -389,7 +389,7 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                                                  row.left + Dip(scale, 31.0f), row.bottom),
                                      L"", check);
                 if (visual.show_focus && !visual.focus_glide && visual.focus == row_id)
-                    painter.DrawFocusRing(row, radius);
+                    painter.DrawFocusRing(row, Dip(scale, theme.radius_control));
             } else if (!more_row) {
                 const std::wstring_view own = i < spec.item_glyphs.size() && !spec.item_glyphs[i].empty()
                     ? std::wstring_view(spec.item_glyphs[i]) : glyph;

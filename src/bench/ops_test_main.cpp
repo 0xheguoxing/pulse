@@ -1708,7 +1708,7 @@ int wmain(int argc, wchar_t** argv) {
                 sized = SetFilePointerEx(file, size, nullptr, FILE_BEGIN) && SetEndOfFile(file);
                 CloseHandle(file);
             }
-            const uint64_t previous = g_ops.Status().completed_ops;
+            const uint64_t held_previous = g_ops.Status().completed_ops;
             g_ops.Submit(SimpleOp(ops::OpType::Copy, { held_source.c_str() }, dstDir.c_str()));
             bool measured = false;
             uint64_t task = 0;
@@ -1717,15 +1717,15 @@ int wmain(int argc, wchar_t** argv) {
                 const auto st = g_ops.Status();
                 if (st.active && st.phase == ops::OpPhase::Running && st.bytes_per_second > 0.0 &&
                     st.percent > 3.0f && st.percent < 60.0f) { measured = true; task = st.task_id; break; }
-                if (!st.active && st.completed_ops > previous) break;
+                if (!st.active && st.completed_ops > held_previous) break;
                 Sleep(10);
             }
-            bool paused = false, resumed = false, dipped = false;
+            bool held_paused = false, resumed = false, dipped = false;
             if (measured) {
                 g_ops.PauseCurrent();
-                const auto pause_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-                while (std::chrono::steady_clock::now() < pause_deadline) {
-                    if (g_ops.Status().phase == ops::OpPhase::Paused) { paused = true; break; }
+                const auto held_pause_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (std::chrono::steady_clock::now() < held_pause_deadline) {
+                    if (g_ops.Status().phase == ops::OpPhase::Paused) { held_paused = true; break; }
                     Sleep(5);
                 }
                 Sleep(1500);
@@ -1748,11 +1748,11 @@ int wmain(int argc, wchar_t** argv) {
                 else if (seen_speed) graph_dips = true;
             }
             g_ops.CancelCurrent();
-            WaitOpDone(previous);
+            WaitOpDone(held_previous);
             wprintf(L"[INFO] resume speed: measured=%d paused=%d resumed=%d dipped=%d graph_points=%zu graph_dips=%d\n",
-                    measured ? 1 : 0, paused ? 1 : 0, resumed ? 1 : 0, dipped ? 1 : 0,
+                    measured ? 1 : 0, held_paused ? 1 : 0, resumed ? 1 : 0, dipped ? 1 : 0,
                     history.points.size(), graph_dips ? 1 : 0);
-            Check(measured && paused && resumed && !dipped,
+            Check(measured && held_paused && resumed && !dipped,
                   L"resume keeps the live speed instead of dropping to 0");
             Check(seen_speed && !graph_dips, L"background speed graph does not dip to 0 across a pause");
             DeleteFileW(held_target.c_str());
