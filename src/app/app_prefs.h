@@ -51,6 +51,7 @@ struct AppPrefs {
     // Details list presentation.
     bool list_smart_date = true;
     bool list_zebra_rows = true;
+    bool list_tree_sticky = true;      // 滚动时固定上级: details tree folders stay pinned
     bool list_size_bar = false;
     // Folders in the list get their size worked out on their own; off, the
     // size cell offers it per folder (a size sort still asks for them all).

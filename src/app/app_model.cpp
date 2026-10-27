@@ -1591,6 +1591,16 @@ static std::wstring SelectionText(const Tab& tab) {
         wchar_t buf[256];
         swprintf_s(buf, l10n::Get(l10n::StringId::SelectedOneFormat).c_str(), e.name.c_str(),
                    pulse::format::ByteSize(e.size, true).c_str());
+        // A row inside an expanded folder: where it is, from the current folder.
+        const size_t slash = e.full_path.find_last_of(L'\\');
+        const size_t base = tab.current_path.size() + (tab.current_path.ends_with(L'\\') ? 0 : 1);
+        if (tab.TreeEntries() && slash != std::wstring::npos && slash > base &&
+            _wcsnicmp(e.full_path.c_str(), tab.current_path.c_str(), tab.current_path.size()) == 0) {
+            wchar_t where[300];
+            swprintf_s(where, l10n::Get(l10n::StringId::SelectedInFolderFormat).c_str(),
+                       e.full_path.substr(base, slash - base).c_str());
+            return std::wstring(buf) + L"  \u00B7  " + where;
+        }
         return buf;
     }
     wchar_t buf[64];
@@ -2231,6 +2241,20 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
         out.filter_map = tab->tree->map;
         out.tree = tab->tree->rows;
         out.groups.reset();
+        // One child row selected: the breadcrumb continues to its folder.
+        if (tab->SelectedCount() == 1 && tab->selected_index >= 0 &&
+            tab->selected_index < static_cast<int>(tab->EntryCount()) &&
+            !tab->tree->IsPlaceholder(static_cast<size_t>(tab->selected_index))) {
+            const std::wstring full = tab->EntryAt(tab->selected_index).full_path;
+            const size_t slash = full.find_last_of(L'\\');
+            const std::wstring& here = tab->current_path;
+            const size_t base = here.size() + (here.ends_with(L'\\') ? 0 : 1);
+            if (slash != std::wstring::npos && slash > base &&
+                _wcsnicmp(full.c_str(), here.c_str(), here.size()) == 0) {
+                out.tree_selection_dir = full.substr(0, slash);
+                out.tree_selection_rel = full.substr(base, slash - base);
+            }
+        }
     }
 }
 

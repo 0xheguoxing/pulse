@@ -1547,6 +1547,39 @@ bool MainRenderer::PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& f
            y >= cell.top && y < cell.bottom;
 }
 
+// 滚动时固定上级: the pins of one details tree list laid out by `layout`.
+static MainRenderer::StickyTree StickyFromLayout(const PaneViewModel& vm, const ViewLayout& layout,
+                                                 const D2D1_RECT_F& list, bool enabled) {
+    MainRenderer::StickyTree out;
+    out.top = list.top;
+    if (!enabled || !vm.tree || vm.view_mode != ViewMode::Details || vm.Groups() || layout.Grouped())
+        return out;
+    const auto [first, last] = layout.VisibleRange();
+    if (first < 0 || last < first) return out;
+    const D2D1_RECT_F first_cell = layout.ItemRect(first);
+    out.row_h = first_cell.bottom - first_cell.top;
+    if (out.row_h < 1.0f) return out;
+    out.pins = PinnedTreeRows(*vm.tree, out.row_h, kTreeStickyMaxRows,
+        [&](int row) { return layout.ItemRect(row).top - list.top; },
+        [&](float y) {
+            for (int i = first; i <= last; ++i)
+                if (layout.ItemRect(i).bottom - list.top > y) return i;
+            return last;
+        });
+    return out;
+}
+
+MainRenderer::StickyTree MainRenderer::StickyTreeRows(const PaneViewModel& vm, const D2D1_RECT_F& list) const {
+    if (!tree_sticky_ || !vm.tree || vm.view_mode != ViewMode::Details || vm.EntryCount() == 0) {
+        StickyTree none;
+        none.top = list.top;
+        return none;
+    }
+    const ViewLayout layout(vm.view_mode, list, vm.EntryCount(), vm.scroll_x, vm.scroll_y, scale_,
+                            ListRowHeightDip(vm, list), vm.Groups());
+    return StickyFromLayout(vm, layout, list, true);
+}
+
 int MainRenderer::TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& full_bounds,
                                 float x, float y) const {
     if (!vm.tree || vm.view_mode != ViewMode::Details) return -1;
@@ -4424,6 +4457,13 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
     }
     const bool morphing = morph && morph->Running();
 
+    // 滚动时固定上级: the rows under the pinned folders are not drawn at all,
+    // so the pins need no background of their own - the pane shows through
+    // them exactly as it does through the rows (any frame transparency).
+    const StickyTree sticky = morphing ? StickyTree{} : StickyFromLayout(vm, layout, viewport, tree_sticky_);
+    if (!sticky.pins.empty())
+        dc->PushAxisAlignedClip(D2D1::RectF(viewport.left, sticky.Bottom(), viewport.right, viewport.bottom),
+                                D2D1_ANTIALIAS_MODE_ALIASED);
     // Hover plate: one plate per pane that glides between rows instead of
     // blinking row to row. Drawn under every row so text stays on top.
     if (!morphing && vm.hover_index >= 0 && pane_index >= 0 &&
@@ -5987,6 +6027,68 @@ void MainRenderer::DrawList(const PaneViewModel& vm, float x, float y, float w, 
             }
         }
         if (text_layer) dc->PopLayer();
+    }
+    if (!sticky.pins.empty()) {
+        dc->PopAxisAlignedClip();
+        // Innermost first: a pin being pushed out slides under the one above
+        // it (each pin is clipped to the part below its outer neighbour).
+        const float rowH = sticky.row_h;
+        const bool hc = IsHighContrast();
+        const bool pane_hot = group_hover_pane_ == pane_index &&
+                              hover_region == static_cast<int>(HitTestResult::TreeSticky);
+        static const std::vector<NameMatchRange> kNoMatches;
+        for (size_t k = sticky.pins.size(); k-- > 0;) {
+            const TreePin& pin = sticky.pins[k];
+            const int src = vm.SourceIndex(pin.row);
+            const DetailsTreeRow* tr = vm.tree->At(pin.row);
+            if (src < 0 || !tr) continue;
+            const ListEntryView& e = MakeVisibleEntry(vm, static_cast<size_t>(src));
+            const D2D1_RECT_F home = layout.ItemRect(pin.row);
+            const float top = sticky.top + pin.y;
+            const float dy = top - home.top;
+            const D2D1_RECT_F cell = D2D1::RectF(home.left, top, home.right, top + rowH);
+            const float above = k > 0 ? sticky.top + sticky.pins[k - 1].y + rowH : viewport.top;
+            dc->PushAxisAlignedClip(D2D1::RectF(viewport.left, std::max(above, cell.top), viewport.right,
+                                                cell.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
+            const bool hot = pane_hot && hover_control_index == pin.row;
+            if (hot) {
+                const float inset = 4.0f * scale_;
+                FillRoundedRect(dc, brFillHover_.get(), cell.left + inset, cell.top + scale_,
+                                std::max(0.0f, cell.right - cell.left - 2.0f * inset),
+                                std::max(0.0f, rowH - 2.0f * scale_), theme.radius_control * scale_);
+            }
+            const D2D1_RECT_F icon_home = layout.IconRect(pin.row);
+            drawTreeChevron(*tr, cell, icon_home.left + CheckGutterDip(vm) * scale_, hot, pin.row == tree_hi_row);
+            const float dx = std::round(DetailsLeadDip(vm, pin.row) * scale_);
+            const float side = std::max(1.0f, std::round(std::min(icon_home.right - icon_home.left,
+                                                                  icon_home.bottom - icon_home.top)));
+            DrawEntryIcon(e, std::round(icon_home.left + dx), std::round(icon_home.top + dy), side, theme, 1.0f);
+            const D2D1_RECT_F name_home = layout.NameRect(pin.row);
+            const float name_x = std::min(name_home.right, name_home.left + dx);
+            const float name_right = detailsColumns.DividerX(0) - margin_;
+            DrawTruncatedName(e.name, name_x, name_home.top + dy, std::max(1.0f, name_right - name_x),
+                              std::max(1.0f, name_home.bottom - name_home.top), theme, false, kNoMatches, false);
+            dc->PopAxisAlignedClip();
+        }
+        // The stack's lower edge: a hairline, then a soft shadow over the rows.
+        const float edge = sticky.Bottom();
+        const float hair = std::max(1.0f, std::floor(scale_));
+        MakeBrush(dc, hc ? theme.text : WithAlpha(theme.text, theme.bg.r < 0.5f ? 0.16f : 0.11f), brFillInput_);
+        dc->FillRectangle(D2D1::RectF(viewport.left, edge - hair, viewport.right, edge), brFillInput_.get());
+        if (!hc) {
+            const D2D1_GRADIENT_STOP stops[2] = {
+                {0.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, theme.bg.r < 0.5f ? 0.24f : 0.07f)},
+                {1.0f, D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f)},
+            };
+            ComPtr<ID2D1GradientStopCollection> stop_list;
+            ComPtr<ID2D1LinearGradientBrush> shade;
+            const float depth = 6.0f * scale_;
+            if (SUCCEEDED(dc->CreateGradientStopCollection(stops, 2, &stop_list)) &&
+                SUCCEEDED(dc->CreateLinearGradientBrush(
+                    D2D1::LinearGradientBrushProperties(D2D1::Point2F(0.0f, edge), D2D1::Point2F(0.0f, edge + depth)),
+                    stop_list.get(), &shade)))
+                dc->FillRectangle(D2D1::RectF(viewport.left, edge, viewport.right, edge + depth), shade.get());
+        }
     }
     if (ai_painter) {
         // Cards of the items flying into their folders (.ghost).

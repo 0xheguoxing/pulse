@@ -71,6 +71,7 @@ void AppPrefs::ResetToDefaults() {
     show_pinned_tab_names = true;
     list_smart_date = true;
     list_zebra_rows = true;
+    list_tree_sticky = true;
     list_size_bar = false;
     folder_size_auto = true;
     photo_wall_hint = true;
@@ -194,6 +195,8 @@ std::wstring AppPrefs::ToJson() const {
     out += list_smart_date ? L"true" : L"false";
     out += L",\n  \"list_zebra_rows\":";
     out += list_zebra_rows ? L"true" : L"false";
+    out += L",\n  \"list_tree_sticky\":";
+    out += list_tree_sticky ? L"true" : L"false";
     out += L",\n  \"list_size_bar\":";
     out += list_size_bar ? L"true" : L"false";
     out += L",\n  \"folder_size_auto\":";
@@ -469,6 +472,7 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     show_pinned_tab_names = pulse::json::ExtractBool(json, L"show_pinned_tab_names", true);
     list_smart_date = pulse::json::ExtractBool(json, L"list_smart_date", true);
     list_zebra_rows = pulse::json::ExtractBool(json, L"list_zebra_rows", true);
+    list_tree_sticky = pulse::json::ExtractBool(json, L"list_tree_sticky", true);
     list_size_bar = pulse::json::ExtractBool(json, L"list_size_bar", false);
     folder_size_auto = pulse::json::ExtractBool(json, L"folder_size_auto", true);
     photo_wall_hint = pulse::json::ExtractBool(json, L"photo_wall_hint", true);

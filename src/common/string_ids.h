@@ -4314,5 +4314,8 @@
 #define IDS_FRAME_LOOK_SOLID                                                             5521
 #define IDS_FRAME_LOOK_HALF                                                              5522
 #define IDS_FRAME_LOOK_CLEAR                                                             5523
+#define IDS_SELECTED_IN_FOLDER_FORMAT                                                    5524
+#define IDS_SETTINGS_TREE_STICKY                                                         5525
+#define IDS_SETTINGS_TREE_STICKY_DESC                                                    5526
 
 #endif  // PULSE_STRING_IDS_H

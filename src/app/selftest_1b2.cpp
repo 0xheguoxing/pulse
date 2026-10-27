@@ -3134,6 +3134,41 @@ void TestTreeGuides() {
     Check(ph.rows[1].join == 0 && ph.rows[1].last, L"tree guides: a loading row joins its folder's line");
 }
 
+void TestTreeSticky() {
+    // 滚动时固定上级: A(open) / a1(open) / a11, a12 / a2, then B; rows 10 high.
+    ui::DetailsTreeRows t;
+    const auto add = [&](uint16_t depth, bool open) {
+        ui::DetailsTreeRow r;
+        r.depth = depth; r.expandable = open; r.expanded = open;
+        t.rows.push_back(r);
+    };
+    add(0, true); add(1, true); add(2, false); add(2, false); add(1, false); add(0, false);
+    const auto pins = [&](float scroll, int max_rows = ui::kTreeStickyMaxRows) {
+        const int last = static_cast<int>(t.rows.size()) - 1;
+        return ui::PinnedTreeRows(t, 10.0f, max_rows,
+            [&](int row) { return static_cast<float>(row) * 10.0f - scroll; },
+            [&](float y) {
+                for (int i = 0; i <= last; ++i)
+                    if (static_cast<float>(i) * 10.0f - scroll + 10.0f > y) return i;
+                return last;
+            });
+    };
+    Check(pins(0.0f).empty(), L"tree sticky: nothing pins while the folder row is still in place");
+    const auto p5 = pins(5.0f);
+    Check(p5.size() == 2 && p5[0].row == 0 && p5[0].y == 0.0f && p5[1].row == 1 && p5[1].y == 10.0f,
+          L"tree sticky: an open folder pins once its row goes under the top, and so does a child the pin covers");
+    const auto p25 = pins(25.0f);
+    Check(p25.size() == 2 && p25[0].row == 0 && p25[0].y == 0.0f && p25[1].row == 1 && p25[1].y == 5.0f,
+          L"tree sticky: a nested folder pins below its parent and the next sibling pushes it up");
+    const auto p45 = pins(45.0f);
+    Check(p45.size() == 1 && p45[0].row == 0 && p45[0].y == -5.0f,
+          L"tree sticky: the next top-level folder pushes the last pin out");
+    Check(pins(25.0f, 1).size() == 1 && pins(60.0f).empty(),
+          L"tree sticky: at most max_rows pins, none once the subtree has passed");
+    t.rows[0].expanded = false;
+    Check(pins(5.0f).empty(), L"tree sticky: only open folders pin");
+}
+
 void TestLayerAlphas() {
     // 侧边栏与标题栏 over DWM Acrylic / Mica (backdrop on, not drawn by Pulse).
     const auto close_to = [](float a, float b) { return std::fabs(a - b) < 1e-4f; };
@@ -9737,6 +9772,7 @@ int RunSelfTest1B2() {
     TestBloomSpring();
     TestLayerAlphas();
     TestTreeGuides();
+    TestTreeSticky();
     TestOpsThroughShell();
 
     // Cleanup: real-delete the whole sandbox via the ops layer is overkill;

@@ -359,6 +359,10 @@ struct PaneViewModel {
     // view row. filter_map then lists child rows after their folder, so it
     // is not sorted and ViewIndex uses tree->view_of_source instead.
     std::shared_ptr<const DetailsTreeRows> tree;
+    // Details tree: the folder of the one selected child row, below `path`.
+    // The breadcrumb shows the rest of the way there in faint segments.
+    std::wstring tree_selection_dir;
+    std::wstring tree_selection_rel;   // the same folder below the current one (a\b)
     bool focused = true;
     bool marquee_active = false;
     D2D1_RECT_F marquee_rect{};
@@ -1184,6 +1188,7 @@ struct WindowViewModel {
     bool show_pinned_tab_names = true;
     bool settings_list_smart_date = true;
     bool settings_list_zebra_rows = true;
+    bool settings_list_tree_sticky = true;
     bool settings_menu_acrylic = true;
     bool settings_list_size_bar = false;
     bool settings_list_tag_names = false;
@@ -1528,6 +1533,7 @@ struct HitTestResult {
         SettingsNameBand,      // Settings > 鼠标与选择: name band 0 on hover, 1 always
         RowCheck,              // check box in front of a list item: index = entry
         HeaderCheck,           // check box in the Name column header: select all / none
+        TreeSticky,            // details tree folder pinned over the list top: index = view row
     } region = None;
     SidebarAddAction sidebar_action = SidebarAddAction::None;
     int index = -1;          // tab/row/sidebar item/tray batch/tray item.

@@ -483,6 +483,8 @@ public:
         auto_widths_scale_ = -1.0f;
     }
     bool ListSmartDate() const { return list_smart_date_; }
+    // 滚动时固定上级 (Settings > 列表): details tree folders pinned over the list.
+    void SetTreeSticky(bool on) { tree_sticky_ = on; }
     // 修改时间提示 (mtime_hint.h).
     // 鼠标与选择: single click opens (names show a band), item check boxes.
     void SetItemClick(bool single_click, int name_band, bool check_boxes) {
@@ -591,6 +593,15 @@ public:
     bool PointInItemGrip(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                          int source_index, float x, float y, bool selected = false) const;
     // Details tree: view row whose chevron is under (x, y), else -1.
+    // The folders pinned over the top of a details tree list (see
+    // PinnedTreeRows); top is the list top, so pin k spans top + y .. + row_h.
+    struct StickyTree {
+        std::vector<TreePin> pins;
+        float top = 0.0f;
+        float row_h = 0.0f;
+        float Bottom() const { return pins.empty() ? top : top + pins.back().y + row_h; }
+    };
+    StickyTree StickyTreeRows(const PaneViewModel& vm, const D2D1_RECT_F& list) const;
     int TreeChevronAt(const PaneViewModel& vm, const D2D1_RECT_F& pane_bounds,
                       float x, float y) const;
     // Details tree "more" row at view_row: 0 show more, 1 show all,
@@ -629,6 +640,7 @@ public:
         std::wstring text;
         std::wstring path;
         bool alias = false;
+        bool ghost = false;  // past the current folder, to a selected tree row's folder
     };
     // Shared by DrawToolbar, HitTest and the drop-target logic so the three
     // can never disagree about segment positions.
@@ -991,6 +1003,7 @@ private:
     bool list_smart_date_ = true, list_zebra_ = true, list_size_bar_ = false;
     bool list_tag_names_ = false;
     bool list_selection_outline_ = false;
+    bool tree_sticky_ = true;
     bool thumbnail_badges_ = true;
     unsigned row_actions_ = 7u;
     uint32_t details_columns_ = kDetailsColumnsDefault;

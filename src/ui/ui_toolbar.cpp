@@ -511,7 +511,8 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     // Chevron separator.
                     float chX = seg.rc.left - 14.0f * scale_;
                     DrawIconText(chX, addrRc.top, 14.0f * scale_, addrRc.bottom - addrRc.top,
-                        kIconChevronRight, L">", theme.text_secondary, kIconSmall);
+                        kIconChevronRight, L">", seg.ghost ? WithAlpha(theme.text_secondary, 0.55f)
+                                                           : theme.text_secondary, kIconSmall);
                 }
                 const bool search_crumb = vm.pane.is_query_search && vm.pane.has_search_origin &&
                     i + 1 == placed.size();
@@ -532,7 +533,9 @@ void MainRenderer::DrawToolbar(const WindowViewModel& vm, const D2D1_RECT_F& rec
                     painter_.DrawAliasMark(D2D1::RectF(mx, my, mx + m, my + m));
                     text_left += kCrumbAliasMarkDip * scale_;
                 }
-                MakeBrush(dc, theme.text, brText_);
+                // A faint tail segment comes forward under the pointer.
+                MakeBrush(dc, !seg.ghost || (int)i == vm.breadcrumb_hover ? theme.text
+                              : WithAlpha(theme.text_secondary, 0.85f), brText_);
                 // Width measured exactly; let the ink use the right padding as slack
                 // so the trailing glyph is not shaved by the clip rect.
                 DrawTextRect(dc, compositor_->AddressFormat(), brText_.get(), seg.text,

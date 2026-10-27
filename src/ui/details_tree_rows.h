@@ -2,6 +2,7 @@
 // details view (Finder-style disclosure). Built on the app side, read by the
 // renderer; rows are aligned with the pane's view rows.
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -133,6 +134,53 @@ inline TreeGuides BuildTreeGuides(const DetailsTreeRows& tree, int first, int la
             g.hi_last = j;
     }
     return g;
+}
+
+// 滚动时固定上级 (sticky parents): an open folder whose own row scrolled above
+// the list keeps a copy pinned at the top while its children pass under it,
+// at most max_rows deep. Slot k shows the depth-k folder that owns the row
+// under the slot; a folder whose subtree is about to end is pushed up by the
+// row after it, like VS Code's sticky scroll. row_top(view_row) is a row's
+// top and row_at(y) the row at y, both relative to the top of the list.
+struct TreePin {
+    int row = -1;     // view row of the pinned folder
+    float y = 0.0f;   // its pinned top, relative to the list (k * row_h unless pushed)
+};
+inline constexpr int kTreeStickyMaxRows = 3;
+
+template <class RowTop, class RowAt>
+std::vector<TreePin> PinnedTreeRows(const DetailsTreeRows& tree, float row_h, int max_rows,
+                                    RowTop row_top, RowAt row_at) {
+    std::vector<TreePin> pins;
+    const int count = static_cast<int>(tree.rows.size());
+    for (int k = 0; k < max_rows && row_h > 0.0f; ++k) {
+        const float slot = static_cast<float>(k) * row_h;
+        const int probe = row_at(slot);
+        int folder = probe;
+        const DetailsTreeRow* row = tree.At(folder);
+        while (row && row->depth > k) {
+            folder = tree.ParentRow(folder);
+            row = tree.At(folder);
+        }
+        if (!row || row->depth != k || row->kind != TreeRowKind::Entry || !row->expanded) break;
+        const DetailsTreeRow* first_child = tree.At(folder + 1);
+        if (!first_child || first_child->depth <= k) break;   // nothing listed under it
+        if (row_top(folder) >= slot - 0.5f) break;            // its own row is still in place
+        if (k > 0 && tree.ParentRow(folder) != pins.back().row) break;
+        // The first row after the subtree pushes the pin once it is this close.
+        float y = slot;
+        for (int next = std::max(folder, probe) + 1; next < count; ++next) {
+            const float top = row_top(next);
+            if (top >= slot + 2.0f * row_h) break;
+            if (tree.rows[static_cast<size_t>(next)].depth <= k) {
+                y = std::min(slot, top - row_h);
+                break;
+            }
+        }
+        pins.push_back({folder, y});
+        if (y < slot) break;   // on its way out: nothing pins below it
+    }
+    return pins;
 }
 
 } // namespace pulse::ui

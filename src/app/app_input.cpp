@@ -1074,7 +1074,9 @@ void EnsureRowVisible(AppState& s, app::Tab& tab, int index) {
         if (viewRow < 0) return;
     }
     const D2D1_RECT_F item = s.renderer.ItemRectInPane(pane, FocusedPaneRect(s), viewRow);
-    if (item.top < list.top) tab.scroll_y += item.top - list.top;
+    // 滚动时固定上级: a row under the pinned folders is out of sight too.
+    const float top = s.renderer.StickyTreeRows(pane, list).Bottom();
+    if (item.top < top) tab.scroll_y += item.top - top;
     else if (item.bottom > list.bottom) tab.scroll_y += item.bottom - list.bottom;
     if (item.left < list.left) tab.scroll_x += item.left - list.left;
     else if (item.right > list.right) tab.scroll_x += item.right - list.right;
@@ -2898,6 +2900,21 @@ LRESULT HandleMouseLeave(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM
         return 0;
 }
 
+// 滚动时固定上级: a pinned folder glides back to its own row at the top.
+static void ClickTreeSticky(AppState& s, int pane_slot, int view_row) {
+    app::Pane* pane = PaneAtSlot(s, pane_slot);
+    if (!pane) return;
+    if (pane != s.pane) FocusPane(s, pane);
+    if (!ActiveTab(s)) return;
+    if (s.scrollAnimating) CancelScrollAnimation(s);
+    ui::PaneViewModel vm;
+    app::FillPaneViewModel(vm, *s.pane, &s.places);
+    const D2D1_RECT_F bounds = FocusedPaneRect(s);
+    const float row_top = s.renderer.ItemRectInPane(vm, bounds, view_row).top;
+    const float list_top = s.renderer.PaneListRect(vm, bounds).top;
+    if (row_top < list_top - 0.5f) StartSmoothScroll(s, row_top - list_top, false);
+}
+
 // "Group by" header: toggle collapse, or select every row of the group.
 static void ClickGroupHeader(AppState& s, int pane_slot, int group, bool select) {
     app::Pane* pane = PaneAtSlot(s, pane_slot);
@@ -2998,6 +3015,11 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
         }
         if (hit.region == ui::HitTestResult::RowCheck || hit.region == ui::HitTestResult::HeaderCheck) {
             if (HandleItemCheckPress(*s, hit)) InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (hit.region == ui::HitTestResult::TreeSticky) {
+            ClickTreeSticky(*s, hit.pane_index, hit.index);
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         ArmPaneDrag(*s, hit, mx, my);  // the press still does what it did; a drag takes the pane out (M6d)
@@ -4140,6 +4162,7 @@ LRESULT HandleLButtonDblClk(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPA
         case ui::HitTestResult::SettingsToggle:
         case ui::HitTestResult::RowCheck:
         case ui::HitTestResult::HeaderCheck:
+        case ui::HitTestResult::TreeSticky:
             return HandleLButtonDown(s, hwnd, WM_LBUTTONDOWN, wParam, lParam);
         default:
             break;

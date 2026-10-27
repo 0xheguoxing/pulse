@@ -4296,6 +4296,9 @@ BEGIN
     IDS_FRAME_LOOK_SOLID "实色"
     IDS_FRAME_LOOK_HALF "半透"
     IDS_FRAME_LOOK_CLEAR "通透"
+    IDS_SELECTED_IN_FOLDER_FORMAT "在 %s"
+    IDS_SETTINGS_TREE_STICKY "滚动时固定上级文件夹"
+    IDS_SETTINGS_TREE_STICKY_DESC "展开的文件夹滚出顶部时停在列表上方"
 END
 
 LANGUAGE 0x09, 0x01
@@ -8591,6 +8594,9 @@ BEGIN
     IDS_FRAME_LOOK_SOLID "Solid"
     IDS_FRAME_LOOK_HALF "Half"
     IDS_FRAME_LOOK_CLEAR "Clear"
+    IDS_SELECTED_IN_FOLDER_FORMAT "in %s"
+    IDS_SETTINGS_TREE_STICKY "Pin parent folders while scrolling"
+    IDS_SETTINGS_TREE_STICKY_DESC "Expanded folders stay at the top of the list as you scroll past"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

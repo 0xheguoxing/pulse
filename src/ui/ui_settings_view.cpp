@@ -1338,6 +1338,7 @@ float MainRenderer::SettingsDestinationOffset(const WindowViewModel& vm, int set
     case I::SettingsShowProtected: target=l.protected_files_row;break;
     case I::PinnedNames: target=l.pinned_names_row;break;
     case I::AliasMark: target=l.alias_mark_row;break;
+    case I::SettingsTreeSticky: target=l.tree_sticky_row;break;
     case I::SettingsVerticalTabs: target=l.vertical_tabs_row;break;
     case I::TrayHideWhenEmpty: target=l.tray_hide_row;break;
     case I::SettingsLanDiscovery: target=l.lan_discovery_row;break;

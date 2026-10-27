@@ -782,6 +782,25 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
         search.path = vm.path;
         segments.push_back(std::move(search));
     }
+    // Details tree: a selected child row's folder continues the path in
+    // faint segments; a click still navigates there.
+    std::vector<BreadcrumbSegment> ghosts;
+    const std::wstring& dir = vm.tree_selection_dir;
+    const std::wstring& rel = vm.tree_selection_rel;
+    if (!vm.is_query_search && !segments.empty() && !rel.empty() && dir.size() > rel.size() &&
+        dir.ends_with(rel)) {
+        const size_t dir_base = dir.size() - rel.size();
+        size_t at = 0;
+        while (at < rel.size()) {
+            size_t next = rel.find(L'\\', at);
+            if (next == std::wstring::npos) next = rel.size();
+            BreadcrumbSegment seg;
+            seg.text = rel.substr(at, next - at);
+            seg.path = dir.substr(0, dir_base + next);
+            if (!seg.text.empty()) ghosts.push_back(std::move(seg));
+            at = next + 1;
+        }
+    }
     if (segments.empty()) return;
     D2D1_RECT_F addr = AddressBarRect(w);
     const float segPad = 8.0f * scale_;
@@ -800,12 +819,31 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
                     (segments[i].alias ? kCrumbAliasMarkDip * scale_ : 0.0f);
         total += widths[i] + (i ? chevronW : 0.0f);
     }
-    // Collapse leading segments until the rest fits (last segment always kept).
-    size_t first = 0;
-    while (total > avail && first + 1 < segments.size()) {
-        total -= widths[first] + chevronW;
-        ++first;
+    // The faint tail only shows when all of it fits next to the whole path.
+    std::vector<float> ghost_widths(ghosts.size(), 0.0f);
+    float ghost_total = 0.0f;
+    for (size_t i = 0; i < ghosts.size(); ++i) {
+        ghost_widths[i] = MeasureTextWidth(dwrite, fmt, ghosts[i].text) + segPad * 2;
+        ghost_total += ghost_widths[i] + chevronW;
     }
+    // Collapse leading segments until the rest fits (last segment always
+    // kept). The faint tail may take the room of leading segments too; when
+    // even the current folder and the tail do not fit, the tail goes.
+    const auto collapse = [&](float extra) {
+        size_t lead = 0;
+        float rest = total;
+        while (rest + extra > avail && lead + 1 < segments.size()) {
+            rest -= widths[lead] + chevronW;
+            ++lead;
+        }
+        return std::pair<size_t, float>(lead, rest);
+    };
+    std::pair<size_t, float> fit = collapse(ghost_total);
+    if (ghosts.empty() || fit.second + ghost_total > avail) {
+        ghosts.clear();
+        fit = collapse(0.0f);
+    }
+    const size_t first = fit.first;
 
     float x = addr.left + margin_;
     for (size_t i = first; i < segments.size(); ++i) {
@@ -817,6 +855,16 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
         p.alias = segments[i].alias;
         out.push_back(p);
         x += widths[i];
+    }
+    for (size_t i = 0; i < ghosts.size(); ++i) {
+        x += chevronW;
+        BreadcrumbPlaced p;
+        p.rc = D2D1::RectF(x, addr.top + 2 * scale_, x + ghost_widths[i], addr.bottom - 2 * scale_);
+        p.text = std::move(ghosts[i].text);
+        p.path = std::move(ghosts[i].path);
+        p.ghost = true;
+        out.push_back(std::move(p));
+        x += ghost_widths[i];
     }
 }
 void MainRenderer::DrawTextRect(ID2D1DeviceContext* dc, IDWriteTextFormat* fmt,

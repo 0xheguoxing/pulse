@@ -204,6 +204,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         l.list_style_row[0]=row(64);   // smart date
         for(int i=2;i<6;++i) l.list_style_row[i]=row(64);
         l.alias_mark_row=row(64);
+        l.tree_sticky_row=row(64);
 
         section(I::ListMtimeHint);
         l.mtime_style_card=row(seg_h); segments(l.mtime_style_card,l.mtime_style_row,4,340);

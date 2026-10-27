@@ -4321,3 +4321,6 @@ SettingsFrameLookOff	IDS_SETTINGS_FRAME_LOOK_OFF	5520	选亚克力、Mica 或 Mi
 FrameLookSolid	IDS_FRAME_LOOK_SOLID	5521	实色	Solid	實色
 FrameLookHalf	IDS_FRAME_LOOK_HALF	5522	半透	Half	半透
 FrameLookClear	IDS_FRAME_LOOK_CLEAR	5523	通透	Clear	通透
+SelectedInFolderFormat	IDS_SELECTED_IN_FOLDER_FORMAT	5524	在 %s	in %s	在 %s
+SettingsTreeSticky	IDS_SETTINGS_TREE_STICKY	5525	滚动时固定上级文件夹	Pin parent folders while scrolling	捲動時固定上層資料夾
+SettingsTreeStickyDesc	IDS_SETTINGS_TREE_STICKY_DESC	5526	展开的文件夹滚出顶部时停在列表上方	Expanded folders stay at the top of the list as you scroll past	展開的資料夾捲出頂端時停在清單上方

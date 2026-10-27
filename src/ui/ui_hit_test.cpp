@@ -477,6 +477,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 if (ContainsPt(lay.alias_mark_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 39; return r;
                 }
+                if (ContainsPt(lay.tree_sticky_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 79; return r;
+                }
                 if (ContainsPt(lay.vertical_tabs_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 23; return r;
                 }
@@ -1603,6 +1606,19 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     out.index = g;
                     out.pane_index = paneIndex;
                     return out;
+                }
+            }
+            // 滚动时固定上级: the pinned folders cover the rows under them.
+            if (paneVm.tree && paneVm.view_mode == ViewMode::Details) {
+                const StickyTree sticky = StickyTreeRows(paneVm, PaneListRect(paneRc, extra, paneVm.view_mode));
+                for (const TreePin& pin : sticky.pins) {
+                    const float top = sticky.top + pin.y;
+                    if (y >= top && y < top + sticky.row_h) {
+                        out.region = HitTestResult::TreeSticky;
+                        out.index = pin.row;
+                        out.pane_index = paneIndex;
+                        return out;
+                    }
                 }
             }
             int idx = ItemFromPointInPane(paneVm, paneRect, x, y);

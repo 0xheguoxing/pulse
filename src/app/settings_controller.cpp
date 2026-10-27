@@ -1229,12 +1229,12 @@ void SettingsController::IntegrationAction(int index) {
 void SettingsController::ToggleUi(int index) {
     if (!prefs_ || !context_) return;
     // 修改时间提示 switches and sync status, kept out of the chain below.
-    // 77, 78: 鼠标与选择 hover selection and item check boxes.
-    if (index >= 70 && index <= 78) {
+    // 77, 78: 鼠标与选择 hover selection and item check boxes; 79: 滚动时固定上级.
+    if (index >= 70 && index <= 79) {
         bool* const flags[] = {&prefs_->list_mtime_fade, &prefs_->list_mtime_bold, &prefs_->list_mtime_tree,
                                &prefs_->list_mtime_other_views, &prefs_->list_mtime_flash,
                                &prefs_->sync_onedrive, &prefs_->sync_svn, &prefs_->hover_select,
-                               &prefs_->item_checkboxes};
+                               &prefs_->item_checkboxes, &prefs_->list_tree_sticky};
         bool& flag = *flags[index - 70];
         flag = !flag;
         SaveAndApply(SettingsEffect::ListStyle);
