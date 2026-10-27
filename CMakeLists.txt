@@ -2107,6 +2107,9 @@ endforeach()
 # Capture the completed Pulse target, including optional selftest dependencies.
 if(PULSE_BUILD_PROGRESS_UI_TESTS)
     get_target_property(progress_ui_sources pulse SOURCES)
+    # pch_app_state.cpp's OBJECT_OUTPUTS names pulse's PCH; compiling it here
+    # too would make two rules generate pulse_app_state.pch.
+    list(FILTER progress_ui_sources EXCLUDE REGEX "pch_app_state[.]cpp$")
     get_target_property(progress_ui_libraries pulse LINK_LIBRARIES)
     add_executable(pulse_content_progress_ui_test src/bench/content_progress_ui_test.cpp ${progress_ui_sources})
     target_link_libraries(pulse_content_progress_ui_test PRIVATE ${progress_ui_libraries})
