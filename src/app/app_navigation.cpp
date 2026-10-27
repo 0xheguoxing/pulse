@@ -1529,7 +1529,7 @@ static void ShowConnectingBanner(app::Tab& tab) {
 static bool ApplyWorkerResultToWindow(AppState& s, app::WorkResult& res, bool again) {
     if (Panes(s).empty()) return false;
     NoteColumnStripResult(s, res);
-    NoteDetailsTreeResult(s, res);
+    NoteDetailsTreeResult(s, res, again);
     if (res.error) {
         bool awaited = false;
         ForEachPane(s, [&](app::Pane& pane) {
@@ -2141,6 +2141,21 @@ static void ApplyDirNotifiesToWindow(AppState& s, const std::vector<AppState::Di
                                      const std::vector<AppState::CoalescedSizePatch>& due, bool poll_unc,
                                      ULONGLONG now, std::vector<std::wstring>& shown) {
     bool changed = false;
+    std::vector<std::wstring> tree_changes;
+    for (const auto& item : batch) {
+        if (item.overflow || std::any_of(item.events.begin(), item.events.end(),
+                [](const auto& event) { return event.action != FILE_ACTION_MODIFIED; }))
+            tree_changes.push_back(fs::NormalizePath(item.path));
+    }
+    for (const auto& patch : due) tree_changes.push_back(patch.path);
+    std::sort(tree_changes.begin(), tree_changes.end());
+    tree_changes.erase(std::unique(tree_changes.begin(), tree_changes.end()), tree_changes.end());
+    for (const auto& path : tree_changes) {
+        if (NoteDetailsTreeChange(s, path)) {
+            shown.push_back(path);
+            changed = true;
+        }
+    }
     // The watcher queues one batch per notification buffer; during a slow bulk
     // copy that is one or two events each, so thousands can pile up behind a
     // single tick. Group the whole drain per folder and patch each folder once.
@@ -2236,6 +2251,7 @@ static void ApplyDirNotifiesToWindow(AppState& s, const std::vector<AppState::Di
         for (const auto& path : VisibleFolderPaths(s)) {
             if (!fs::IsUncPath(path)) continue;
             if (s.watches.Armed(path) || PathHasPendingRefresh(s, path) || ShowsUnavailableShare(s, path)) continue;
+            NoteDetailsTreeChange(s, path, true);
             RefreshPath(s, path);
             changed = true;
         }

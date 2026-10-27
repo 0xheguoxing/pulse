@@ -50,6 +50,7 @@ struct DetailsTree {
     std::shared_ptr<const std::vector<int>> map;  // view row -> source index (a PaneViewModel::FilterMap)
     std::shared_ptr<const ui::DetailsTreeRows> rows;
     std::vector<uint8_t> placeholder;  // by (source index - base_size): 0 entry, 1 stand-in, 2 more row
+    std::vector<std::wstring> visible_folders;  // expanded folders actually present in the built view
     uint64_t built_revision = 0;
     int built_key = -1;
 
@@ -88,6 +89,7 @@ struct DetailsTree {
         map.reset();
         rows.reset();
         placeholder.clear();
+        visible_folders.clear();
         built_revision = 0;
         built_key = -1;
     }

@@ -254,6 +254,7 @@ std::vector<std::wstring> VisibleFolderPaths(const AppState& s) {
         if (!view || view->current_path.empty() || fs::IsVirtualPath(view->current_path))
             continue;
         paths.push_back(fs::NormalizePath(view->current_path));
+        AppendDetailsTreeWatchPaths(*view, paths);
     }
     return paths;
 }

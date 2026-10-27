@@ -9,7 +9,9 @@ namespace pulse {
 // newly opened folders. Cheap when nothing changed; called from BuildVm.
 void SyncDetailsTrees(AppState& s);
 // Called for every worker result before pane handling.
-void NoteDetailsTreeResult(AppState& s, const app::WorkResult& res);
+void NoteDetailsTreeResult(AppState& s, const app::WorkResult& res, bool again = false);
+void AppendDetailsTreeWatchPaths(const app::Tab& tab, std::vector<std::wstring>& paths);
+bool NoteDetailsTreeChange(AppState& s, const std::wstring& path, bool poll = false);
 
 // Mouse-down on a list row: chevrons (Alt: the folder and its subfolders),
 // the "more" row buttons, and placeholder rows (swallowed). True when consumed.

@@ -206,6 +206,7 @@ struct Builder {
     }
 
     void Children(DetailsTreeFolder& f, uint16_t depth) {
+        t.visible_folders.push_back(f.path);
         DetailsTree::Recursion& r = t.recursion;
         const bool in_recursion = r.id != 0 && f.recurse_id == r.id;
         if (f.state == FolderState::Idle) RequestFolder(s, tab, f);
@@ -226,6 +227,7 @@ struct Builder {
             ReleaseListing(f);
             ++r.skipped;
             rows.back().expanded = false;
+            t.visible_folders.pop_back();
             return;
         }
         if (f.order.empty()) {
@@ -290,6 +292,7 @@ bool Rebuild(AppState& s, app::Tab& tab, DetailsTree& t, int key) {
         }
     }
     const std::vector<fs::DirEntry>& base = *tab.snapshot;
+    t.visible_folders.clear();
     Builder b{s, tab, t};
     b.key = key;
     b.base_size = base.size();
@@ -503,11 +506,13 @@ bool IsStandIn(const ui::DetailsTreeRow* row) {
 
 void SyncDetailsTrees(AppState& s) {
     std::vector<const DetailsTree*> finished;
+    bool watches_changed = false;
     ForEachPane(s, [&](app::Pane& pane) {
         app::Tab* tab = pane.ActiveTab();
         if (!tab) return;
         if (!Eligible(*tab)) {
             if (tab->tree && tab->tree->combined) {
+                watches_changed |= !tab->tree->visible_folders.empty();
                 tab->StashTreeSelection();
                 tab->tree->Clear();
             }
@@ -519,12 +524,42 @@ void SyncDetailsTrees(AppState& s) {
             t.built_key == key) {
             return;
         }
+        const auto old_folders = t.visible_folders;
         if (Rebuild(s, *tab, t, key)) finished.push_back(&t);
+        watches_changed |= old_folders != t.visible_folders;
     });
+    if (watches_changed) SyncVisibleWatches(s);
     for (const DetailsTree* t : finished) ReportRecursion(s, *t);
 }
 
-void NoteDetailsTreeResult(AppState& s, const app::WorkResult& res) {
+void AppendDetailsTreeWatchPaths(const app::Tab& tab, std::vector<std::wstring>& paths) {
+    if (!Eligible(tab) || !tab.tree) return;
+    paths.insert(paths.end(), tab.tree->visible_folders.begin(), tab.tree->visible_folders.end());
+}
+
+bool NoteDetailsTreeChange(AppState& s, const std::wstring& path, bool poll) {
+    bool changed = false;
+    ForEachPane(s, [&](app::Pane& pane) {
+        auto* tab = pane.ActiveTab();
+        if (!tab || !Eligible(*tab) || !tab->tree) return;
+        auto& tree = *tab->tree;
+        if (std::none_of(tree.visible_folders.begin(), tree.visible_folders.end(),
+                [&](const auto& folder) { return SamePath(folder, path); })) return;
+        const auto it = tree.folders.find(FolderKey(path));
+        if (it == tree.folders.end() || !it->second.expanded) return;
+        auto& folder = it->second;
+        if (poll && (!folder.listing || folder.state == FolderState::Failed)) return;
+        s.store.MarkDirty(path);
+        // Finish an in-flight read before following its dirty mark with one
+        // more pass, rather than repeatedly cancelling during a download.
+        if (folder.state != FolderState::Loading) folder.state = FolderState::Idle;
+        ++tree.revision;
+        changed = true;
+    });
+    return changed;
+}
+
+void NoteDetailsTreeResult(AppState& s, const app::WorkResult& res, bool again) {
     if (res.cancelled || fs::IsVirtualPath(res.path)) return;
     bool changed = false;
     ForEachPane(s, [&](app::Pane& pane) {
@@ -553,6 +588,10 @@ void NoteDetailsTreeResult(AppState& s, const app::WorkResult& res) {
         } else if (res.snapshot) {
             f.listing = res.snapshot;
             f.state = FolderState::Ready;
+            if (again) {
+                s.store.MarkDirty(res.path);
+                f.state = FolderState::Idle;
+            }
         }
         ++t.revision;
         changed = true;
