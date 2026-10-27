@@ -106,8 +106,9 @@ std::vector<HelpGroup> HelpGroups() {
 }
 
 // Compact metrics in DIPs, shared by layout and drawing so the scroll extent
-// always matches what is painted.
-constexpr float kPad = 24, kHeader = 86, kFooter = 40, kRowH = 28, kGroupH = 32,
+// always matches what is painted. 26 DIP rows (22 DIP key chips) keep all
+// groups unscrolled in a 1600x900 window now that tags have keys.
+constexpr float kPad = 24, kHeader = 86, kFooter = 40, kRowH = 26, kGroupH = 32,
                 kColumnGap = 32;
 float GroupHeightDip(const HelpGroup& g) {
     return kGroupH + kRowH * static_cast<float>(g.rows.size());
