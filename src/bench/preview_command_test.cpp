@@ -1,8 +1,10 @@
 #include "../ui/quick_preview_command.h"
 #include "../ui/preview_notice.h"
+#include "../common/localization.h"
 #include <cstdio>
 
 int main() {
+    pulse::l10n::Initialize(GetModuleHandleW(nullptr), L"zh-CN");  // notices come from the string table
     using namespace pulse::ui;
     int failed = 0;
     const auto check = [&](bool pass, const char* text) {

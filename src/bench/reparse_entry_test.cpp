@@ -8,6 +8,7 @@
 #include <iterator>
 #include "../fs/fs_enum.cpp"
 #include "../ui/link_type_text.h"
+#include "../common/localization.h"
 
 static std::wstring fixture;
 static HRESULT WINAPI FixtureAppData(HWND, int, HANDLE, DWORD, LPWSTR path) {
@@ -51,6 +52,7 @@ static bool MakeJunction(const std::filesystem::path& link, const std::filesyste
 }
 
 int main() {
+    pulse::l10n::Initialize(GetModuleHandleW(nullptr), L"zh-CN");  // link type labels
     using namespace pulse::fs;
     const auto root = std::filesystem::absolute(L"bench_data/reparse-entry-" +
         std::to_wstring(GetCurrentProcessId()));

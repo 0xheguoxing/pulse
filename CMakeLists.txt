@@ -740,6 +740,7 @@ add_executable(pulse_authorization_flow_test src/bench/authorization_flow_test.c
 target_link_libraries(pulse_authorization_flow_test PRIVATE ole32 shell32 uuid bcrypt advapi32 pulse_localization)
 
 add_executable(pulse_rename_ops_test src/bench/rename_ops_test.cpp
+    src/bench/preview_integrity_strings.rc
     src/app/batch_rename.cpp
     src/ops/duplicate_cleanup_guard.cpp
     src/ops/ops_manager.cpp src/ops/file_lock_owner.cpp src/ipc/shell_client.cpp)
@@ -1448,7 +1449,7 @@ endforeach()
 
 add_executable(pulse_shell_command_test src/bench/shell_command_test.cpp src/ops/shell_command.cpp)
 target_link_libraries(pulse_shell_command_test PRIVATE shell32 user32)
-add_executable(pulse_reparse_entry_test src/bench/reparse_entry_test.cpp)
+add_executable(pulse_reparse_entry_test src/bench/reparse_entry_test.cpp src/bench/preview_integrity_strings.rc)
 target_link_libraries(pulse_reparse_entry_test PRIVATE pulse_localization user32 shell32 shlwapi netapi32)
 
 add_executable(pulse_link_destination_test src/bench/link_destination_test.cpp src/app/link_resolve.cpp src/fs/fs_enum.cpp
@@ -1488,7 +1489,7 @@ add_executable(pulse_document_completeness_test src/bench/document_completeness_
     src/preview_host/table_document.cpp src/preview_host/epub_document.cpp
     src/preview_host/docx_document.cpp src/preview_host/doc_payload.cpp src/preview_host/zip_entry.cpp)
 add_dependencies(pulse_document_completeness_test pulse_preview)
-add_executable(pulse_preview_command_test src/bench/preview_command_test.cpp)
+add_executable(pulse_preview_command_test src/bench/preview_command_test.cpp src/bench/preview_integrity_strings.rc)
 add_executable(pulse_selection_input_test src/bench/selection_input_test.cpp)
 add_executable(pulse_sidebar_refresh_test src/bench/sidebar_refresh_test.cpp)
 add_executable(pulse_folder_thumbnail_test src/bench/folder_thumbnail_test.cpp src/preview_host/folder_thumbnail.cpp)
