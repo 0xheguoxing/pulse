@@ -732,10 +732,13 @@ int main() {
         const size_t row = catalog.find("{L\"Pulse.AI.exe\"");
         const std::string sha = quoted_after("ull, ", row);
         const std::string packed_sha = quoted_after("ull, ", catalog.find("ull, ", row) + 5);
-        const std::wstring asset = L"ai-windows-Pulse.AI.exe.lzms";
+        // The asset name carries the release channel (ai-windows-..., ai-win81-...).
+        const std::string asset_name = packed_sha.empty() ? std::string{} : quoted_after(packed_sha + "\",", row);
+        const std::wstring asset(asset_name.begin(), asset_name.end());
         const auto packed = ReadAll(build + L"\\ai-pack\\" + asset);
         const auto plain = ReadAll(host);
-        Check(!version.empty() && sha.size() == 64 && packed_sha.size() == 64 && !packed.empty() && !plain.empty(),
+        Check(!version.empty() && sha.size() == 64 && packed_sha.size() == 64 && !asset.empty() &&
+              !packed.empty() && !plain.empty(),
               "this build's catalog row and asset are readable");
         const std::wstring version_w(version.begin(), version.end()), sha_w(sha.begin(), sha.end()),
             packed_sha_w(packed_sha.begin(), packed_sha.end());
