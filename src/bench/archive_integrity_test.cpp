@@ -72,6 +72,11 @@ std::vector<unsigned char> Iso(bool udf) {
 int wmain() {
     const std::wstring root = L"bench_data\\archive_integrity_" + std::to_wstring(GetCurrentProcessId());
     std::filesystem::create_directories(root);
+    // Expect the built-in readers, as on CI: an installed archive pack would answer
+    // with 7-Zip instead. The preview host inherits this, so it sees no packs either.
+    const std::wstring no_packs=std::filesystem::absolute(root+L"\\appdata").wstring();
+    std::filesystem::create_directories(no_packs);
+    SetEnvironmentVariableW(L"LOCALAPPDATA",no_packs.c_str());
     auto test = [&](const wchar_t* name, const unsigned char* data, size_t size, const wchar_t* format, const wchar_t* entry) {
         const std::wstring path=root+L"\\"+name;
         Check(Write(path,data,size),L"write isolated archive fixture");
