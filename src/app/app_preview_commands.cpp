@@ -55,6 +55,13 @@ void HandleQuickPreviewCommand(AppState& s, const ui::QuickPreviewCommand& comma
     }
     const auto& target = command.target;
     const auto action = command.action;
+    if (action == ui::QuickPreviewAction::OpenInNewTab) {
+        if (!(target.attrs & FILE_ATTRIBUTE_DIRECTORY)) return;
+        s.quickPreview.Close();
+        OpenFolderTab(s, target.path);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
     if (target.read_only && (action == ui::QuickPreviewAction::Cut ||
         action == ui::QuickPreviewAction::Rename || action == ui::QuickPreviewAction::Delete)) return;
 

@@ -708,61 +708,12 @@ bool FluentMenu::EnsurePlate(Surface& s, const D2D1_RECT_F& card, POINT origin,
     if (!frame || !host || !IsWindowVisible(host) || IsIconic(host)) return false;
     POINT client{ 0, 0 };
     if (!ClientToScreen(host, &client)) return false;
-    const D2D1_SIZE_U fs = frame->GetPixelSize();
-    const float blur = 16.0f * scale_;  // the capsule recipe (snack_style.cpp)
-    const int margin = static_cast<int>(std::ceil(2.0f * blur));
-    const int sw = pw + margin * 2;
-    const int sh = ph + margin * 2;
-    const float fl = static_cast<float>(key.left - margin - client.x);
-    const float ft = static_cast<float>(key.top - margin - client.y);
-    const D2D1_RECT_F src{ (std::max)(fl, 0.0f), (std::max)(ft, 0.0f),
-                           (std::min)(fl + sw, static_cast<float>(fs.width)),
-                           (std::min)(ft + sh, static_cast<float>(fs.height)) };
-    if (!(src.right > src.left) || !(src.bottom > src.top)) return false;
-
-    const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
-    ComPtr<ID2D1Bitmap1> sample;
-    ComPtr<ID2D1Bitmap1> plate;
-    if (FAILED(dc->CreateBitmap(D2D1::SizeU(sw, sh), nullptr, 0, props, &sample)) ||
-        FAILED(dc->CreateBitmap(D2D1::SizeU(pw, ph), nullptr, 0, props, &plate)))
-        return false;
-    dc->SetTarget(sample.get());
-    dc->Clear(dark_ ? HexColor(0x2B2B2B) : HexColor(0xF9F9F9));
-    const D2D1_RECT_F in{ src.left - fl, src.top - ft, src.right - fl, src.bottom - ft };
-    dc->DrawBitmap(frame, in, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
-    // Menus often hang past the window edge. Stretch the edge pixels of the
-    // frame over the part outside so the blur reads as one material instead
-    // of window acrylic next to a flat plate; capturing the desktop there
-    // costs 23-90 ms per menu.
-    const float sw_f = static_cast<float>(sw), sh_f = static_cast<float>(sh);
-    const float xs[3][2]{ { 0.0f, in.left }, { in.left, in.right }, { in.right, sw_f } };
-    const float ys[3][2]{ { 0.0f, in.top }, { in.top, in.bottom }, { in.bottom, sh_f } };
-    const float sx[3][2]{ { src.left, src.left + 1.0f }, { src.left, src.right },
-                          { src.right - 1.0f, src.right } };
-    const float sy[3][2]{ { src.top, src.top + 1.0f }, { src.top, src.bottom },
-                          { src.bottom - 1.0f, src.bottom } };
-    for (int row = 0; row < 3; ++row) {
-        for (int col = 0; col < 3; ++col) {
-            if (row == 1 && col == 1) continue;
-            if (!(xs[col][1] > xs[col][0]) || !(ys[row][1] > ys[row][0])) continue;
-            const D2D1_RECT_F from{ sx[col][0], sy[row][0], sx[col][1], sy[row][1] };
-            dc->DrawBitmap(frame, D2D1::RectF(xs[col][0], ys[row][0], xs[col][1], ys[row][1]),
-                           1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &from);
-        }
-    }
-    dc->SetTarget(plate.get());
-    dc->Clear(D2D1::ColorF(0, 0, 0, 0));
-    TargetSample ts;
-    ts.bitmap = std::move(sample);
-    ts.origin = D2D1::Point2F(static_cast<float>(-margin), static_cast<float>(-margin));
     // Clearer than the capsule recipe (0.96 / 0.85) so the window shows
     // through; typography_policy_test keeps body text at 4.5:1 or better
     // over white (dark menus) and black (light menus).
-    const float luminosity = dark_ ? 0.80f : 0.72f;
-    const float tint = dark_ ? 0.20f : 0.05f;
-    const bool ok = DrawAcrylicSample(dc, ts, D2D1::RectF(0.0f, 0.0f, static_cast<float>(pw),
-                                      static_cast<float>(ph)), 0.0f, dark_, blur, luminosity, tint);
+    ComPtr<ID2D1Bitmap1> plate;
+    const bool ok = BuildAcrylicPlate(dc, frame, client, RECT{ key.left, key.top, key.left + pw, key.top + ph },
+                                      16.0f * scale_, dark_, dark_ ? 0.80f : 0.72f, dark_ ? 0.20f : 0.05f, plate);
     dc->SetTarget(target);
     if (!ok) return false;
     s.plate = std::move(plate);

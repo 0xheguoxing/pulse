@@ -112,7 +112,36 @@ SettingsLayout MakeSettingsLayout(const WindowViewModel& vm, const D2D1_RECT_F& 
         l.global_search_hotkey_row = D2D1::RectF(card_left, y, card_right, y + 108*scale);
         l.global_search_hotkey_button = D2D1::RectF(card_left + 54*scale, y + 62*scale, card_right - 16*scale, y + 98*scale);
         y += 108*scale;
+        l.global_search_double_ctrl_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        y += 68*scale;
+        {
+            // Same shape as the other three-choice rows: beside the label, or
+            // below it when the card is narrow.
+            const bool narrow = card_right - card_left < 560*scale;
+            const float h = narrow ? 98.0f : 64.0f;
+            l.global_search_gap_card = D2D1::RectF(card_left, y, card_right, y + h*scale);
+            const float cl = narrow ? card_left + 16*scale : card_right - (282 + 16)*scale;
+            const float cr = card_right - 16*scale, w = (cr - cl) / 3;
+            for (int i = 0; i < 3; ++i)
+                l.global_search_gap[i] = D2D1::RectF(cl + i*w, y + (h - 44)*scale, cl + (i + 1)*w, y + (h - 12)*scale);
+            y += h*scale;
+        }
+        l.global_search_apps_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        y += 68*scale;
+        l.dialog_jump_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        y += 68*scale;
+        l.dialog_jump_auto_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        y += 68*scale;
         l.search_pinyin_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        y += 68*scale;
+        l.jump_history_row = D2D1::RectF(card_left, y, card_right, y + 68*scale);
+        {
+            // 清除记录 sits left of the switch, sized to its label.
+            float label = 0;
+            for (wchar_t c : pulse::l10n::Get(pulse::l10n::StringId::JumpHistoryClear)) label += c >= 0x2E80 ? 14.0f : 7.5f;
+            const float right = card_right - 72*scale, w = (label + 32) * scale;
+            l.jump_history_clear = D2D1::RectF(right - w, y + 18*scale, right, y + 50*scale);
+        }
         y += 68*scale;
         l.filename_status = D2D1::RectF(card_left, y, card_right, y + 72*scale);
         y += 72*scale;

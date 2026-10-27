@@ -3506,7 +3506,8 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
                    hit.region == ui::HitTestResult::SettingsNotifyIcon ||
                    hit.region == ui::HitTestResult::SettingsBlankClick ||
                    hit.region == ui::HitTestResult::SettingsHomeFolder ||
-                   hit.region == ui::HitTestResult::SettingsLanCache) {
+                   hit.region == ui::HitTestResult::SettingsLanCache ||
+                   hit.region == ui::HitTestResult::SettingsThumbCache) {
             // One branch on purpose: this else-if chain sits at MSVC's block
             // nesting limit (C1061), so new settings must not lengthen it.
             switch (hit.region) {
@@ -3518,6 +3519,7 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             case ui::HitTestResult::SettingsBlankClick: s->settings.BlankClick(hit.index); break;
             case ui::HitTestResult::SettingsHomeFolder: s->settings.HomeFolder(hit.index); break;
             case ui::HitTestResult::SettingsLanCache: SetLanCacheMode(*s, hit.index); break;
+            case ui::HitTestResult::SettingsThumbCache: s->settings.ClearThumbCache(); break;
             case ui::HitTestResult::SettingsMtimeStyle: s->settings.MtimeStyle(hit.index); break;
             case ui::HitTestResult::SettingsMtimeRange: s->settings.MtimeRange(hit.index); break;
             case ui::HitTestResult::SettingsMtimePalette: s->settings.MtimePalette(hit.index); break;
@@ -3526,8 +3528,9 @@ LRESULT HandleLButtonDown(AppState* s, HWND hwnd, UINT msg, WPARAM wParam, LPARA
             default: s->settings.FolderSort(hit.index); break;
             }
             InvalidateRect(hwnd, nullptr, FALSE);
-        } else if (hit.region == ui::HitTestResult::SettingsTrayIcon) {
-            s->settings.TrayIconSize(hit.index);
+        } else if (hit.region == ui::HitTestResult::SettingsTrayIcon || hit.region == ui::HitTestResult::SettingsDoubleCtrlGap) {
+            if (hit.region == ui::HitTestResult::SettingsTrayIcon) s->settings.TrayIconSize(hit.index);
+            else s->settings.DoubleCtrlGap(hit.index);
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (hit.region == ui::HitTestResult::SettingsWallpaperLook ||
                    hit.region == ui::HitTestResult::SettingsWallpaperBlur ||

@@ -104,7 +104,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
             response.integrity.state = preview::IntegrityState::Failed;
             response.integrity.reason = preview::IntegrityReason::Unavailable;
         } else if (req.kind == ipc::PreviewRequestKind::Properties) {
-            if (!IsOfflinePlaceholder(req.attrs)) properties = ReadProperties(path);
+            if (!IsOfflinePlaceholder(req.attrs))
+                properties = ReadProperties(path, (req.flags & ipc::kPreviewRequestFlagRichText) != 0);
             response.property_count = static_cast<uint32_t>(properties.size());
             response.status = 0;
             made = true;

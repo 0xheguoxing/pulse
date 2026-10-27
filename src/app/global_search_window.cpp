@@ -2,6 +2,8 @@
 #include "global_search_result_state.h"
 #include "app_catalog.h"
 #include "folder_alias.h"
+#include "jump_history.h"
+#include "jump_match.h"
 #include "../ui/FluentTokens.h"
 #include "resource.h"
 #include "../ui/empty_state_layout.h"
@@ -37,6 +39,7 @@
 #include <condition_variable>
 #include <cwctype>
 #include <mutex>
+#include <numeric>
 #include <thread>
 #include <tuple>
 
@@ -45,7 +48,8 @@ namespace {
 using Microsoft::WRL::ComPtr;
 using l10n::StringId;
 constexpr UINT kIndexStatus = WM_APP + 181, kIndexResult = WM_APP + 182, kContentResult = WM_APP + 183;
-constexpr UINT kNetworkResult = WM_APP + 184, kThumbnailResult = WM_APP + 185, kAppsLoaded = WM_APP + 186;
+constexpr UINT kNetworkResult = WM_APP + 184, kThumbnailResult = WM_APP + 185;
+constexpr UINT kAppsReady = WM_APP + 186;  // the Start menu app list is in
 constexpr UINT_PTR kDebounce = 1;
 constexpr UINT_PTR kConnectTimeout = 2;
 constexpr UINT_PTR kScopeTooltipTimer = 3;
@@ -58,10 +62,10 @@ constexpr float kFieldLeft = 62, kFieldTop = 14, kFieldHeight = 44, kFieldRight 
 constexpr float kEditCornerRadius = 8;
 constexpr float kMinWidth = 640, kMinHeight = 420, kDefaultWidth = 960, kDefaultHeight = 620;
 constexpr size_t kMaximumResults = 200;
-// Start menu apps lead the results (#58-1), a handful at most.
-constexpr size_t kMaximumApps = 4;
 // Aliased folders listed ahead of the best matches.
 constexpr size_t kMaximumAliases = 3;
+constexpr size_t kJumpRows = 4;  // 跳转 group: known folders above the index results
+constexpr size_t kAppRows = 4;   // 应用 group: Start menu programs after the best matches
 constexpr size_t kMaximumPinnedScopes = 3, kMaximumNetworkScopes = 2;
 const std::wstring& Text(StringId id) { return l10n::Get(id); }
 std::wstring ParentPath(const std::wstring& path) {
@@ -96,7 +100,17 @@ std::wstring KnownFolder(REFKNOWNFOLDERID id) {
 void OpenResult(std::wstring path, bool location) {
     std::thread([path = std::move(path), location] {
         const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        if (location) {
+        if (app::IsAppPath(path)) {
+            // Start menu programs (Store apps too) start through their shell item.
+            PIDLIST_ABSOLUTE item = nullptr;
+            if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &item, 0, nullptr))) {
+                SHELLEXECUTEINFOW info{sizeof(info)};
+                info.fMask = SEE_MASK_IDLIST | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+                info.lpIDList = item; info.nShow = SW_SHOWNORMAL;
+                ShellExecuteExW(&info);
+                CoTaskMemFree(item);
+            }
+        } else if (location) {
             PIDLIST_ABSOLUTE item = nullptr;
             if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &item, 0, nullptr))) {
                 SHOpenFolderAndSelectItems(item, 0, nullptr, 0);
@@ -169,7 +183,7 @@ struct GlobalSearchWindow::Impl {
     struct Row {
         std::wstring name, path, snippet; bool directory = false;
         uint64_t size = 0, mtime = 0; bool network = false;
-        bool app = false;  // a Start menu app; path is shell:AppsFolder\<id>
+        bool app = false;  // a Start menu program (path: its AppsFolder item)
         std::wstring alias;  // a folder found by its alias, shown as 「alias · name」
     };
     std::vector<Row> rows;
@@ -212,8 +226,12 @@ struct GlobalSearchWindow::Impl {
     std::vector<Scope> scopes;
     int scope = 0, kind_filter = 0, date_filter = 0;
     std::wstring counts_key;
-    size_t best_count = 0, folder_count = 0, app_count = 0;
+    size_t best_count = 0, folder_count = 0, jump_count = 0;
+    std::vector<Row> jump_rows;  // known folders matching the query (跳转)
     app::AppCatalog app_catalog;
+    std::vector<app::AppEntry> apps;
+    std::vector<Row> app_rows;   // Start menu programs matching the query (应用)
+    size_t app_count = 0;
     wchar_t swallow_char = 0;
     bool stale = false, stale_content_mode = false;
     bool showing_recent = false, keyboard_nav = false, preview_open = false, animations = true;
@@ -289,14 +307,17 @@ struct GlobalSearchWindow::Impl {
         if (rows.empty()) return out;
         if (showing_recent) { out.push_back({StringId::ColumnRecentOpened, 0, rows.size()}); return out; }
         if (content_mode) { out.push_back({StringId::GlobalSearchContentMatches, 0, rows.size()}); return out; }
-        const size_t apps = std::min(app_count, rows.size());
-        if (apps) out.push_back({StringId::GlobalSearchApps, 0, apps});
-        const size_t best = std::min(best_count, rows.size() - apps);
-        if (best) out.push_back({StringId::GlobalSearchBestMatch, apps, best});
-        const size_t folders = std::min(folder_count, rows.size() - apps - best);
-        if (folders) out.push_back({StringId::Folder, apps + best, folders});
-        const size_t files = rows.size() - apps - best - folders;
-        if (files) out.push_back({StringId::FilterFiles, apps + best + folders, files});
+        const size_t j = (std::min)(jump_count, rows.size());
+        if (j) out.push_back({StringId::GlobalSearchJump, 0, j});
+        // 跳转, 最佳匹配, 应用, then the (long) folder and file lists.
+        const size_t b = (std::min)(best_count, rows.size() - j);
+        if (b) out.push_back({StringId::GlobalSearchBestMatch, j, b});
+        const size_t a = (std::min)(app_count, rows.size() - j - b);
+        if (a) out.push_back({StringId::GlobalSearchGroupApps, j + b, a});
+        const size_t f = (std::min)(folder_count, rows.size() - j - b - a);
+        if (f) out.push_back({StringId::Folder, j + b + a, f});
+        const size_t files = rows.size() - j - b - a - f;
+        if (files) out.push_back({StringId::FilterFiles, j + b + a + f, files});
         return out;
     }
     void BuildLayout() {
@@ -370,7 +391,7 @@ struct GlobalSearchWindow::Impl {
             rows.push_back(std::move(row));
             if (rows.size() >= 6) break;
         }
-        best_count = folder_count = app_count = 0;
+        best_count = folder_count = jump_count = app_count = 0;
         total = rows.size();
     }
     void Changed() {
@@ -384,7 +405,16 @@ struct GlobalSearchWindow::Impl {
         const bool keep = !query.empty() && !showing_recent && !rows.empty() && content_mode == stale_content_mode;
         stale = keep;
         stale_content_mode = content_mode;
-        if (!keep) { rows.clear(); selected = first = 0; best_count = folder_count = app_count = 0; scroll = scroll_target = 0; }
+        if (!keep) { rows.clear(); selected = first = 0; best_count = folder_count = jump_count = app_count = 0; scroll = scroll_target = 0; }
+        ComputeJump();
+        ComputeApps();
+        if (!keep && (!jump_rows.empty() || !app_rows.empty())) {
+            // Known folders and programs answer at once; the index results
+            // join around them.
+            rows = jump_rows; jump_count = rows.size();
+            rows.insert(rows.end(), app_rows.begin(), app_rows.end()); app_count = app_rows.size();
+            selected = 0;
+        }
         total = 0; error.clear(); truncated = false;
         local_result = {}; network_result = {}; providers = {};
         if (CountsKey() != counts_key) for (auto& item : scopes) item.counted = false;
@@ -392,10 +422,10 @@ struct GlobalSearchWindow::Impl {
         showing_recent = query.empty();
         if (showing_recent) { FillRecent(); selected = rows.empty() ? -1 : 0; appear_start = ui::motion::NowMs(); }
         else {
-            // Apps match in memory, so they show at once; the index results join them.
-            ReplaceAppRows();
+            // Known folders and apps match in memory, so they show at once; the
+            // index results join them.
             if (!keep && !rows.empty()) { selected = 0; appear_start = ui::motion::NowMs(); }
-            total = app_count;
+            total = jump_count + app_count;
         }
         ++layout_epoch;
         BuildLayout();
@@ -452,6 +482,44 @@ struct GlobalSearchWindow::Impl {
         return name.size() >= word.size() && CompareStringOrdinal(name.data(), static_cast<int>(word.size()),
             word.data(), static_cast<int>(word.size()), TRUE) == CSTR_EQUAL;
     }
+    // 跳转: open tabs, Quick access and recent folders matching the query,
+    // ranked by how they match (name, word start, pinyin, initials).
+    void ComputeJump() {
+        jump_rows.clear();
+        if (content_mode || query.empty() || date_filter != 0) return;
+        const auto kind = kKinds[kind_filter];
+        if (kind != index::SearchKind::Any && kind != index::SearchKind::Folder) return;
+        const auto scope_path = ScopePath();
+        std::vector<app::JumpCandidate> candidates;
+        for (const auto& folder : context.jump_folders)
+            if (UnderFolder(folder.path, scope_path)) candidates.push_back({folder.path, folder.label});
+        for (const size_t i : app::RankJumpFolders(candidates, query, search_pinyin, kJumpRows)) {
+            Row row; row.path = candidates[i].path; row.directory = true;
+            row.name = candidates[i].label.empty() ? LeafName(row.path) : candidates[i].label;
+            row.network = IsNetworkPath(row.path);
+            jump_rows.push_back(std::move(row));
+        }
+    }
+    // 应用: Start menu programs whose name matches, the most started first
+    // among equal matches. Only for a plain search everywhere.
+    void ComputeApps() {
+        app_rows.clear();
+        if (!context.show_apps || content_mode || query.empty() || date_filter != 0 || kind_filter != 0 || scope != 0 || apps.empty()) return;
+        std::vector<size_t> order(apps.size());
+        std::iota(order.begin(), order.end(), size_t{0});
+        if (context.history) {
+            std::vector<double> score(apps.size());
+            for (size_t i = 0; i < apps.size(); ++i) score[i] = context.history->Score(apps[i].path, {});
+            std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return score[a] > score[b]; });
+        }
+        std::vector<app::JumpCandidate> candidates;
+        candidates.reserve(order.size());
+        for (size_t i : order) candidates.push_back({apps[i].name, {}});
+        for (const size_t k : app::RankJumpFolders(candidates, query, search_pinyin, kAppRows)) {
+            Row row; row.name = apps[order[k]].name; row.path = apps[order[k]].path; row.app = true;
+            app_rows.push_back(std::move(row));
+        }
+    }
     // Aliased folders lead the best matches; up to three names starting with
     // the query follow.
     void GroupRows(std::vector<Row> aliases = {}) {
@@ -481,22 +549,6 @@ struct GlobalSearchWindow::Impl {
             if (item.kind == ScopeKind::All) continue;
             for (const auto& row : rows) if (UnderFolder(row.path, item.path)) ++item.count;
         }
-    }
-    // Start menu apps take part in plain name searches only: no content mode,
-    // scope or filter chip (those all narrow the search to files).
-    bool AppsWanted() const {
-        return !content_mode && !showing_recent && scope == 0 && kind_filter == 0 && date_filter == 0 && !query.empty();
-    }
-    std::vector<Row> AppRows() const {
-        std::vector<Row> out;
-        if (!AppsWanted()) return out;
-        const auto apps = app_catalog.Apps();
-        for (const size_t i : app::MatchApps(*apps, query, search_pinyin, kMaximumApps)) {
-            Row row{(*apps)[i].name, (*apps)[i].path, {}, false};
-            row.app = true;
-            out.push_back(std::move(row));
-        }
-        return out;
     }
     // Folders whose alias (folder_alias.h) matches the query, as the omnibar
     // ranks them. Only the alias counts: the index finds folder names itself.
@@ -530,32 +582,6 @@ struct GlobalSearchWindow::Impl {
         }
         return out;
     }
-    // Swaps the leading app rows for the current matches.
-    void ReplaceAppRows() {
-        const size_t old = std::min(app_count, rows.size());
-        rows.erase(rows.begin(), rows.begin() + static_cast<std::ptrdiff_t>(old));
-        auto apps = AppRows();
-        app_count = apps.size();
-        rows.insert(rows.begin(), std::make_move_iterator(apps.begin()), std::make_move_iterator(apps.end()));
-    }
-    // The app list landed (first search after start, or a refresh).
-    void AppsLoaded() {
-        if (!hwnd || !IsWindowVisible(hwnd) || !AppsWanted()) return;
-        const auto position = app::GlobalSearchPosition::Capture(rows, selected, first);
-        const bool had_rows = !rows.empty();
-        const size_t old = app_count;
-        ReplaceAppRows();
-        total = total - std::min(total, old) + app_count;
-        truncated = total > rows.size();
-        if (!had_rows && !rows.empty()) appear_start = ui::motion::NowMs();
-        BuildLayout();
-        const int restored = position.Selection(rows);
-        selected = restored >= 0 ? restored : rows.empty() ? -1 : 0;
-        ClampSelection(false);
-        UpdateCounts();
-        RequestThumbnail();
-        Invalidate();
-    }
     void MergeFilenames() {
         const auto position = app::GlobalSearchPosition::Capture(rows, selected, first);
         const bool had_rows = !rows.empty();
@@ -570,10 +596,17 @@ struct GlobalSearchWindow::Impl {
             const auto a = path::StripExtendedPathPrefix(l), b = path::StripExtendedPathPrefix(r);
             return CompareStringOrdinal(a.data(), static_cast<int>(a.size()), b.data(), static_cast<int>(b.size()), TRUE) == CSTR_EQUAL;
         };
+        ComputeJump();
+        const auto listed = [&](const std::vector<Row>& list, const std::wstring& path) {
+            return std::any_of(list.begin(), list.end(), [&](const Row& row) { return same(row.path, path); });
+        };
+        // A folder listed under 跳转 is not repeated under its alias.
+        aliases.erase(std::remove_if(aliases.begin(), aliases.end(), [&](const Row& alias) { return listed(jump_rows, alias.path); }),
+                      aliases.end());
         size_t duplicates = 0;
         for (const auto& hit : merged.hits) {
-            if (std::any_of(aliases.begin(), aliases.end(), [&](const Row& alias) { return same(alias.path, hit.path); })) {
-                ++duplicates;  // already listed under its alias
+            if (listed(aliases, hit.path) || listed(jump_rows, hit.path)) {
+                ++duplicates;  // already listed under its alias or 跳转
                 continue;
             }
             Row row{hit.name, hit.path, {}, hit.is_dir};
@@ -581,10 +614,13 @@ struct GlobalSearchWindow::Impl {
             rows.push_back(std::move(row));
         }
         const size_t alias_count = aliases.size();
-        app_count = 0;
         GroupRows(std::move(aliases));
-        ReplaceAppRows();
-        total = merged.total - std::min(merged.total, duplicates) + alias_count + app_count;
+        rows.insert(rows.begin(), jump_rows.begin(), jump_rows.end());
+        jump_count = jump_rows.size();
+        ComputeApps();
+        rows.insert(rows.begin() + static_cast<std::ptrdiff_t>(jump_count + best_count), app_rows.begin(), app_rows.end());
+        app_count = app_rows.size();
+        total = (std::max)(merged.total - (std::min)(merged.total, duplicates) + alias_count + jump_count + app_count, rows.size());
         truncated = total > rows.size(); busy = providers.Busy();
         error = providers.Error() ? Text(rows.empty() ? StringId::GlobalSearchFailed : StringId::SearchIncomplete) : std::wstring{};
         if (!busy) KillTimer(hwnd, kConnectTimeout);
@@ -832,6 +868,9 @@ struct GlobalSearchWindow::Impl {
                 static_cast<float>(ui::typography::EditFontPixels(scale, 20.0f)), l10n::LocaleName(), &edit_format);
         }
         SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(edit_font), TRUE);
+        // The hint reads lighter than the query: 16 DIP against 20.
+        SetPropW(edit, L"Pulse.EditCueSize",
+            reinterpret_cast<HANDLE>(static_cast<INT_PTR>(ui::typography::EditFontPixels(scale, 16.0f))));
         // One text line plus 4 DIP inside the 44 DIP field; taller fonts grow the header.
         const float line_dip = static_cast<float>(ui::EditLineHeight(edit, edit_font, 1 << 16)) / scale;
         grow = std::max(0.0f, std::ceil(line_dip + 14.0f - kFieldHeight));
@@ -1439,6 +1478,8 @@ struct GlobalSearchWindow::Impl {
         if (!row.app) {
             LabelC(path::StripExtendedPathPrefix(row.path), {l, y, r, y + 36}, 12, p.faint, false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_LEADING, true);
             y += 44;
+        } else {
+            y += 8;
         }
         auto meta = [&](StringId label, const std::wstring& value) {
             if (value.empty()) return;
@@ -1446,17 +1487,20 @@ struct GlobalSearchWindow::Impl {
             LabelC(value, {l + 76, y, r, y + 20}, 12, p.muted);
             y += 22;
         };
-        meta(StringId::ColumnType, TypeName(row));
+        meta(StringId::ColumnType, row.app ? Text(StringId::GlobalSearchGroupApps) : TypeName(row));
         if (!row.directory && (row.size || row.mtime)) meta(StringId::ColumnSize, FormatSize(row.size));
         meta(StringId::ModifiedTime, FormatTime(row.mtime));
         // actions
         const float b = bottom - 16;
         const D2D1_RECT_F location{l, b - 32, (l + r) / 2 - 3, b};
         const D2D1_RECT_F copy{(l + r) / 2 + 3, b - 32, r, b};
-        const D2D1_RECT_F open{l, b - 70, r, b - 38};
-        AddHot(open, HotPreviewOpen); AddHot(location, HotPreviewLocation); AddHot(copy, HotPreviewCopy);
+        // A program has no location or path to copy: just 打开.
+        const D2D1_RECT_F open = row.app ? D2D1_RECT_F{l, b - 32, r, b} : D2D1_RECT_F{l, b - 70, r, b - 38};
+        AddHot(open, HotPreviewOpen);
         FillC(open, Hovered(HotPreviewOpen) ? Theme().accent_hover : p.accent, 7);
         LabelC(Text(StringId::Open), open, 13, D2D1::ColorF(1, 1, 1, 1), false, L"Segoe UI", false, DWRITE_TEXT_ALIGNMENT_CENTER);
+        if (row.app) return;
+        AddHot(location, HotPreviewLocation); AddHot(copy, HotPreviewCopy);
         for (auto [rect, label, kind] : {std::tuple{location, StringId::HintActOpenPath, HotPreviewLocation}, std::tuple{copy, StringId::CopyPath, HotPreviewCopy}}) {
             FillC(rect, Hovered(kind) ? p.hover : p.chip, 7);
             StrokeC(rect, p.line, 7);
@@ -1506,6 +1550,10 @@ struct GlobalSearchWindow::Impl {
     }
     void Paint() {
         PAINTSTRUCT paint{}; BeginPaint(hwnd, &paint);
+        Render();
+        EndPaint(hwnd, &paint);
+    }
+    void Render() {
         if (EnsureTarget()) {
             const auto theme = Theme();
             const auto p = MakePalette(theme);
@@ -1539,7 +1587,6 @@ struct GlobalSearchWindow::Impl {
             if (moving) SetTimer(hwnd, kAnimationTimer, 10, nullptr);
             else KillTimer(hwnd, kAnimationTimer);
         }
-        EndPaint(hwnd, &paint);
     }
     const HotSpot* HitAt(float x, float y) const {
         for (auto it = hot.rbegin(); it != hot.rend(); ++it) if (Contains(it->rect, x, y)) return &*it;
@@ -1685,6 +1732,10 @@ struct GlobalSearchWindow::Impl {
             Invalidate(); return 0;
         case kIndexStatus: Invalidate(); return 0;
         case kThumbnailResult: TakeThumbnail(); return 0;
+        case kAppsReady:
+            apps = *app_catalog.Apps();
+            if (IsWindowVisible(hwnd) && !query.empty() && !content_mode && !showing_recent && !providers.Busy()) MergeFilenames();
+            return 0;
         case kIndexResult: {
             index::SearchResult result;
             if (filenames.TakeResult(static_cast<uint32_t>(wp), result) && IsWindowVisible(hwnd)) {
@@ -1699,14 +1750,12 @@ struct GlobalSearchWindow::Impl {
             }
             return 0;
         }
-        case kAppsLoaded:
-            AppsLoaded();
-            return 0;
         case kContentResult: {
             index::ContentSearchUpdate update;
             while (contents.TakeUpdate(update)) {
                 if (update.progress.generation != generation || !content_mode || !IsWindowVisible(hwnd)) continue;
-                if (stale) { stale = false; rows.clear(); selected = 0; app_count = 0; scroll = scroll_target = 0; }
+                if (stale) { stale = false; rows.clear(); selected = 0; scroll = scroll_target = 0; }
+                jump_count = app_count = 0;
                 const bool had_rows = !rows.empty();
                 for (auto& hit : update.hits) {
                     if (rows.size() >= kMaximumResults) break;
@@ -1754,20 +1803,59 @@ struct GlobalSearchWindow::Impl {
         POINT cursor{}; GetCursorPos(&cursor);
         const HMONITOR active_monitor = foreground && foreground != hwnd ? MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST) :
             MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-        using MonitorDpi = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
-        if (const HMODULE shcore = LoadLibraryW(L"shcore.dll")) {
-            const auto dpi = reinterpret_cast<MonitorDpi>(GetProcAddress(shcore, "GetDpiForMonitor"));
-            UINT x = 96, y = 96;
-            if (dpi && SUCCEEDED(dpi(active_monitor, 0, &x, &y))) scale = static_cast<float>(x) / 96.0f;
-            FreeLibrary(shcore);
-        }
+        if (const float monitor_scale = MonitorScale(active_monitor); monitor_scale > 0) scale = monitor_scale;
         (void)owner;
         const bool folder_changed = folder != current_folder;
         current_folder = folder;
         current_folder_tip = path::StripExtendedPathPrefix(folder);
         if (folder.empty()) current_only = false;
         HideScopeTooltip();
-        if (!hwnd) {
+        if (!Create()) return false;
+        if (folder_changed && scope > 0 && scope < static_cast<int>(scopes.size()) && scopes[static_cast<size_t>(scope)].kind == ScopeKind::Current) scope = 0;
+        Prepare();
+        BOOL is_dark = dark; DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &is_dark, sizeof(is_dark));
+        const int corner = DWMWCP_ROUND;
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
+        SendMessageW(edit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(Text(StringId::GlobalSearchPlaceholder).c_str()));
+        MONITORINFO monitor{sizeof(monitor)}; GetMonitorInfoW(active_monitor, &monitor);
+        const RECT place = Placement(monitor.rcWork);
+        SetWindowPos(hwnd, HWND_TOPMOST, place.left, place.top, place.right - place.left, place.bottom - place.top, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+        Layout(); SetForegroundWindow(hwnd); SetFocus(edit); SendMessageW(edit, EM_SETSEL, 0, -1);
+        Changed(); return true;
+    }
+    static float MonitorScale(HMONITOR monitor) {
+        float result = 0;
+        using MonitorDpi = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+        if (const HMODULE shcore = LoadLibraryW(L"shcore.dll")) {
+            const auto dpi = reinterpret_cast<MonitorDpi>(GetProcAddress(shcore, "GetDpiForMonitor"));
+            UINT x = 96, y = 96;
+            if (dpi && SUCCEEDED(dpi(monitor, 0, &x, &y))) result = static_cast<float>(x) / 96.0f;
+            FreeLibrary(shcore);
+        }
+        return result;
+    }
+    // Centred, a quarter down the work area, at the saved size.
+    RECT Placement(const RECT& work) const {
+        const float want_w = context.width > 0 ? static_cast<float>(context.width) : kDefaultWidth;
+        const float want_h = context.height > 0 ? static_cast<float>(context.height) : kDefaultHeight;
+        const int w = std::clamp(Px(want_w), std::min(Px(kMinWidth), static_cast<int>(work.right - work.left) - Px(32)), static_cast<int>(work.right - work.left) - Px(32));
+        const int h = std::clamp(Px(want_h), std::min(Px(kMinHeight), static_cast<int>(work.bottom - work.top) - Px(32)), static_cast<int>(work.bottom - work.top) - Px(32));
+        const int x = work.left + (work.right - work.left - w) / 2, y = work.top + (work.bottom - work.top - h) / 4;
+        return {x, y, x + w, y + h};
+    }
+    // Per show: scopes, the program list and the appearance.
+    void Prepare() {
+        BuildScopes();
+        if (context.show_apps) {
+            apps = *app_catalog.Apps();
+            app_catalog.Refresh(hwnd, kAppsReady, 10ull * 60 * 1000);
+        }
+        icons.SetScale(scale);
+        ApplyAppearance();
+    }
+    bool Create() {
+        if (hwnd) return true;
+        {
             WNDCLASSEXW cls{sizeof(cls)}; cls.style = CS_DBLCLKS;
             cls.lpfnWndProc = WindowProc; cls.hInstance = GetModuleHandleW(nullptr);
             cls.hCursor = LoadCursorW(nullptr, IDC_ARROW); cls.lpszClassName = L"Pulse.GlobalSearch";
@@ -1788,26 +1876,74 @@ struct GlobalSearchWindow::Impl {
             network.Start(hwnd, kIndexStatus, kNetworkResult);
             contents.Start(hwnd, kContentResult, index::ContentAgentMode::Instant);
         }
-        if (folder_changed && scope > 0 && scope < static_cast<int>(scopes.size()) && scopes[static_cast<size_t>(scope)].kind == ScopeKind::Current) scope = 0;
-        BuildScopes();
-        icons.SetScale(scale);
-        ApplyAppearance();
+        return true;
+    }
+    // ---- pre-warming --------------------------------------------------------
+    // The first summon paid for the window, the D2D device, DWM's first show
+    // and a cold first frame (fonts, glyphs, icons): ~90 ms of ~130. They are
+    // done ahead, once, while the user is not busy; the Start menu program
+    // list starts loading too, so the first query already finds programs.
+    // Thread timers carry no context; there is one popup per process.
+    static inline Impl* prewarm_owner = nullptr;
+    UINT_PTR prewarm_timer = 0;
+    int prewarm_tries = 0;
+    std::function<void()> prewarm_prepare;
+    void SchedulePrewarm(uint32_t delay_ms, std::function<void()> prepare) {
+        if (hwnd || prewarm_timer) return;
+        prewarm_prepare = std::move(prepare);
+        prewarm_owner = this;
+        prewarm_timer = SetTimer(nullptr, 0, delay_ms, PrewarmTimer);
+    }
+    static void CALLBACK PrewarmTimer(HWND, UINT, UINT_PTR id, DWORD) {
+        KillTimer(nullptr, id);
+        Impl* self = prewarm_owner;
+        if (!self || self->prewarm_timer != id) return;
+        self->prewarm_timer = 0;
+        self->Prewarm();
+    }
+    void Prewarm() {
+        if (hwnd) return;
+        // Typing, clicking or dragging: try again in a moment.
+        const bool busy_input = HIWORD(GetQueueStatus(QS_INPUT)) != 0 ||
+            GetAsyncKeyState(VK_LBUTTON) < 0 || GetAsyncKeyState(VK_RBUTTON) < 0;
+        if (busy_input && ++prewarm_tries < 20) {
+            prewarm_timer = SetTimer(nullptr, 0, 1000, PrewarmTimer);
+            return;
+        }
+        if (prewarm_prepare) prewarm_prepare();  // context and appearance, as for a summon
+        prewarm_prepare = nullptr;
+        if (hwnd) return;  // summoned meanwhile
+        POINT cursor{}; GetCursorPos(&cursor);
+        const HMONITOR monitor_handle = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        if (const float monitor_scale = MonitorScale(monitor_handle); monitor_scale > 0) scale = monitor_scale;
+        animations = ui::motion::SystemAnimationsEnabled();
+        if (!Create()) return;
+        Prepare();
         BOOL is_dark = dark; DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &is_dark, sizeof(is_dark));
         const int corner = DWMWCP_ROUND;
         DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
-        SendMessageW(edit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(Text(StringId::GlobalSearchPlaceholder).c_str()));
-        MONITORINFO monitor{sizeof(monitor)}; GetMonitorInfoW(active_monitor, &monitor);
-        const auto& work = monitor.rcWork;
-        const float want_w = context.width > 0 ? static_cast<float>(context.width) : kDefaultWidth;
-        const float want_h = context.height > 0 ? static_cast<float>(context.height) : kDefaultHeight;
-        const int w = std::clamp(Px(want_w), std::min(Px(kMinWidth), static_cast<int>(work.right - work.left) - Px(32)), static_cast<int>(work.right - work.left) - Px(32));
-        const int h = std::clamp(Px(want_h), std::min(Px(kMinHeight), static_cast<int>(work.bottom - work.top) - Px(32)), static_cast<int>(work.bottom - work.top) - Px(32));
-        SetWindowPos(hwnd, HWND_TOPMOST, work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 4, w, h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-        Layout(); SetForegroundWindow(hwnd); SetFocus(edit); SendMessageW(edit, EM_SETSEL, 0, -1);
-        app_catalog.Refresh(hwnd, kAppsLoaded);  // background; at most every few minutes
-        Changed(); return true;
+        MONITORINFO monitor{sizeof(monitor)}; GetMonitorInfoW(monitor_handle, &monitor);
+        const RECT place = Placement(monitor.rcWork);
+        // Cloaked: DWM composes the window once but never shows it, and it
+        // is not activated, so focus stays where it is.
+        BOOL cloak = TRUE;
+        const bool cloaked = SUCCEEDED(DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak)));
+        SetWindowPos(hwnd, HWND_TOPMOST, place.left, place.top, place.right - place.left, place.bottom - place.top,
+                     SWP_NOACTIVATE | SWP_FRAMECHANGED | (cloaked ? SWP_SHOWWINDOW : 0));
+        Layout();
+        Changed();  // the empty-query list, as on a summon
+        Render();
+        KillTimer(hwnd, kAnimationTimer);
+        if (cloaked) {
+            ShowWindow(hwnd, SW_HIDE);
+            cloak = FALSE;
+            DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        }
+        Cancel();
     }
     ~Impl() {
+        if (prewarm_timer) KillTimer(nullptr, prewarm_timer);
+        if (prewarm_owner == this) prewarm_owner = nullptr;
         Cancel(); filenames.Stop(); network.Stop(); contents.Stop();
         if (thumbnails) {
             { std::lock_guard lock(thumbnails->mutex); thumbnails->stop = true; thumbnails->notify = nullptr; }
@@ -1843,6 +1979,10 @@ void GlobalSearchWindow::SetEvents(GlobalSearchEvents events) {
     impl_->events = std::move(events);
 }
 void GlobalSearchWindow::Hide() { if (impl_) impl_->Hide(); }
+void GlobalSearchWindow::Prewarm(uint32_t delay_ms, std::function<void()> prepare) {
+    if (!impl_) impl_ = std::make_unique<Impl>();
+    impl_->SchedulePrewarm(delay_ms, std::move(prepare));
+}
 void GlobalSearchWindow::Shutdown() { impl_.reset(); }
 bool GlobalSearchWindow::Visible() const { return impl_ && impl_->hwnd && IsWindowVisible(impl_->hwnd); }
 }

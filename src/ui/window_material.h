@@ -46,6 +46,14 @@ bool DrawAcrylicSample(ID2D1DeviceContext* dc, const TargetSample& sample, const
 // Windows "Transparency effects" is off, and while battery saver is on.
 bool SystemAllowsPopupAcrylic() noexcept;
 
+// A popup's acrylic plate (menus, dialogs): the part of a window's frame
+// copy under `card` (screen pixels; the frame's pixel 0,0 sits at
+// `frame_origin`), blurred and tinted, card-sized. Where the card hangs past
+// the window the frame's edge pixels are stretched over the rest. The device
+// context's target is restored afterwards.
+bool BuildAcrylicPlate(ID2D1DeviceContext* dc, ID2D1Bitmap1* frame, POINT frame_origin, const RECT& card,
+                       float blur, bool dark, float luminosity, float tint, ComPtr<ID2D1Bitmap1>& plate) noexcept;
+
 int RunMaterialSelfTest();
 void LogWindowMaterial(const char* fmt, ...);
 

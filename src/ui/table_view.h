@@ -60,6 +60,13 @@ public:
     bool TipArmed() const noexcept { return tip_row_ >= 0 && !tip_shown_; }
     bool ShowTip();
 
+    // Workbook tabs drawn by the window in its footer instead of under the grid.
+    void SetFooterTabs(bool on) noexcept { footer_tabs_ = on; }
+    // Draws the tabs into rect; returns the right edge actually used.
+    float DrawTabsIn(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D1_RECT_F& rect,
+                     const Theme& theme, bool dark, bool status);
+    bool TabClick(float x, float y);  // ‹ › and tabs; true when it hit one
+
     bool HasSelection() const noexcept { return sel_valid_; }
     void SelectAll();
     bool ClearSelection();
@@ -78,6 +85,7 @@ private:
         float num_w = 0.0f;                            // row-number column width
         float measured_scale = 0.0f;
         float sx = 0.0f, sy = 0.0f;                    // scroll
+        std::vector<uint8_t> col_types;                // inferred per column (ColumnType)
     };
     struct Geometry {
         D2D1_RECT_F grid{}, body{}, tabs{};
@@ -113,6 +121,7 @@ private:
     size_t response_sheet_ = 0;
     size_t total_sheets_ = 0, loaded_sheets_ = 0;
     bool spreadsheet_ = false;
+    bool footer_tabs_ = false;
     bool lazy_sheets_ = false, awaiting_sheet_ = false, pending_sheet_request_ = false;
 
     // Selection in body rows / columns (anchor and focus corners).
@@ -124,6 +133,7 @@ private:
     float drag_x_ = 0.0f, drag_y_ = 0.0f;
 
     int hover_tab_ = -1;
+    int hover_row_ = -1, hover_col_ = -1;  // body cell under the pointer (crosshair)
     int tip_row_ = -1, tip_col_ = -1;
     bool tip_shown_ = false;
     float tip_x_ = 0.0f, tip_y_ = 0.0f;

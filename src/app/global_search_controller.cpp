@@ -5,8 +5,11 @@
 #include "tray_reveal.h"
 #include "app_runtime.h"
 #include "app_hosted_edit.h"
+#include "app_catalog.h"
 #include "places.h"
+#include "session.h"
 #include "../common/localization.h"
+#include "../common/path_utils.h"
 #include "../ui/confirm_dialog.h"
 #include "../index/index_config.h"
 #include "../ui/ui_renderer.h"
@@ -25,6 +28,36 @@ bool HotkeyAllowed(const AppState& s) {
 #else
     return false;
 #endif
+}
+
+// 跳转 candidates: this window's folders first, then other windows, Quick
+// access and recently opened folders; each folder once. `open` marks folders
+// shown in a tab.
+std::vector<app::DialogJumpFolder> KnownFolders(const AppState& s) {
+    std::vector<app::DialogJumpFolder> folders;
+    auto add = [&](const std::wstring& path, const std::wstring& label, bool open, bool pinned = false) {
+        if (path.empty() || fs::IsVirtualPath(path) || folders.size() >= 96) return;
+        for (auto& known : folders)
+            if (path::EqualInsensitive(known.path, path)) {
+                if (known.label.empty()) known.label = label;
+                known.open = known.open || open;
+                known.pinned = known.pinned || pinned;
+                return;
+            }
+        folders.push_back({path, label, open, pinned});
+    };
+    if (const auto* pane = s.pane) add(pane->view.current_path, {}, true);
+    auto add_window = [&](AppState& window) {
+        ForEachPane(window, [&](app::Pane& pane) { add(pane.view.current_path, {}, true); });
+    };
+    add_window(const_cast<AppState&>(s));
+    s.core.windows.ForEach([&](HWND, AppState& window) { if (&window != &s) add_window(window); });
+    // Quick access rows carry the shown names ("下载" for Downloads).
+    for (const auto& entry : s.sidebar.quick_access) add(entry.path, entry.label, false, true);
+    for (const auto& path : s.places.quick_access_paths) add(path, {}, false, true);
+    for (const auto& item : s.places.RecentItems())
+        if (item.kind == app::PlaceItemKind::Folder) add(item.path, {}, false);
+    return folders;
 }
 
 // What the popup shows with an empty query: the first Quick access pins as
@@ -46,6 +79,21 @@ GlobalSearchContext MakeGlobalSearchContext(const AppState& s) {
         if (item.path.empty() || fs::IsVirtualPath(item.path)) continue;
         context.recent_files.push_back({item.path, item.kind == app::PlaceItemKind::Folder});
     }
+    // Frequent places: the most visited first among equal matches, and the
+    // ones not known otherwise as extra candidates.
+    auto folders = KnownFolders(s);
+    const auto& history = *s.core.jumpHistory;
+    for (const auto& path : history.Top({}, 32)) {
+        if (fs::IsVirtualPath(path) || app::IsAppPath(path)) continue;
+        if (std::none_of(folders.begin(), folders.end(), [&](const auto& f) { return path::EqualInsensitive(f.path, path); }))
+            folders.push_back({path, {}, false, false});
+    }
+    std::vector<std::pair<double, size_t>> order;
+    for (size_t i = 0; i < folders.size(); ++i) order.push_back({history.Score(folders[i].path, {}), i});
+    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (const auto& [score, i] : order) context.jump_folders.push_back({std::move(folders[i].path), std::move(folders[i].label)});
+    context.show_apps = s.appPrefs.global_search_apps;
+    context.history = s.core.jumpHistory;
     context.width = s.appPrefs.global_search_width;
     context.height = s.appPrefs.global_search_height;
     return context;
@@ -72,23 +120,52 @@ GlobalSearchEvents MakeGlobalSearchEvents(AppState& s) {
     events.opened = [core](const GlobalSearchHandoff& search, const std::wstring& path, bool directory) {
         AppState* window = core->windows.MostRecent();
         if (!window) return;
-        RecordRecentOpen(*window, path, directory ? app::PlaceItemKind::Folder : app::PlaceItemKind::File);
+        // Programs started from the 应用 group are not files: they only
+        // count for the ranking.
+        const bool program = app::IsAppPath(path);
+        if (!program) RecordRecentOpen(*window, path, directory ? app::PlaceItemKind::Folder : app::PlaceItemKind::File);
+        if (directory || program) core->jumpHistory->Record(path, {});
         if (const auto history = GlobalSearchHandoffPath(search); !history.empty()) RecordSearchHistory(*window, history);
     };
     return events;
+}
+
+// Appearance, context and callbacks: before every summon and the pre-warm.
+void PrepareGlobalSearchWindow(AppState& s) {
+    s.globalSearchWindow.SetAppearance(s.darkMode, ui::WindowEffectFromId(s.appPrefs.window_effect),
+        s.appPrefs.background_image, s.accentColor);
+    // The search window is process-wide and outlives the window that opened
+    // it (M4b): continue in the most recent window when the handoff happens.
+    s.globalSearchWindow.SetHandoffHandler([core = &s.core](const GlobalSearchHandoff& request) {
+        if (AppState* window = core->windows.MostRecent()) ContinueGlobalSearchInMain(*window, request);
+    });
+    s.globalSearchWindow.SetContext(MakeGlobalSearchContext(s));
+    s.globalSearchWindow.SetEvents(MakeGlobalSearchEvents(s));
 }
 }
 
 void ApplyGlobalSearchSettings(AppState& s) {
     ApplyKeymapPrefs(s);  // the shortcut conflict checks see the hotkey
+    // Kept in memory only when prefs are not saved.
+    if (!s.core.jumpHistory->IsOpen())
+        s.core.jumpHistory->Open(s.appPrefs.persist ? app::GetPulseDataDir() + L"\\jump_history.tsv" : std::wstring{});
+    s.core.jumpHistory->SetEnabled(s.appPrefs.jump_history);
+    s.core.dialogJump.SetHistory(s.core.jumpHistory);
     if (!HotkeyAllowed(s)) return;
+    s.core.dialogJump.Update(ServiceWindow(s), WM_DIALOG_JUMP_CONTEXT, s.appPrefs.dialog_jump_bar);
     const bool enabled = s.appPrefs.global_search_enabled && s.appPrefs.search_enabled;
     const bool ok = s.globalSearchHotkey.Update(ServiceWindow(s), enabled,
         s.appPrefs.global_search_modifiers, s.appPrefs.global_search_key);
     s.settings.SetGlobalSearchError(ok ? std::wstring{} : l10n::Get(
         s.globalSearchHotkey.Error() == ERROR_HOTKEY_ALREADY_REGISTERED
             ? l10n::StringId::GlobalSearchConflict : l10n::StringId::GlobalSearchRegisterFailed));
-    if (!enabled || !ok) s.globalSearchWindow.Hide();
+    const bool double_ctrl = enabled && s.appPrefs.global_search_double_ctrl;
+    s.core.doubleCtrl.Update(ServiceWindow(s), WM_DOUBLE_CTRL, double_ctrl,
+        static_cast<uint32_t>(s.appPrefs.global_search_double_ctrl_ms));
+    if (!enabled || (!ok && !double_ctrl)) s.globalSearchWindow.Hide();
+    else s.globalSearchWindow.Prewarm(3000, [core = &s.core] {
+        if (AppState* window = core->windows.MostRecent()) PrepareGlobalSearchWindow(*window);
+    });
     s.tray_controller.SetVisible(WantsTrayIcon(s, s.hidden_to_tray));
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
@@ -149,6 +226,22 @@ void ToggleSearchSwitch(AppState& s) {
     ApplySearchSwitch(s, purge);
 }
 
+void SendDialogJumpContext(AppState& s) {
+    AppState* window = s.core.windows.MostRecent();
+    if (!window) window = &s;
+    app::DialogJumpContext context;
+    context.folders = KnownFolders(*window);
+    if (const auto* tab = ActiveTab(*window); tab && !fs::IsVirtualPath(tab->current_path))
+        context.current = tab->current_path;
+    context.dark = window->darkMode;
+    context.accent = window->accentColor;
+    context.pinyin = window->appPrefs.search_pinyin;
+    context.index = window->appPrefs.search_enabled;
+    context.remember = window->appPrefs.jump_history;
+    context.auto_jump = window->appPrefs.dialog_jump_auto;
+    s.core.dialogJump.SetContext(std::move(context));
+}
+
 bool HandleGlobalSearchHotkeyCapture(AppState& s, unsigned key) {
     if (!s.settings.global_search_hotkey_capturing()) return false;
     if (!IsSettingsTab(ActiveTab(s))) {
@@ -165,23 +258,18 @@ bool HandleGlobalSearchHotkeyCapture(AppState& s, unsigned key) {
     return consumed;
 }
 
-void ToggleGlobalSearch(AppState& s) {
-    if (!s.appPrefs.global_search_enabled || !s.appPrefs.search_enabled || !s.globalSearchHotkey.Registered()) return;
+void ToggleGlobalSearch(AppState& s, bool double_ctrl) {
+    // Two Ctrl taps over an Open / Save dialog go to its jump bar.
+    if (double_ctrl && s.core.dialogJump.FocusSearch()) return;
+    if (!s.appPrefs.global_search_enabled || !s.appPrefs.search_enabled) return;
+    if (double_ctrl ? !s.core.doubleCtrl.Running() : !s.globalSearchHotkey.Registered()) return;
     if (s.globalSearchWindow.Visible()) {
         s.globalSearchWindow.Hide();
         return;
     }
     std::wstring folder;
-    s.globalSearchWindow.SetAppearance(s.darkMode, ui::WindowEffectFromId(s.appPrefs.window_effect),
-        s.appPrefs.background_image, s.accentColor);
     if (const auto* tab = ActiveTab(s); tab && !fs::IsVirtualPath(tab->current_path)) folder = tab->current_path;
-    // The search window is process-wide and outlives the window that opened
-    // it (M4b): continue in the most recent window when the handoff happens.
-    s.globalSearchWindow.SetHandoffHandler([core = &s.core](const GlobalSearchHandoff& request) {
-        if (AppState* window = core->windows.MostRecent()) ContinueGlobalSearchInMain(*window, request);
-    });
-    s.globalSearchWindow.SetContext(MakeGlobalSearchContext(s));
-    s.globalSearchWindow.SetEvents(MakeGlobalSearchEvents(s));
+    PrepareGlobalSearchWindow(s);
     if (!s.globalSearchWindow.Show(s.hwnd, s.darkMode, s.scale, folder, s.appPrefs.search_pinyin)) {
         RevealWindow(s);
         s.notification_toast.ShowError(s.hwnd, l10n::Get(l10n::StringId::GlobalSearch),
@@ -191,6 +279,8 @@ void ToggleGlobalSearch(AppState& s) {
 
 void ShutdownGlobalSearch(AppState& s) {
     s.globalSearchHotkey.Reset();
+    s.core.doubleCtrl.Stop();
+    s.core.dialogJump.Stop();
     s.globalSearchWindow.Shutdown();
 }
 }

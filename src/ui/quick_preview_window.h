@@ -12,8 +12,11 @@
 #include "video_preview.h"
 #include "audio_waveform.h"
 #include "quick_preview_command.h"
+#include "open_with_icons.h"
 
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace pulse::ui {
@@ -33,6 +36,8 @@ public:
               const POINT* zoom_from = nullptr);
     void Update(const QuickPreviewItem& item);
     void SetStarred(bool starred);
+    // The app's accent colour (open button); call before Show.
+    void SetAccent(const D2D1_COLOR_F& accent);
     // The FFmpeg preview pack offer on the codec cards; repaints on change.
     void SetMediaPackOffer(const MediaPackOffer& offer);
     // A pack was installed: a file it can play now is opened again.
@@ -58,7 +63,7 @@ private:
     friend struct PreviewDeadlineProbe;
     // Pages: multi-page PDF / AI read as a continuous scroll (quick_preview_pages.cpp).
     enum class NativeKind { None, Bitmap, Text, Hex, Archive, Pages, Markdown, Table, Tree };
-    enum class ChromeButton { None, Prev, Next, More };
+    enum class ChromeButton { None, Prev, Next, More, Open };
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT HandleMessage(UINT message, WPARAM wparam, LPARAM lparam);
@@ -153,8 +158,7 @@ private:
     void ScrollToPage(uint32_t page);
     void ZoomPages(float cursor_x, float cursor_y, float factor);
     void TogglePagesFit();
-    void DrawPages(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* text_brush,
-                   ID2D1SolidColorBrush* secondary_brush);
+    void DrawPages(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* secondary_brush);
     bool PagesWheel(POINT client, float steps, bool ctrl, bool shift);
     bool PagesMouseDown(POINT client);
     bool PagesKey(WPARAM key);
@@ -182,11 +186,17 @@ private:
     void ClampPan(float view_w, float view_h);
     D2D1_RECT_F ImageDest(const D2D1_RECT_F& content) const;
     uint32_t RequestedPixelSize(const D2D1_RECT_F& content) const;
-    void DrawHud(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
-                 ID2D1SolidColorBrush* text_brush);
+    // Image facts and the zoom control in the footer.
+    void SetImageFooter(const D2D1_RECT_F& content);
+    // Image info drawer (EXIF rows and a histogram) on the right of the picture.
+    float InfoDrawerWidth() const noexcept;
+    // The backdrop behind a picture; false when the mode draws nothing.
+    bool ImageBackdropWanted();
+    bool DrawImageBackdrop(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, const D2D1_RECT_F& draw);
     void DrawFindBar(ID2D1DeviceContext* dc, const D2D1_RECT_F& bar);
     Theme CurrentTheme() const;
-    void EnsureTextLayout(const std::wstring& text, bool hex, float width);
+    void EnsureTextLayout(const std::wstring& text, bool hex, float width, bool reading = false);
+    bool PlainTextCandidate() const;
     bool HitTestText(float x, float y, uint32_t& index);
     void CopyTextSelection(bool require_selection) const;
     void SelectAllText();
@@ -216,7 +226,72 @@ private:
     void DrawMarkdownToggle(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* text_brush);
     ChromeButton HitChromeButton(POINT client) const;
     void ActivateChromeButton(ChromeButton button);
-    void DrawChromeButtons(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* text_brush);
+
+    // Unified header and footer (quick_preview_chrome.cpp).
+    struct HeaderLayout {
+        D2D1_RECT_F badge{}, name{}, meta{}, tools{}, separator{}, prev{}, counter{}, next{},
+            open{}, more{}, close{};
+        bool meta_visible = true;     // narrow windows drop the meta line first,
+        bool tools_visible = true;    // then fold the type tools into the more menu,
+        bool open_text = true;        // then show only the open button's icon,
+        bool counter_visible = true;  // then hide the position
+        std::wstring counter_text, open_label;
+    };
+    struct ChromePalette {
+        D2D1_COLOR_F bg{}, ink{}, ink2{}, ink3{}, line{}, hover{}, on_hover{}, accent{}, on_accent{};
+        bool high_contrast = false;
+    };
+    static constexpr int kFooterZoom = 1;
+    static constexpr int kFooterToc = 2;        // Markdown/document contents sidebar
+    static constexpr int kFooterReadWidth = 3;  // .txt reading column width
+    static constexpr int kFooterCopyPath = 4;   // JSON/XML: copy the current node's path
+    static constexpr int kFooterFoldAll = 5;    // JSON/XML: expand all / collapse all
+    static constexpr int kFooterZoomOut = 6;    // pages: zoom out one step
+    static constexpr int kFooterZoomIn = 7;     // pages and images: zoom in one step
+    static constexpr int kFooterImageBg = 8;    // images: backdrop auto / light / dark / checkerboard
+    static constexpr int kFooterInfo = 9;       // images: the info drawer
+    static constexpr int kFooterRotate = 10;    // images: a quarter turn clockwise
+    ChromePalette Palette() const;
+    float HeaderHeight() const noexcept;
+    float FooterHeight() const noexcept;
+    D2D1_RECT_F FooterRect() const;
+    void RefreshItemFacts();
+    std::wstring OpenLabel() const;
+    std::wstring MetaLine() const;
+    void LayoutHeader();
+    bool HeaderInteractive(POINT client) const;
+    void DrawHeader(ID2D1DeviceContext* dc, const ChromePalette& palette);
+    void DrawFooter(ID2D1DeviceContext* dc, const ChromePalette& palette);
+    void DrawInfoDrawer(ID2D1DeviceContext* dc, const ChromePalette& palette);
+    void SetFooterParts(std::vector<std::wstring> parts);
+    void AddFooterControl(int id, std::wstring text);
+    int HitFooterControl(POINT client) const;   // control id, 0 = none
+    void ActivateFooterControl(int id);
+    void ToggleLabels(const wchar_t* (&labels)[2]) const;
+    float ToggleSegmentWidth(int segment) const;
+    ComPtr<IDWriteTextLayout> UiLayout(std::wstring_view text, IDWriteTextFormat* format,
+                                       float width, float height,
+                                       DWRITE_TEXT_ALIGNMENT alignment = DWRITE_TEXT_ALIGNMENT_LEADING) const;
+    float UiTextWidth(std::wstring_view text, IDWriteTextFormat* format) const;
+    void DrawUiText(ID2D1DeviceContext* dc, std::wstring_view text, IDWriteTextFormat* format,
+                    const D2D1_RECT_F& rect, const D2D1_COLOR_F& color,
+                    DWRITE_TEXT_ALIGNMENT alignment = DWRITE_TEXT_ALIGNMENT_LEADING);
+    HeaderLayout header_;
+    D2D1_COLOR_F accent_ = D2D1::ColorF(0x0078D4);
+    std::wstring title_;       // PreviewTitle(item_)
+    std::wstring type_name_;   // shell type name for the meta line
+    std::wstring open_app_;    // default program's name; empty = none
+    std::unordered_map<std::wstring, std::wstring> open_app_cache_;  // extension -> name, per Show
+    std::vector<std::wstring> footer_parts_;   // this frame's facts (left)
+    struct FooterControl { int id = 0; std::wstring text; D2D1_RECT_F rect{}; bool on = false; };
+    std::vector<FooterControl> footer_controls_;   // this frame's controls (right)
+    std::wstring footer_hint_;                     // this frame's keyboard hint (right, passive)
+    int footer_hover_ = 0;
+    int footer_focus_ = 0;   // keyboard focus (Tab) on a footer control; 0 none
+    // Tab / Shift+Tab through this frame's footer controls; false when there are none.
+    bool CycleFooterFocus(bool backwards);
+    ComPtr<IDWriteTextFormat> badge_format_, badge_small_format_, open_format_;
+    OpenWithIconCache open_icons_;
     static LRESULT CALLBACK FindEditProc(HWND hwnd, UINT message, WPARAM wparam,
                                          LPARAM lparam, UINT_PTR id, DWORD_PTR data);
 
@@ -262,6 +337,7 @@ private:
     std::wstring codec_store_id_;
     ComPtr<IDWriteTextFormat> close_format_;
     ComPtr<IDWriteTextFormat> preview_text_format_;
+    ComPtr<IDWriteTextFormat> reading_text_format_;  // .txt reading mode: UI font, 1.75 line height
     ComPtr<IDWriteTextLayout> text_layout_;
     QuickPreviewItem item_;
     QuickPreviewCommands commands_;
@@ -280,11 +356,25 @@ private:
     void FinishClose(bool restore_focus);
     float scale_ = 1.0f;
     float text_scroll_ = 0.0f;
+    double last_render_ms_ = 0.0;
+    double last_text_ms_ = 0.0;    // of which DrawTextPreview  // CPU time spent building the last frame
     float pan_x_ = 0.0f;
     float pan_y_ = 0.0f;
     bool image_fit_ = true;
     float image_zoom_ = 1.0f;
     uint32_t preview_pixels_ = 0;
+    bool image_item_ = false;            // the item's extension is a picture (RefreshItemFacts)
+    int image_turns_ = 0;                // quarter turns clockwise (R); reset per item
+    // The decoded picture's size as shown, i.e. after image_turns_.
+    float TurnedW() const noexcept { return static_cast<float>((image_turns_ & 1) ? decoded_h_ : decoded_w_); }
+    float TurnedH() const noexcept { return static_cast<float>((image_turns_ & 1) ? decoded_w_ : decoded_h_); }
+    // Video: the transport bar fades out after the pointer rests for 2 s.
+    uint64_t pointer_tick_ = 0;
+    POINT pointer_last_{};
+    float PlaybackBarOpacity();
+    // Shared by every Quick Look window of this session.
+    static inline int image_backdrop_ = 0;   // 0 auto (checkerboard when translucent), 1 light, 2 dark, 3 checkerboard
+    static inline bool info_open_ = false;
     uint32_t decoded_w_ = 0;
     uint32_t decoded_h_ = 0;
     uint32_t source_w_ = 0;
@@ -295,7 +385,8 @@ private:
     bool markdown_source_ = false;  // session-wide: Markdown shown as source
     bool markdown_shown_ = false;   // this frame drew a Markdown item (toggle visible)
     // Labels of the title-bar pill while markdown_shown_ is set.
-    enum class ToggleKind { Markdown, TableSource, TableHandler, TreeSource, NotebookSource, DocHandler };
+    enum class ToggleKind { Markdown, TableSource, TableHandler, TreeSource, NotebookSource, DocHandler,
+                            TextReading };
     ToggleKind toggle_kind_ = ToggleKind::Markdown;
     TableView table_;
     uint32_t sheet_request_ = 0;
@@ -346,22 +437,36 @@ private:
     float text_layout_width_ = 0.0f;
     float text_layout_scale_ = 0.0f;
     bool text_layout_hex_ = false;
+    bool text_layout_reading_ = false;
+    float text_reading_x_ = 0.0f;   // left edge of the centred reading column
+    bool text_mono_txt_ = false;    // session-wide: .txt shown monospaced instead of reading
+    bool text_mono_other_ = true;   // session-wide: other plain text (.log, no extension)
+    int reading_width_ = 1;         // session-wide: 0 narrow, 1 medium, 2 wide column
+    int hex_hover_ = -1;            // byte under the pointer in the hex view
+    int hex_selected_ = -1;         // byte last clicked in the hex view
+    int HexFocus() const noexcept { return hex_hover_ >= 0 ? hex_hover_ : hex_selected_; }
+    float HexRulerHeight() const noexcept { return text_layout_hex_ ? 22.0f * scale_ : 0.0f; }
+    int HexByteAt(uint32_t index) const noexcept;
+    void DrawHexRuler(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, float origin_x);
+    bool toc_hidden_ = false;       // session-wide: contents sidebar hidden
     // Syntax colouring + line-number gutter (syntax_highlight.h).
     bool text_layout_dark_ = false;
     bool line_numbers_ = true;          // context-menu toggle, per session
     float text_gutter_ = 0.0f;          // pixels reserved left of the text
     uint32_t text_line_count_ = 0;
+    uint8_t text_eol_ = 0;   // 0 none, 1 LF, 2 CRLF, 3 CR, 4 mixed
     std::vector<uint32_t> line_starts_; // filled only while the gutter is shown
     std::wstring syntax_language_;
     ComPtr<IDWriteTextFormat> gutter_format_;
     ComPtr<ID2D1SolidColorBrush> syntax_brushes_[16];
     float TextOriginX() const noexcept;
-    void DrawTextStatus(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, bool hex,
-                        uint32_t bytes_read, bool truncated, uint32_t encoding,
-                        ID2D1SolidColorBrush* text_brush);
-    // Status pill centred at the bottom of content; parts joined by " | ".
-    void DrawStatusPill(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
-                        const std::vector<std::wstring>& parts, ID2D1SolidColorBrush* text_brush);
+    // Language | encoding | lines and size, as footer facts.
+    // show_eol: only raw text keeps its line endings (structured payloads drop CR).
+    void SetTextFooter(bool hex, uint32_t bytes_read, bool truncated, uint32_t encoding,
+                       bool show_eol = false);
+    void SetTableFooter(uint32_t encoding);
+    // Format, picture size (video), duration, extra facts, file size.
+    void SetMediaFooter(const VideoPreview::State& state, std::vector<std::wstring> extra);
     void DrawLineNumbers(ID2D1DeviceContext* dc, const D2D1_RECT_F& content, float origin_y);
     uint32_t sel_anchor_ = 0;
     uint32_t sel_focus_ = 0;

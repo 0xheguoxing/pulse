@@ -268,12 +268,45 @@ std::vector<std::wstring> TreeView::StatusParts() const {
     parts.push_back(xml_ ? L"XML" : L"JSON");
     if (current_ >= 0) {
         parts.push_back(PathOf(static_cast<size_t>(current_)));
+        if (std::wstring type = CurrentType(); !type.empty()) parts.push_back(std::move(type));
     } else {
         std::wstring count = std::to_wstring(nodes_.size()) + (pulse::l10n::Get(pulse::l10n::StringId::Nodes).c_str());
         if (truncated_) count += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
         parts.push_back(std::move(count));
     }
     return parts;
+}
+
+std::wstring TreeView::CurrentType() const {
+    if (current_ < 0 || current_ >= static_cast<int>(nodes_.size()) || xml_) return {};
+    const Node& n = nodes_[static_cast<size_t>(current_)];
+    switch (n.type) {
+    case L'o': return L"object";
+    case L'a': return L"array";
+    case L's': return L"string";
+    case L'n': return L"number";
+    default: return n.value == L"null" ? L"null" : L"boolean";
+    }
+}
+
+bool TreeView::AnyCollapsed() const noexcept {
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (Expandable(i) && !expanded_[i]) return true;
+    return false;
+}
+
+void TreeView::ExpandAll(bool expand) {
+    if (nodes_.empty()) return;
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (Expandable(i)) expanded_[i] = expand || nodes_[i].depth == 0 ? 1 : 0;
+    // A node folded out of sight hands the focus to its nearest visible ancestor.
+    if (!expand && current_ >= 0) {
+        int top = current_;
+        for (int p = nodes_[static_cast<size_t>(current_)].parent; p >= 0; p = nodes_[static_cast<size_t>(p)].parent)
+            if (!expanded_[static_cast<size_t>(p)]) top = p;
+        current_ = top;
+    }
+    BuildRows();
 }
 
 // ---- Rows -------------------------------------------------------------------

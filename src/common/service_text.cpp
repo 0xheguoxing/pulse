@@ -157,6 +157,13 @@ constexpr ServicePhrase kServiceExact[] = {
     {L"采样率", L"Sample rate"},
     {L"作者", L"Author"},
     {L"页数", L"Pages"},
+    {L"镜头", L"Lens"},
+    {L"参数", L"Exposure"},
+    {L"焦距", L"Focal length"},
+    {L"位深", L"Bit depth"},
+    {L"声道", L"Channels"},
+    {L"流派", L"Genre"},
+    {L"年份", L"Year"},
 
     // index service, network agent and Recycle Bin verbs
     {L"索引位置里有不属于 Pulse 的文件或链接，为保护隐私，索引服务不会使用它。请改选一个空文件夹。",

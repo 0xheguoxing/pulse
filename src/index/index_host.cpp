@@ -98,7 +98,9 @@ struct Client {
             const auto found = dirs.find(dir);
             return found == dirs.end() ? -1 : (found->second ? 1 : 0);
         }
+        bool TopFirst() const override { return top_first; }
         std::unordered_map<int32_t, bool> dirs;
+        bool top_first = false;
         uint64_t layout = 0;
         ULONGLONG since = 0;
     } visibility;
@@ -110,6 +112,9 @@ struct SearchTask {
     uint32_t id = 0;
     Query query;
     std::shared_ptr<std::atomic<uint32_t>> latest;
+    // A ranked page was sent with a partial total; this pass checks the
+    // remaining folders for the exact one and yields to queued searches.
+    bool finishing = false;
 };
 
 struct ClientWorker {
@@ -453,15 +458,25 @@ struct ListCheck {
     }
 };
 
+// New searches only: finishing passes never wait on each other.
+bool SearchesWaiting() {
+    std::lock_guard<std::mutex> lock(g.search_mu);
+    return std::any_of(g.search_queue.begin(), g.search_queue.end(),
+                       [](const SearchTask& queued) { return !queued.finishing; });
+}
+
 // A broad first query can name tens of thousands of folders; each check is
-// one kernel open, so they are spread over a few threads.
-void CheckDirs(Client& c, const SearchTask& task,
+// one kernel open, so they are spread over a few threads. Finishing passes
+// stop when another search is queued (answers so far are kept): false then.
+bool CheckDirs(Client& c, const SearchTask& task,
                const std::vector<std::pair<int32_t, std::wstring>>& dirs) {
     std::vector<int8_t> state(dirs.size(), -1);
     std::atomic<size_t> next{0};
+    std::atomic<bool> yielded{false};
     auto work = [&] {
         for (size_t i; (i = next.fetch_add(1)) < dirs.size();) {
             if (!c.alive || task.latest->load() != task.id) return;
+            if (task.finishing && (i & 15) == 15 && SearchesWaiting()) { yielded = true; return; }
             state[i] = CallerCanList(c.caller_token, dirs[i].second) ? 1 : 0;
         }
     };
@@ -473,14 +488,22 @@ void CheckDirs(Client& c, const SearchTask& task,
     for (auto& thread : pool) thread.join();
     for (size_t i = 0; i < dirs.size(); ++i)
         if (state[i] >= 0) c.visibility.dirs[dirs[i].first] = state[i] != 0;
+    return !yielded;
 }
 
-SearchResult SearchForCaller(Client& c, const SearchTask& task) {
+// `yielded` is set when a finishing pass gave way to a queued search.
+SearchResult SearchForCaller(Client& c, const SearchTask& task, bool& yielded) {
+    yielded = false;
     if (!CallerFilter()) return g.engine.Search(task.query, task.latest.get(), task.id);
     auto& vis = c.visibility;
     const ULONGLONG now = GetTickCount64();
     if (!vis.since || now - vis.since > kVisibilityTtlMs) { vis.dirs.clear(); vis.since = now; }
-    for (int round = 0; round < 4; ++round) {
+    // Ranked pages check the deciding folders first. Names in hidden folders
+    // push more candidates up; after a dozen such rounds check them all.
+    vis.top_first = !task.finishing && task.query.rank && task.query.limit > 0;
+    const int rounds = vis.top_first ? 16 : 4;
+    for (int round = 0; round < rounds; ++round) {
+        if (round == 12) vis.top_first = false;
         SearchResult sr = g.engine.Search(task.query, task.latest.get(), task.id, &vis);
         if (sr.layout && sr.layout != vis.layout) {
             // Node ids were renumbered, so earlier answers describe other folders.
@@ -490,10 +513,20 @@ SearchResult SearchForCaller(Client& c, const SearchTask& task) {
             if (stale) continue;
         }
         if (sr.unchecked_dirs.empty()) return sr;
-        CheckDirs(c, task, sr.unchecked_dirs);
+        if (!CheckDirs(c, task, sr.unchecked_dirs)) { yielded = true; return {}; }
         if (!c.alive || task.latest->load() != task.id) return {};
     }
     return {};
+}
+
+void Requeue(SearchTask task) {
+    std::lock_guard<std::mutex> lock(g.search_mu);
+    // A newer request of this session replaced the page meanwhile.
+    if (std::any_of(g.search_queue.begin(), g.search_queue.end(), [&](const SearchTask& queued) {
+            return queued.client == task.client && queued.query.session_id == task.query.session_id; }))
+        return;
+    g.search_queue.push_back(std::move(task));
+    g.search_cv.notify_one();
 }
 
 void SearchThread() {
@@ -512,7 +545,9 @@ void SearchThread() {
         auto& c = task.client;
         if (!c || !c->alive || task.latest->load() != task.id) continue;
         TraceSearch("filename_query_begin", g.engine.Revision());
-        SearchResult sr = SearchForCaller(*c, task);
+        bool yielded = false;
+        SearchResult sr = SearchForCaller(*c, task, yielded);
+        if (yielded) { Requeue(std::move(task)); continue; }
         sr.revision = g.engine.Revision();
         TraceSearch("filename_query_done", sr.revision);
         if (!c->alive || task.latest->load() != task.id) continue;
@@ -520,6 +555,20 @@ void SearchThread() {
         if (out.size() > kIndexMaxPayload) {
             sr.hits.clear();
             out = SearchPayload(sr);
+        }
+        if (sr.partial) {
+            // The page is final, the total is not yet: send it now and count
+            // the remaining folders after any queued searches. A partial page
+            // never counts as sent, so the exact one always follows.
+            WriteFrame(*c, RSP_IDX_SEARCH, task.id, out);
+            if (task.query.subscribe) {
+                std::lock_guard lock(c->subscriptions_mu);
+                auto found = c->subscriptions.find(task.query.session_id);
+                if (found != c->subscriptions.end() && found->second.id == task.id) found->second.sent_hash = 0;
+            }
+            task.finishing = true;
+            Requeue(std::move(task));
+            continue;
         }
         if (task.query.subscribe) {
             // Live refreshes rerun on every engine notification. Rows identical

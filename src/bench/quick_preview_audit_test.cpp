@@ -1,7 +1,9 @@
 #include "../ui/quick_preview_window.h"
 #include <objbase.h>
 #include <commctrl.h>
+#include <algorithm>
 #include <cstdio>
+#include <vector>
 #include <thread>
 namespace pulse::ui {
 struct QuickPreviewAuditTest {
@@ -90,6 +92,72 @@ struct QuickPreviewAuditTest {
                     scale==1.5f?"plain Quick Look Unicode cluster boundaries at 150% layout scale":
                                 "plain Quick Look Unicode cluster boundaries at 200% layout scale");
             }
+            // --- P4 image chrome: footer chips, info drawer, rotation, backdrop, keyboard focus. ---
+            q.scale_=1.0f;QuickPreviewWindow::info_open_=false;QuickPreviewWindow::image_backdrop_=0;
+            item.path=L"C:\\PulseAuditFixtures\\photo.png";item.name=L"photo.png";q.Update(item);
+            {
+                ThumbnailCache::Item photo;photo.kind=ipc::PreviewContentKind::Bitmap;
+                photo.w=400;photo.h=200;photo.stride=400*4;photo.pixels.assign(size_t{400}*200*4,0);
+                for(size_t i=0;i<photo.pixels.size();i+=4){photo.pixels[i]=0x40;photo.pixels[i+1]=0x80;photo.pixels[i+2]=0xC0;photo.pixels[i+3]=(i/4)%400<200?0xFF:0x80;}
+                photo.stats=ComputeImageStats(photo.pixels.data(),photo.w,photo.h,photo.stride);
+                Store(q,0,std::move(photo));
+            }
+            q.Render();
+            const auto has=[&q](int id){for(const auto& c:q.footer_controls_)if(c.id==id)return true;return false;};
+            ok &= Check(q.native_kind_==QuickPreviewWindow::NativeKind::Bitmap && q.image_item_ &&
+                has(QuickPreviewWindow::kFooterZoomOut) && has(QuickPreviewWindow::kFooterZoom) &&
+                has(QuickPreviewWindow::kFooterZoomIn) && has(QuickPreviewWindow::kFooterRotate) &&
+                has(QuickPreviewWindow::kFooterImageBg) && has(QuickPreviewWindow::kFooterInfo),
+                "image footer offers zoom, rotate, backdrop and info controls");
+            ok &= Check(q.ImageBackdropWanted(),"translucent picture gets the automatic checkerboard");
+            const float full_right=q.ContentRect().right;
+            q.ActivateFooterControl(QuickPreviewWindow::kFooterInfo);
+            const float drawer=static_cast<float>(q.compositor_.Width())>=570.0f?250.0f:0.0f;
+            ok &= Check(QuickPreviewWindow::info_open_ && full_right-q.ContentRect().right==drawer,
+                "info drawer takes 250 px from the picture instead of covering it");
+            q.Render();
+            q.ActivateFooterControl(QuickPreviewWindow::kFooterInfo);
+            ok &= Check(!QuickPreviewWindow::info_open_ && q.ContentRect().right==full_right,"closing the info drawer restores the view");
+            q.Render();
+            q.ActivateFooterControl(QuickPreviewWindow::kFooterRotate);q.Render();
+            ok &= Check(q.image_turns_==1 && q.TurnedW()==200.0f && q.TurnedH()==400.0f &&
+                !q.footer_parts_.empty() && q.footer_parts_[0]==L"200 \x00D7 400",
+                "a quarter turn swaps the shown size in layout and footer");
+            for(int i=0;i<3;++i)q.ActivateFooterControl(QuickPreviewWindow::kFooterRotate);
+            ok &= Check(q.image_turns_==0,"four quarter turns return upright");
+            for(int i=0;i<4;++i)q.ActivateFooterControl(QuickPreviewWindow::kFooterImageBg);
+            ok &= Check(QuickPreviewWindow::image_backdrop_==0,"backdrop cycles auto, light, dark, checkerboard");
+            q.Render();
+            q.footer_focus_=0;
+            const bool tabbed=q.CycleFooterFocus(false) && q.footer_focus_==q.footer_controls_.front().id;
+            q.CycleFooterFocus(true);
+            ok &= Check(tabbed && q.footer_focus_==0,"Tab enters the footer controls and Shift+Tab leaves them");
+            // --- P5 performance: a full-size text payload scrolled frame by frame. ---
+            item.path=L"C:\\PulseAuditFixtures\\long.log";item.name=L"long.log";q.Update(item);
+            {
+                std::wstring big;big.reserve(ipc::kPreviewMaxTextChars);
+                for(int line=0;big.size()+80<ipc::kPreviewMaxTextChars;++line)
+                    big+=L"2026-10-23 09:00:00.000 INFO worker["+std::to_wstring(line%16)+L"] request "+std::to_wstring(line)+L" served in 12 ms\n";
+                ThumbnailCache::Item text;text.kind=ipc::PreviewContentKind::Text;text.text=big;text.truncated=true;
+                Store(q,0,std::move(text));
+            }
+            q.Render();
+            LARGE_INTEGER freq{},t0{},t1{};QueryPerformanceFrequency(&freq);QueryPerformanceCounter(&t0);
+            constexpr int kFrames=60;
+            std::vector<double> draws,texts;draws.reserve(kFrames);texts.reserve(kFrames);
+            for(int i=0;i<kFrames;++i){q.text_scroll_+=97.0f;q.Render();draws.push_back(q.last_render_ms_);texts.push_back(q.last_text_ms_);}
+            QueryPerformanceCounter(&t1);
+            const double per_frame=static_cast<double>(t1.QuadPart-t0.QuadPart)*1000.0/static_cast<double>(freq.QuadPart)/kFrames;
+            double draw_total=0.0;for(const double d:draws)draw_total+=d;
+            const double draw_avg=draw_total/kFrames;
+            std::sort(draws.begin(),draws.end());std::sort(texts.begin(),texts.end());
+            printf("text scroll: DrawTextPreview %.2f median, %.2f worst\n",texts[kFrames/2],texts.back());
+            const double draw_median=draws[kFrames/2],draw_p95=draws[kFrames*95/100];
+            printf("text scroll: %.2f ms per presented frame (vsync); building a frame %.2f ms avg, %.2f median, %.2f p95, %.2f worst over %d frames\n",
+                   per_frame,draw_avg,draw_median,draw_p95,draws.back(),kFrames);
+            // Present waits for vsync, so the budget applies to building the frame.
+            ok &= Check(q.native_kind_==QuickPreviewWindow::NativeKind::Text && draw_median<8.0 && draw_p95<16.7,
+                "scrolling a full text payload draws well within one 60 Hz frame");
             q.Close();const auto epoch=q.thumbnails_.epoch_.load();
             q.OnImagePackInstalled();q.OnExtraPackInstalled();q.OnMediaPackInstalled();
             ok &= Check(q.thumbnails_.epoch_.load()==epoch+3,"all installed-pack callbacks invalidate hidden Quick Look cache generations");

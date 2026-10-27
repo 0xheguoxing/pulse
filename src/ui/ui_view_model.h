@@ -1116,6 +1116,13 @@ struct WindowViewModel {
     bool address_search_content = false;
     bool settings_search_pinyin = true;
     bool settings_global_search_enabled = false;
+    bool settings_global_search_double_ctrl = true;
+    int settings_global_search_double_ctrl_ms = 300;
+    bool settings_dialog_jump_bar = true;
+    bool settings_dialog_jump_auto = false;
+    bool settings_jump_history = true;
+    bool settings_jump_history_empty = true;
+    bool settings_global_search_apps = true;
     bool settings_search_enabled = true;
     bool settings_global_search_capturing = false;
     std::wstring settings_global_search_hotkey;
@@ -1206,6 +1213,11 @@ struct WindowViewModel {
     bool settings_list_tag_names = false;
     bool settings_list_selection_outline = false;
     bool settings_list_thumbnail_badges = true;
+    // 缩略图缓存 row: 0 counting, 1 ready, 2 clearing, 3 cleared, 4 no cache
+    // folder (SettingsController::ThumbCacheState).
+    uint8_t settings_thumb_cache_phase = 0;
+    uint64_t settings_thumb_cache_bytes = 0;
+    uint64_t settings_thumb_cache_cleared = 0;
     MtimeHint settings_mtime;            // 修改时间提示
     bool settings_sync_onedrive = true;
     bool settings_sync_svn = true;
@@ -1476,9 +1488,11 @@ struct HitTestResult {
         SettingsBlankClick,
         SettingsHomeFolder,
         SettingsLanCache,  // 发现结果保留: 0 10 min, 1 1 h, 2 this session
+        SettingsThumbCache,
         SettingsTextRender,
         SettingsUiFontSize,
         SettingsTrayIcon,
+        SettingsDoubleCtrlGap,
         SettingsLanguage,
         SettingsIndexVolume,
         SettingsIndexAction,

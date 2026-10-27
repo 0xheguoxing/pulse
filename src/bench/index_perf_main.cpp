@@ -59,13 +59,13 @@ bool QueryStatus(uint32_t& count, std::wstring& status) {
     return ok;
 }
 
-bool RunSearch(const std::wstring& needle, uint32_t request_id, Sample& sample) {
+bool RunSearch(const std::wstring& needle, uint32_t request_id, Sample& sample, uint32_t limit = 48) {
     HANDLE pipe = Connect();
     if (pipe == INVALID_HANDLE_VALUE) return false;
     PayloadWriter writer;
     writer.PutU32(1u); // ranked
     writer.PutU32(static_cast<uint32_t>(ResultSort::Index));
-    writer.PutU32(48);
+    writer.PutU32(limit);
     writer.PutU32(0);
     writer.PutString(needle);
     writer.PutString(L"");
@@ -100,6 +100,18 @@ double Percentile(std::vector<double> values, double percentile) {
 
 int wmain(int argc, wchar_t** argv) {
     const bool enforce = argc > 1 && std::wstring_view(argv[1]) == L"--enforce";
+    // --queries a,b,c: time those (quick search requests up to 200 hits);
+    // reported without budgets.
+    std::vector<std::wstring> custom;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::wstring_view(argv[i]) != L"--queries") continue;
+        std::wstring_view list(argv[i + 1]);
+        while (!list.empty()) {
+            const size_t comma = list.find(L',');
+            if (comma) custom.emplace_back(list.substr(0, comma));
+            list = comma == std::wstring_view::npos ? std::wstring_view{} : list.substr(comma + 1);
+        }
+    }
     uint32_t indexed = 0;
     std::wstring status;
     if (!QueryStatus(indexed, status)) {
@@ -110,6 +122,30 @@ int wmain(int argc, wchar_t** argv) {
     // page; the numeric result is enough for automated performance checks.
     (void)status;
     std::wcout << L"index items: " << indexed << L"\n\n";
+    if (!custom.empty()) {
+        std::wcout << L"query       first(ms) p50(ms)   max(ms)   matches\n";
+        uint32_t request_id = 100;
+        for (const auto& text : custom) {
+            std::vector<double> times;
+            uint32_t matches = 0;
+            for (int i = 0; i < 5; ++i) {
+                Sample sample;
+                if (!RunSearch(text, request_id++, sample, 200)) {
+                    std::wcerr << L"[FAIL] query transport failed\n";
+                    return 2;
+                }
+                times.push_back(sample.ms);
+                matches = sample.total;
+            }
+            std::string shown;  // the console code page may not print CJK
+            for (wchar_t c : text) shown += c < 128 ? static_cast<char>(c) : '?';
+            std::wcout << std::left << std::setw(10) << std::wstring(shown.begin(), shown.end()) << std::right
+                       << std::setw(10) << std::fixed << std::setprecision(1) << times[0]
+                       << std::setw(10) << Percentile(times, 0.50) << std::setw(10)
+                       << *std::max_element(times.begin(), times.end()) << std::setw(10) << matches << L"\n";
+        }
+        return 0;
+    }
     std::wcout << L"query       p50(ms)   p95(ms)   matches   budget\n";
 
     struct Case { const wchar_t* text; double budget; };

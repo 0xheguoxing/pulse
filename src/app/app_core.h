@@ -27,8 +27,11 @@
 #include "explorer_window_takeover.h"
 #include "external_open.h"
 #include "folder_sizes.h"
+#include "dialog_jump.h"
+#include "double_ctrl.h"
 #include "global_search_hotkey.h"
 #include "global_search_window.h"
+#include "jump_history.h"
 #include "host_window.h"
 #include "window_registry.h"
 #include "live_network_search.h"
@@ -128,6 +131,10 @@ struct AppCore {
     app::TrayController tray_controller;
 
     GlobalSearchHotkey globalSearchHotkey;
+    DoubleCtrlWatcher doubleCtrl;          // Ctrl Ctrl summons the quick search popup
+    // Frequent places, shared by quick search and the dialog jump bar.
+    std::shared_ptr<app::JumpHistory> jumpHistory = std::make_shared<app::JumpHistory>();
+    app::DialogJump dialogJump;            // jump bar under other programs' Open / Save dialogs
     GlobalSearchWindow globalSearchWindow;
     app::SingleInstanceCoordinator single_instance;
 

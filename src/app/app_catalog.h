@@ -31,9 +31,13 @@ inline bool IsAppPath(std::wstring_view path) {
                              static_cast<int>(prefix.size()), TRUE) == CSTR_EQUAL;
 }
 
+inline std::wstring AppPath(std::wstring_view id) { return std::wstring(kAppsFolderPrefix) + std::wstring(id); }
+
 // Entries a user does not launch from search: uninstallers, readmes, help
 // files and websites that installers drop into the Start menu.
 bool IsAppNoise(const AppEntry& app);
+// The opposite of IsAppNoise for an AppsFolder parsing name `id`.
+inline bool KeepApp(const std::wstring& name, const std::wstring& id) { return !IsAppNoise({name, AppPath(id)}); }
 
 // Indexes of the apps matching `query`, best first, at most `limit`: the
 // whole name, then a name prefix, a word prefix ("code" in "Visual Studio

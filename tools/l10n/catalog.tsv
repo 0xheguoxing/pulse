@@ -2831,7 +2831,7 @@ AiSnackCreated	IDS_AI_SNACK_CREATED	4030	{client} 新建了「{name}」	{client}
 AiSnackUndone	IDS_AI_SNACK_UNDONE	4031	{client} 撤销了「{name}」	{client} undid “{name}”	{client} 復原了「{name}」
 AiSnackOpen	IDS_AI_SNACK_OPEN	4032	打开位置	Show	開啟位置
 NoMoreConflictWarnings	IDS_NO_MORE_CONFLICT_WARNINGS	4033	 不再提示冲突	: no more conflict warnings	 不再提示衝突
-GlobalSearchApps	IDS_GLOBAL_SEARCH_APPS	4034	应用	Apps	應用
+GlobalSearchApps	IDS_GLOBAL_SEARCH_APPS	4034	结果里显示应用	Show apps in results	結果裡顯示應用程式
 QuickAccessNewTabHint	IDS_QUICK_ACCESS_NEW_TAB_HINT	4035	中键 / Ctrl+单击	Middle-click / Ctrl+click	中鍵 / Ctrl+按一下
 SettingsTransfer	IDS_SETTINGS_TRANSFER	4036	备份与迁移	Backup & transfer	備份與移轉
 SettingsTransferDesc	IDS_SETTINGS_TRANSFER_DESC	4037	把设置和个人数据导出为一个文件，换电脑时导入即可。窗口位置、索引和缓存不包含在内。	Save your settings and personal data to one file, then import it on another PC. Window positions, the index and caches are not included.	把設定和個人資料匯出為一個檔案，換電腦時匯入即可。視窗位置、索引和快取不包含在內。
@@ -4332,3 +4332,97 @@ AdvLabelValueFormat	IDS_ADV_LABEL_VALUE_FORMAT	5532	%s：%s	%s: %s	%s：%s
 OpDeletePartialTitle	IDS_OP_DELETE_PARTIAL_TITLE	5533	已删除 %s 项，%s 项未成功	Deleted %s items, %s didn't go through	已刪除 %s 項，%s 項未成功
 RecyclePathTooLongNotDeleted	IDS_RECYCLE_PATH_TOO_LONG_NOT_DELETED	5534	路径太长，无法移到回收站，未删除。可用 Shift+Delete 永久删除	The path is too long for the Recycle Bin, so it was not deleted. Shift+Delete deletes it permanently.	路徑太長，無法移到資源回收筒，未刪除。可用 Shift+Delete 永久刪除
 ToolbarToolExtensions	IDS_TOOLBAR_TOOL_EXTENSIONS	5535	文件扩展名	File name extensions	副檔名
+PreviewPageOf	IDS_PREVIEW_PAGE_OF	5536	第 %u / %u 页	Page %u of %u	第 %u / %u 頁
+PreviewHeadings	IDS_PREVIEW_HEADINGS	5537	%u 个标题	%u headings	%u 個標題
+PreviewAboutWords	IDS_PREVIEW_ABOUT_WORDS	5538	约 %s 字	about %s words	約 %s 字
+PreviewMixedEol	IDS_PREVIEW_MIXED_EOL	5539	混合换行	Mixed line endings	混合換行
+PreviewLatestModified	IDS_PREVIEW_LATEST_MODIFIED	5540	最近修改 %s	Modified %s	最近修改 %s
+PreviewReadingMode	IDS_PREVIEW_READING_MODE	5541	阅读	Reading	閱讀
+PreviewMonospaceMode	IDS_PREVIEW_MONOSPACE_MODE	5542	等宽	Monospace	等寬
+PreviewShowToc	IDS_PREVIEW_SHOW_TOC	5543	显示目录	Show contents	顯示目錄
+PreviewHideToc	IDS_PREVIEW_HIDE_TOC	5544	隐藏目录	Hide contents	隱藏目錄
+PreviewWidthNarrow	IDS_PREVIEW_WIDTH_NARROW	5545	栏宽 窄	Width: narrow	欄寬 窄
+PreviewWidthMedium	IDS_PREVIEW_WIDTH_MEDIUM	5546	栏宽 中	Width: medium	欄寬 中
+PreviewWidthWide	IDS_PREVIEW_WIDTH_WIDE	5547	栏宽 宽	Width: wide	欄寬 寬
+PreviewExpandAll	IDS_PREVIEW_EXPAND_ALL	5548	全部展开	Expand all	全部展開
+PreviewCollapseAll	IDS_PREVIEW_COLLAPSE_ALL	5549	全部折叠	Collapse all	全部摺疊
+PreviewColumnText	IDS_PREVIEW_COLUMN_TEXT	5550	文本	Text	文字
+PreviewColumnNumber	IDS_PREVIEW_COLUMN_NUMBER	5551	数字	Number	數字
+PreviewColumnPercent	IDS_PREVIEW_COLUMN_PERCENT	5552	百分比	Percent	百分比
+PreviewColumnDate	IDS_PREVIEW_COLUMN_DATE	5553	日期	Date	日期
+PreviewTableAllRows	IDS_PREVIEW_TABLE_ALL_ROWS	5554	共 %s 行 · 已全部显示	%s rows · all shown	共 %s 列 · 已全部顯示
+PreviewTablePartialRows	IDS_PREVIEW_TABLE_PARTIAL_ROWS	5555	已显示 %s 行 · 其余内容超出预览限制	%s rows shown · the rest exceeds the preview limit	已顯示 %s 列 · 其餘內容超出預覽限制
+PreviewBgAuto	IDS_PREVIEW_BG_AUTO	5556	背景：自动	Background: Auto	背景：自動
+PreviewBgLight	IDS_PREVIEW_BG_LIGHT	5557	背景：浅色	Background: Light	背景：淺色
+PreviewBgDark	IDS_PREVIEW_BG_DARK	5558	背景：深色	Background: Dark	背景：深色
+PreviewBgChecker	IDS_PREVIEW_BG_CHECKER	5559	背景：棋盘格	Background: Checkerboard	背景：棋盤格
+PreviewInfoAlpha	IDS_PREVIEW_INFO_ALPHA	5560	透明	Transparency	透明
+PreviewInfoYes	IDS_PREVIEW_INFO_YES	5561	有	Yes	有
+PreviewInfoNo	IDS_PREVIEW_INFO_NO	5562	无	None	無
+PreviewInfoHistogram	IDS_PREVIEW_INFO_HISTOGRAM	5563	直方图	Histogram	直方圖
+PreviewDecodeSystem	IDS_PREVIEW_DECODE_SYSTEM	5564	系统解码	System decoder	系統解碼
+PreviewDecodeFfmpeg	IDS_PREVIEW_DECODE_FFMPEG	5565	FFmpeg 解码	FFmpeg decoder	FFmpeg 解碼
+ThumbCache	IDS_THUMB_CACHE	5566	缩略图缓存	Thumbnail cache	縮圖快取
+ThumbCacheDesc	IDS_THUMB_CACHE_DESC	5567	视频、HEIC、RAW、PDF 和网络位置的缩略图会保存在本机，再次打开文件夹时立即显示	Thumbnails of videos, HEIC, RAW, PDF and network files are kept on this PC, so folders show them instantly next time	影片、HEIC、RAW、PDF 和網路位置的縮圖會儲存在本機，再次開啟資料夾時立即顯示
+ThumbCacheUsage	IDS_THUMB_CACHE_USAGE	5568	已用 %s / 512 MB · 超出后自动删除最久没用到的	%s of 512 MB used · the least recently used go first when full	已用 %s / 512 MB · 超出後自動刪除最久沒用到的
+ThumbCacheCounting	IDS_THUMB_CACHE_COUNTING	5569	正在计算占用…	Calculating…	正在計算佔用…
+ThumbCacheEmpty	IDS_THUMB_CACHE_EMPTY	5570	暂无缓存	Nothing cached yet	尚無快取
+ThumbCacheClearing	IDS_THUMB_CACHE_CLEARING	5571	正在清除…	Clearing…	正在清除…
+ThumbCacheCleared	IDS_THUMB_CACHE_CLEARED	5572	已清除 %s	Cleared %s	已清除 %s
+ThumbCacheDone	IDS_THUMB_CACHE_DONE	5573	已清除	Cleared	已清除
+ThumbCacheClear	IDS_THUMB_CACHE_CLEAR	5574	清除缓存	Clear cache	清除快取
+ThumbCacheUnavailable	IDS_THUMB_CACHE_UNAVAILABLE	5575	没有可用的缓存文件夹，缩略图只保存在内存中	No cache folder is available; thumbnails stay in memory only	沒有可用的快取資料夾，縮圖只保存在記憶體中
+ThumbCacheTooltip	IDS_THUMB_CACHE_TOOLTIP	5576	删除本机保存的缩略图，文件本身不受影响	Deletes the saved thumbnails; your files are not affected	刪除本機儲存的縮圖，檔案本身不受影響
+GlobalSearchDoubleCtrl	IDS_GLOBAL_SEARCH_DOUBLE_CTRL	5577	连按两次 Ctrl 呼出	Press Ctrl twice to open	連按兩次 Ctrl 叫出
+GlobalSearchDoubleCtrlDesc	IDS_GLOBAL_SEARCH_DOUBLE_CTRL_DESC	5578	在任何程序里快速按两下 Ctrl；全屏游戏和演示时不响应	Tap Ctrl twice in any app; ignored in full-screen games and presentations	在任何程式裡快速按兩下 Ctrl；全螢幕遊戲和簡報時不回應
+GlobalSearchDoubleCtrlGap	IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP	5579	连按间隔	Double-tap speed	連按間隔
+GlobalSearchDoubleCtrlGapDesc	IDS_GLOBAL_SEARCH_DOUBLE_CTRL_GAP_DESC	5580	两次按下之间允许的最长停顿	Longest pause allowed between the two taps	兩次按下之間允許的最長停頓
+DoubleCtrlFast	IDS_DOUBLE_CTRL_FAST	5581	200 毫秒	200 ms	200 毫秒
+DoubleCtrlNormal	IDS_DOUBLE_CTRL_NORMAL	5582	300 毫秒	300 ms	300 毫秒
+DoubleCtrlSlow	IDS_DOUBLE_CTRL_SLOW	5583	400 毫秒	400 ms	400 毫秒
+GlobalSearchJump	IDS_GLOBAL_SEARCH_JUMP	5584	跳转	Go to	跳轉
+DialogJumpBar	IDS_DIALOG_JUMP_BAR	5585	对话框跳转条	Dialog jump bar	對話方塊跳轉列
+DialogJumpBarDesc	IDS_DIALOG_JUMP_BAR_DESC	5586	在其它程序的打开、保存对话框下方列出 Pulse 里的文件夹，点一下就跳过去；Ctrl+G 跳到当前文件夹	Lists your Pulse folders under other apps' Open and Save dialogs; click one to go there, Ctrl+G jumps to the current folder	在其他程式的開啟、儲存對話方塊下方列出 Pulse 裡的資料夾，點一下就跳過去；Ctrl+G 跳到目前資料夾
+DialogJumpSearchCue	IDS_DIALOG_JUMP_SEARCH_CUE	5587	跳转到…  拼音也行	Go to…	跳轉到…  拼音也行
+DialogJumpCurrent	IDS_DIALOG_JUMP_CURRENT	5588	跳到 Pulse 当前的文件夹	Go to the current Pulse folder	跳到 Pulse 目前的資料夾
+DialogJumpNone	IDS_DIALOG_JUMP_NONE	5589	Pulse 里还没有打开的文件夹	No folders open in Pulse	Pulse 裡還沒有開啟的資料夾
+DialogJumpMore	IDS_DIALOG_JUMP_MORE	5590	快速访问和最近使用	Quick access and recent	快速存取和最近使用
+DialogJumpSearching	IDS_DIALOG_JUMP_SEARCHING	5591	正在搜索…	Searching…	正在搜尋…
+DialogJumpNoMatch	IDS_DIALOG_JUMP_NO_MATCH	5592	没有匹配的位置	No matching places	沒有符合的位置
+DialogJumpSearchCueOpen	IDS_DIALOG_JUMP_SEARCH_CUE_OPEN	5593	找文件或文件夹…  拼音也行	Find a file or folder…	找檔案或資料夾…  拼音也行
+DialogJumpGroupFolders	IDS_DIALOG_JUMP_GROUP_FOLDERS	5594	文件夹	Folders	資料夾
+DialogJumpGroupFiles	IDS_DIALOG_JUMP_GROUP_FILES	5595	文件	Files	檔案
+DialogJumpGoHere	IDS_DIALOG_JUMP_GO_HERE	5596	跳到这里 ↵	Go here ↵	跳到這裡 ↵
+DialogJumpFillOpen	IDS_DIALOG_JUMP_FILL_OPEN	5597	填入并打开 ↵	Fill in and open ↵	填入並開啟 ↵
+DialogJumpChipCurrent	IDS_DIALOG_JUMP_CHIP_CURRENT	5598	当前	current	目前
+DialogJumpPinned	IDS_DIALOG_JUMP_PINNED	5599	快速访问	Quick access	快速存取
+DialogJumpRecent	IDS_DIALOG_JUMP_RECENT	5600	最近使用	Recent	最近使用
+DialogJumpAuto	IDS_DIALOG_JUMP_AUTO	5601	打开对话框时自动跳到 Pulse 当前文件夹	Go to the current Pulse folder when a dialog opens	開啟對話方塊時自動跳到 Pulse 目前資料夾
+DialogJumpAutoDesc	IDS_DIALOG_JUMP_AUTO_DESC	5602	只跳一次；手动换了位置后不再干预	Only once per dialog; after you move elsewhere it stays put	只跳一次；手動換了位置後不再干預
+JumpHistory	IDS_JUMP_HISTORY	5603	记住常去的位置	Remember frequent places	記住常去的位置
+JumpHistoryDesc	IDS_JUMP_HISTORY_DESC	5604	把常去的文件夹排在前面；只保存在本机	Folders you go to often come first; kept on this PC only	把常去的資料夾排在前面；只儲存在本機
+JumpHistoryClear	IDS_JUMP_HISTORY_CLEAR	5605	清除记录	Clear history	清除記錄
+DialogJumpFrequent	IDS_DIALOG_JUMP_FREQUENT	5606	常去的位置	Frequent places	常去的位置
+GlobalSearchAppsDesc	IDS_GLOBAL_SEARCH_APPS_DESC	5607	开始菜单里的程序，排在最佳匹配之后	Programs from the Start menu, right after the best matches	「開始」功能表裡的程式，排在最佳符合之後
+GlobalSearchGroupApps	IDS_GLOBAL_SEARCH_GROUP_APPS	5608	应用	Apps	應用程式
+OpConflictCopyFrom	IDS_OP_CONFLICT_COPY_FROM	5609	从 	Copying from 	從 
+OpConflictCopyTo	IDS_OP_CONFLICT_COPY_TO	5610	 复制到 	 to 	 複製到 
+OpConflictMoveFrom	IDS_OP_CONFLICT_MOVE_FROM	5611	从 	Moving from 	從 
+OpConflictMoveTo	IDS_OP_CONFLICT_MOVE_TO	5612	 移动到 	 to 	 移動到 
+OpConflictIncomingCopy	IDS_OP_CONFLICT_INCOMING_COPY	5613	复制过来的	Incoming	複製過來的
+OpConflictIncomingMove	IDS_OP_CONFLICT_INCOMING_MOVE	5614	移动过来的	Incoming	移動過來的
+OpConflictAlreadyThere	IDS_OP_CONFLICT_ALREADY_THERE	5615	目标中现有的	Already there	目標中現有的
+OpReplaceShort	IDS_OP_REPLACE_SHORT	5616	替换	Replace	替換
+OpSkipShort	IDS_OP_SKIP_SHORT	5617	跳过	Skip	跳過
+PermDeleteSwitchToBin	IDS_PERM_DELETE_SWITCH_TO_BIN	5618	改为移到回收站	Move to Recycle Bin instead	改為移到資源回收筒
+PermDeleteCantUndo	IDS_PERM_DELETE_CANT_UNDO	5619	删除后无法恢复。	 This can't be undone.	刪除後無法復原。
+LockInUseEnd	IDS_LOCK_IN_USE_END	5620	”正被使用	” is in use	」正被使用
+LockCloseLead	IDS_LOCK_CLOSE_LEAD	5621	在下面的程序里关闭它，	Close it in the program below and it will be 	在下面的程式裡關閉它，
+LockCloseEnd	IDS_LOCK_CLOSE_END	5622	会自动继续。	 automatically.	會自動繼續。
+LockWaiting	IDS_LOCK_WAITING	5623	正在等待文件释放…	Waiting for the file to be released…	正在等待檔案釋放…
+LockRetryNow	IDS_LOCK_RETRY_NOW	5624	立即重试	Retry now	立即重試
+OpAuthTitleCopy	IDS_OP_AUTH_TITLE_COPY	5625	复制到这里需要管理员权限	Copying here needs administrator permission	複製到這裡需要系統管理員權限
+OpAuthTitleMove	IDS_OP_AUTH_TITLE_MOVE	5626	移动到这里需要管理员权限	Moving here needs administrator permission	移動到這裡需要系統管理員權限
+OpAuthTitleDelete	IDS_OP_AUTH_TITLE_DELETE	5627	删除这些项目需要管理员权限	Deleting these items needs administrator permission	刪除這些項目需要系統管理員權限
+OpAuthNotGrantedShort	IDS_OP_AUTH_NOT_GRANTED_SHORT	5628	没有获得管理员权限。	Administrator permission wasn't granted.	沒有取得系統管理員權限。
+OpAuthorizationOnce	IDS_OP_AUTHORIZATION_ONCE	5629	确认一次即可，本次操作的其余项目不会再问。	You only need to approve once; the rest of this operation won't ask again.	確認一次即可，本次操作的其餘項目不會再詢問。

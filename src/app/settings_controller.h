@@ -123,6 +123,11 @@ public:
         // the worker side of SettingsExport / SettingsImport.
         std::function<void(int)> settings_transfer;
         SettingsTaskOperation settings_transfer_task;
+        // 文件列表 > 缩略图缓存. Both run on a worker thread: the first gives
+        // the bytes on disk (false: the cache has no folder), the second
+        // empties it and gives the bytes freed.
+        std::function<bool(uint64_t&)> thumb_cache_bytes;
+        std::function<uint64_t()> clear_thumb_cache;
     };
 
     SettingsController() = default;
@@ -177,6 +182,18 @@ public:
         std::wstring archive_version, archive_notice, archive_update_version;
     };
     const PackState& Packs();
+
+    // Settings > 文件列表 > 缩略图缓存. Counted on a worker when the page is
+    // shown (again after 10 s); 清除缓存 runs there too. `notify` (an HWND)
+    // is repainted when a result arrives.
+    struct ThumbCacheState {
+        enum Phase : uint8_t { Counting, Ready, Clearing, Cleared, Unavailable };
+        Phase phase = Counting;
+        uint64_t bytes = 0;
+        uint64_t cleared = 0;  // freed by the last 清除缓存, shown while Cleared
+    };
+    ThumbCacheState ThumbCache(void* notify);
+    void ClearThumbCache();
     // Each returns true when thumbnails have to be decoded again.
     // Starts the download, or cancels the running one. `notify` repaints.
     bool InstallMediaPack(HWND notify);
@@ -260,6 +277,7 @@ public:
     void TextRendering(int index);
     void UiFontSize(int index);   // 0 small 90%, 1 default 100%, 2 large 112%, 3 larger 125%
     void TrayIconSize(int index);
+    void DoubleCtrlGap(int index);   // 连按间隔: 200 / 300 / 400 ms
     // Settings sliders: 0 interface transparency (0..90), 1 wallpaper blur (0..40),
     // 2..4 custom accent hue (0..360), saturation and lightness (0..100).
     // Values apply live while dragging; EndSlider saves once.
@@ -369,6 +387,17 @@ private:
     std::shared_ptr<TaskState> task_state_ = std::make_shared<TaskState>();
     std::mutex workers_mutex_;
     std::vector<std::thread> workers_;
+    // 缩略图缓存: one job at a time on its own thread, joined before the next.
+    struct ThumbCacheJob {
+        std::mutex mutex;
+        ThumbCacheState state;
+        bool busy = false, stopping = false;
+        uint64_t checked = 0;
+        void* notify = nullptr;
+    };
+    std::shared_ptr<ThumbCacheJob> thumb_cache_ = std::make_shared<ThumbCacheJob>();
+    std::thread thumb_cache_worker_;
+    void StartThumbCacheJob(bool clear);
     bool stopping_ = false;
     std::wstring error_;
     std::wstring integration_error_;

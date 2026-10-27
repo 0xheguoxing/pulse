@@ -467,6 +467,82 @@ bool SystemAllowsPopupAcrylic() noexcept {
     return true;
 }
 
+bool BuildAcrylicPlate(ID2D1DeviceContext* dc, ID2D1Bitmap1* frame, POINT frame_origin, const RECT& card,
+                       float blur, bool dark, float luminosity, float tint, ComPtr<ID2D1Bitmap1>& out) noexcept {
+    out.reset();
+    const int pw = static_cast<int>(card.right - card.left);
+    const int ph = static_cast<int>(card.bottom - card.top);
+    if (!dc || !frame || pw <= 0 || ph <= 0) return false;
+    ComPtr<ID2D1Image> target;
+    dc->GetTarget(&target);
+    const D2D1_SIZE_U fs = frame->GetPixelSize();
+    const int margin = static_cast<int>(std::ceil(2.0f * blur));
+    const int sw = pw + margin * 2;
+    const int sh = ph + margin * 2;
+    const float fl = static_cast<float>(card.left - margin - frame_origin.x);
+    const float ft = static_cast<float>(card.top - margin - frame_origin.y);
+    const D2D1_RECT_F src{ (std::max)(fl, 0.0f), (std::max)(ft, 0.0f),
+                           (std::min)(fl + sw, static_cast<float>(fs.width)),
+                           (std::min)(ft + sh, static_cast<float>(fs.height)) };
+    if (!(src.right > src.left) || !(src.bottom > src.top)) return false;
+
+    const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+    ComPtr<ID2D1Bitmap1> sample;
+    ComPtr<ID2D1Bitmap1> plate;
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(sw, sh), nullptr, 0, props, &sample)) ||
+        FAILED(dc->CreateBitmap(D2D1::SizeU(pw, ph), nullptr, 0, props, &plate)))
+        return false;
+    dc->SetTarget(sample.get());
+    dc->Clear(dark ? HexColor(0x2B2B2B) : HexColor(0xF9F9F9));
+    const D2D1_RECT_F in{ src.left - fl, src.top - ft, src.right - fl, src.bottom - ft };
+    dc->DrawBitmap(frame, in, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
+    // Popups often hang past the window edge. Stretch the edge pixels of the
+    // frame over the part outside so the blur reads as one material instead
+    // of window acrylic next to a flat plate; capturing the desktop there
+    // costs 23-90 ms per popup.
+    const float sw_f = static_cast<float>(sw), sh_f = static_cast<float>(sh);
+    const float xs[3][2]{ { 0.0f, in.left }, { in.left, in.right }, { in.right, sw_f } };
+    const float ys[3][2]{ { 0.0f, in.top }, { in.top, in.bottom }, { in.bottom, sh_f } };
+    const float sx[3][2]{ { src.left, src.left + 1.0f }, { src.left, src.right },
+                          { src.right - 1.0f, src.right } };
+    const float sy[3][2]{ { src.top, src.top + 1.0f }, { src.top, src.bottom },
+                          { src.bottom - 1.0f, src.bottom } };
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            if (row == 1 && col == 1) continue;
+            if (!(xs[col][1] > xs[col][0]) || !(ys[row][1] > ys[row][0])) continue;
+            const D2D1_RECT_F from{ sx[col][0], sy[row][0], sx[col][1], sy[row][1] };
+            dc->DrawBitmap(frame, D2D1::RectF(xs[col][0], ys[row][0], xs[col][1], ys[row][1]),
+                           1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &from);
+        }
+    }
+    dc->SetTarget(plate.get());
+    dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+    TargetSample ts;
+    ts.bitmap = std::move(sample);
+    ts.origin = D2D1::Point2F(static_cast<float>(-margin), static_cast<float>(-margin));
+    const bool ok = DrawAcrylicSample(dc, ts, D2D1::RectF(0.0f, 0.0f, static_cast<float>(pw),
+                                      static_cast<float>(ph)), 0.0f, dark, blur, luminosity, tint);
+    dc->SetTarget(target.get());
+    if (!ok) return false;
+    out = std::move(plate);
+    return true;
+}
+
+namespace {
+// Dialogs take the menu recipe, so the two read as one material, and follow
+// the same system switches.
+bool BuildDialogAcrylicPlate(ID2D1DeviceContext* dc, ID2D1Bitmap1* frame, POINT frame_origin, const RECT& card,
+                             float scale, bool dark, ComPtr<ID2D1Bitmap1>& plate) {
+    if (!SystemAllowsPopupAcrylic()) return false;
+    return BuildAcrylicPlate(dc, frame, frame_origin, card, 16.0f * scale, dark,
+                             dark ? 0.80f : 0.72f, dark ? 0.20f : 0.05f, plate);
+}
+[[maybe_unused]] const bool kDialogAcrylicRegistered =
+    (Compositor::SetAcrylicPlateBuilder(&BuildDialogAcrylicPlate), true);
+} // namespace
+
 bool WindowEffectUsesBackdrop(WindowEffect effect) noexcept {
     return effect != WindowEffect::None;
 }

@@ -88,5 +88,7 @@ constexpr UINT WM_DEVICE_FOLDER_CHANGED = WM_APP + 117;  // SHChangeNotify on th
 constexpr UINT WM_UI_KICK = WM_APP + 115;  // a background producer has results: run the kTimerUi tick now
 constexpr UINT WM_COMMAND_PALETTE = WM_APP + 116;  // the address editor got ">": open the command palette
 constexpr UINT WM_RECYCLE_REFUSED = WM_APP + 117;  // window: a recycle left items the bin would not keep (AppState::recycleRefused)
+constexpr UINT WM_DOUBLE_CTRL = WM_APP + 118;  // two Ctrl taps anywhere: toggle the quick search popup
+constexpr UINT WM_DIALOG_JUMP_CONTEXT = WM_APP + 119;  // the dialog jump bar wants the open folders
 
 }  // namespace pulse

@@ -2370,6 +2370,11 @@ void SeedShellVerbCache(AppState& s) {
     const uint32_t generation = ++g_shell_seed_generation;
     const uint32_t cache_generation = s.context_menu.cache_generation();
     std::thread([hwnd, generation, cache_generation] {
+        // Re-reading up to 400 types costs about 2 s of CPU right at startup
+        // (and after every Classes change), when the first screen of
+        // thumbnails is decoding: background CPU and I/O priority lets those
+        // go first. The thread is detached and ends here, so no END call.
+        SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
         // The cache file can be megabytes: read and parse it here, never on
         // the UI thread, which only merges the result (WM_SHELL_VERB_SEED).
         auto seed = std::make_unique<ShellVerbSeed>();
@@ -5582,7 +5587,19 @@ bool QuickPreviewItemForRow(AppState& s, const app::Tab& tab, int index, ui::Qui
 
 bool SelectedQuickPreviewItem(AppState& s, ui::QuickPreviewItem& item) {
     app::Tab* tab = ActiveTab(s);
-    return tab && QuickPreviewItemAt(s, *tab, tab->selected_index, item);
+    if (!tab || !QuickPreviewItemAt(s, *tab, tab->selected_index, item)) return false;
+    // "6 / 12" in the preview header: the row among the rows on screen.
+    if (s.pane) {
+        ui::PaneViewModel pane;
+        app::FillPaneViewModel(pane, *s.pane, &s.places);
+        const int view = pane.ViewIndex(tab->selected_index);
+        const int count = static_cast<int>(pane.EntryCount());
+        if (view >= 0 && view < count) {
+            item.position = view + 1;
+            item.count = count;
+        }
+    }
+    return true;
 }
 
 void ToggleQuickPreview(AppState& s) {
@@ -5622,6 +5639,7 @@ void ToggleQuickPreview(AppState& s) {
         }
         s.quickPreview.Initialize(s.hwnd, WM_QUICK_PREVIEW_NAVIGATE,
                                   WM_QUICK_PREVIEW_OPEN, WM_QUICK_PREVIEW_COMMAND);
+        s.quickPreview.SetAccent(s.accentColor);
         s.quickPreview.Show(item, s.darkMode, effect, s.safeMode, zoom_from);
         s.quickPreviewSelection.Reset(item.path);
     }

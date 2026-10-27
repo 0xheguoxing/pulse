@@ -185,6 +185,38 @@ Names Search(HANDLE pipe, uint32_t id, const std::wstring& needle) {
     return out;
 }
 
+// Ranked pages over many unchecked folders arrive twice: the final page with
+// a total of confirmed names, then the exact total (same request id).
+std::vector<Names> SearchReplies(HANDLE pipe, uint32_t id, const std::wstring& needle, size_t count) {
+    PayloadWriter w;
+    w.PutU32(1u);  // ranked
+    w.PutU32(static_cast<uint32_t>(ResultSort::Index));
+    w.PutU32(48);
+    w.PutU32(0);
+    w.PutString(needle);
+    w.PutString(L"");
+    std::vector<Names> out;
+    if (!SendFrame(pipe, REQ_IDX_SEARCH, id, w.data())) return out;
+    std::vector<uint8_t> reply;
+    while (out.size() < count && ReadReply(pipe, RSP_IDX_SEARCH, id, reply, out.empty() ? 15000 : 10000)) {
+        Names page;
+        PayloadReader r(reply.data(), reply.size());
+        uint32_t hits = 0;
+        if (!r.GetU32(page.total) || !r.GetU32(hits)) break;
+        bool parsed = true;
+        for (uint32_t i = 0; i < hits && parsed; ++i) {
+            std::wstring path, name;
+            uint32_t dir = 0, a = 0, b = 0, c = 0, d = 0;
+            parsed = r.GetString(path) && r.GetString(name) && r.GetU32(dir) && r.GetU32(a) &&
+                r.GetU32(b) && r.GetU32(c) && r.GetU32(d);
+            if (parsed) page.names.insert(name);
+        }
+        page.ok = parsed;
+        out.push_back(std::move(page));
+    }
+    return out;
+}
+
 bool FolderSizes(HANDLE pipe, uint32_t id, const std::vector<std::wstring>& paths,
                  std::vector<IndexedFolderSize>& values) {
     PayloadWriter w;
@@ -269,6 +301,15 @@ int wmain(int argc, wchar_t** argv) {
     for (const auto& file : {root / L"pulsecf_top.txt", open / L"pulsecf_open.txt",
                              secret / L"pulsecf_secret.txt", inner / L"pulsecf_inner.txt"})
         std::ofstream(file) << "pulse caller filter";
+    // Top-first pages: many listable folders, and the best-ranked name (an
+    // exact match) in the hidden one.
+    constexpr int kSpread = 600;
+    for (int i = 0; i < kSpread; ++i) {
+        const auto folder = root / L"spread" / (L"d" + std::to_wstring(i));
+        fs::create_directories(folder);
+        std::ofstream(folder / (L"pulsetf_" + std::to_wstring(i) + L".txt")) << "x";
+    }
+    std::ofstream(secret / L"pulsetf") << "x";
 
     // Root: owner/SYSTEM/admins full, Authenticated Users may read. "secret"
     // drops the Authenticated Users grant; "inner" gets it back explicitly,
@@ -335,6 +376,35 @@ int wmain(int argc, wchar_t** argv) {
         Check(direct.ok && direct.names.empty() && direct.total == 0, "exact name in a hidden folder is not found");
         const Names deep = Search(other, id++, L"pulsecf_inner");
         Check(deep.ok && deep.names.size() == 1 && deep.total == 1, "listable folder below a hidden one still works");
+    }
+    // Ranked page over 600 unchecked folders: the restricted caller gets the
+    // page at once (no hidden name, a partial total), then the exact total.
+    Names spread_own;
+    const ULONGLONG spread_until = GetTickCount64() + 30000;
+    while (mine != INVALID_HANDLE_VALUE && GetTickCount64() < spread_until) {
+        spread_own = Search(mine, id++, L"pulsetf");
+        if (spread_own.ok && spread_own.total == kSpread + 1) break;
+        Sleep(200);
+    }
+    Check(spread_own.ok && spread_own.total == kSpread + 1 && spread_own.names.contains(L"pulsetf"),
+          "owner sees every spread name, the hidden exact match first");
+    if (other != INVALID_HANDLE_VALUE) {
+        const ULONGLONG started = GetTickCount64();
+        const auto pages = SearchReplies(other, id++, L"pulsetf", 2);
+        std::cout << "[INFO] spread replies=" << pages.size() << " ms=" << GetTickCount64() - started;
+        for (const auto& page : pages) std::cout << " total=" << page.total << " hits=" << page.names.size();
+        std::cout << std::endl;
+        Check(pages.size() == 2, "spread: page first, exact total after");
+        if (pages.size() == 2) {
+            Check(pages[0].ok && pages[0].names.size() == 48 && !pages[0].names.contains(L"pulsetf") &&
+                  pages[0].total >= 48 && pages[0].total < static_cast<uint32_t>(kSpread),
+                  "spread: first page is full, hides the secret name, counts confirmed names only");
+            Check(pages[1].ok && pages[1].total == static_cast<uint32_t>(kSpread) && pages[1].names == pages[0].names,
+                  "spread: exact total follows with the same page");
+        }
+        const Names again = Search(other, id++, L"pulsetf");
+        Check(again.ok && again.total == static_cast<uint32_t>(kSpread) && !again.names.contains(L"pulsetf"),
+              "spread: checked folders answer the next query at once");
     }
     // Shared engine cache must not leak the restricted view to the owner.
     const Names own_again = Search(mine, id++, L"pulsecf");

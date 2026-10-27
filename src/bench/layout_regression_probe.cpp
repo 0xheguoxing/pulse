@@ -2,6 +2,7 @@
 #include "../app/app_internal.h"
 #include "../ui/ui_renderer.h"
 #include "../app/app_input.h"
+#include "../ui/ui_renderer.h"
 #include <windowsx.h>
 #include <fstream>
 #include <filesystem>

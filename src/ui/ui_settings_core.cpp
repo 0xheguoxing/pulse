@@ -5,6 +5,7 @@
 #include "bloom_accent_picker.h"
 #include "../common/localization.h"
 #include <algorithm>
+#include "../common/text_format.h"
 #include <cmath>
 
 namespace pulse::ui {
@@ -83,13 +84,13 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             }
         }
     };
-    auto toggle=[&](D2D1_RECT_F r,I title,I desc,const wchar_t* icon,bool on,int hit) {
+    auto toggle=[&](D2D1_RECT_F r,I title,I desc,const wchar_t* icon,bool on,int hit,float text_right=0.0f) {
         if(r.bottom<=r.top) return;
         if(IsHovered(vm,H::SettingsToggle,hit)) {
             MakeBrush(dc,theme.fill_hover,brFillHover_);
             FillRoundedRect(dc,brFillHover_.get(),r.left+2*scale_,r.top+2*scale_,r.right-r.left-4*scale_,r.bottom-r.top-4*scale_,6*scale_);
         }
-        label(r,l10n::Get(title),l10n::Get(desc),icon,0.0f,hit==15 ? 43.0f : 21.0f);
+        label(r,l10n::Get(title),l10n::Get(desc),icon,text_right,hit==15 ? 43.0f : 21.0f);
         fluent::ControlState state{}; state.checked=on; state.hovered=IsHovered(vm,H::SettingsToggle,hit);
         painter_.DrawSwitch(D2D1::RectF(r.right-60*scale_,r.top+16*scale_,r.right-16*scale_,r.top+48*scale_),L"",state);
     };
@@ -572,6 +573,52 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
         toggle(lay.list_style_row[3],I::ListTagNameColor,I::ListTagNameColorDesc,L"\xE8EC",vm.settings_list_tag_names,22);
         toggle(lay.list_style_row[4],I::ListSelectionOutline,I::ListSelectionOutlineDesc,L"\xE8B3",vm.settings_list_selection_outline,33);
         toggle(lay.list_style_row[5],I::ListThumbnailBadges,I::ListThumbnailBadgesDesc,L"\xE8B9",vm.settings_list_thumbnail_badges,34);
+        if(lay.thumb_cache_row.bottom>lay.thumb_cache_row.top) {
+            // 缩略图缓存: usage bar against the 512 MB budget, then 清除缓存.
+            const auto& r=lay.thumb_cache_row;
+            const auto& b=lay.thumb_cache_button;
+            const uint8_t phase=vm.settings_thumb_cache_phase;   // ThumbCacheState::Phase
+            const bool unavailable=phase==4;
+            const float text_right=unavailable ? r.right-16*scale_ : b.left-16*scale_;
+            const bool two_lines=r.bottom-r.top>96*scale_;
+            label(r,l10n::Get(I::ThumbCache),l10n::Get(I::ThumbCacheDesc),L"\xEDA2",text_right,two_lines ? 43.0f : 21.0f);
+            const float line_top=r.bottom-30*scale_, x=r.left+54*scale_;
+            std::wstring usage;
+            wchar_t buffer[160]{};
+            const uint64_t budget=512ull<<20;
+            if(unavailable) usage=l10n::Get(I::ThumbCacheUnavailable);
+            else if(phase==0) usage=l10n::Get(I::ThumbCacheCounting);
+            else if(phase==2) usage=l10n::Get(I::ThumbCacheClearing);
+            else if(phase==3) {
+                swprintf_s(buffer,l10n::Get(I::ThumbCacheCleared).c_str(),pulse::format::ByteSize(vm.settings_thumb_cache_cleared).c_str());
+                usage=buffer;
+            } else if(vm.settings_thumb_cache_bytes==0) usage=l10n::Get(I::ThumbCacheEmpty);
+            else {
+                swprintf_s(buffer,l10n::Get(I::ThumbCacheUsage).c_str(),pulse::format::ByteSize(vm.settings_thumb_cache_bytes).c_str());
+                usage=buffer;
+            }
+            float usage_left=x;
+            if(!unavailable) {
+                const float bar_w=(std::min)(200*scale_,(std::max)(0.0f,(text_right-x)*0.4f));
+                const float bar_h=4*scale_, bar_y=line_top+9*scale_-bar_h/2;
+                MakeBrush(dc,WithAlpha(theme.text_secondary,theme.text_secondary.a*0.22f),brTagDot_);
+                FillRoundedRect(dc,brTagDot_.get(),x,bar_y,bar_w,bar_h,bar_h/2);
+                const uint64_t used=phase==1 ? vm.settings_thumb_cache_bytes : 0;
+                if(used) {
+                    // At least a dot, so a few KB still shows something.
+                    const float fill=(std::max)(bar_h,bar_w*static_cast<float>((std::min)(1.0,static_cast<double>(used)/budget)));
+                    MakeBrush(dc,theme.accent,brTagDot_);
+                    FillRoundedRect(dc,brTagDot_.get(),x,bar_y,fill,bar_h,bar_h/2);
+                }
+                usage_left=x+bar_w+12*scale_;
+            }
+            painter_.DrawText(usage,D2D1::RectF(usage_left,line_top,text_right,line_top+18*scale_),
+                compositor_->SmallFormat(),phase==3 ? theme.text : theme.text_secondary);
+            if(!unavailable) {
+                const I caption=phase==2 ? I::ThumbCacheClearing : phase==3 ? I::ThumbCacheDone : I::ThumbCacheClear;
+                button(b,l10n::Get(caption),H::SettingsThumbCache,0,false,phase==1 && vm.settings_thumb_cache_bytes>0);
+            }
+        }
         toggle(lay.alias_mark_row,I::AliasMark,I::AliasMarkDesc,L"\xE8AC",vm.settings_alias_mark,39);
         toggle(lay.tree_sticky_row,I::SettingsTreeSticky,I::SettingsTreeStickyDesc,L"\xE840",vm.settings_list_tree_sticky,79);
         if(lay.mtime_style_card.bottom>lay.mtime_style_card.top) {
@@ -665,7 +712,38 @@ void MainRenderer::DrawSettingsCore(const WindowViewModel& vm, const D2D1_RECT_F
             L"\xE765",lay.global_search_hotkey_row.right-16*scale_);
         button(lay.global_search_hotkey_button,vm.settings_global_search_capturing ? l10n::Get(I::GlobalSearchRecording) : vm.settings_global_search_hotkey,H::SettingsGlobalSearchHotkey,0);
         divider(lay.global_search_hotkey_row);
+        {
+            // Faded and inert while what they depend on is off.
+            auto dim_begin=[&](bool dim) {
+                if(dim) dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(),nullptr,D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    D2D1::IdentityMatrix(),0.42f,nullptr,D2D1_LAYER_OPTIONS1_NONE),nullptr);
+                return dim;
+            };
+            auto dim_end=[&](bool dim) { if(dim) dc->PopLayer(); };
+            const bool dim=dim_begin(!vm.settings_global_search_enabled);
+            toggle(lay.global_search_double_ctrl_row,I::GlobalSearchDoubleCtrl,I::GlobalSearchDoubleCtrlDesc,L"\xE945",vm.settings_global_search_double_ctrl,40);
+            divider(lay.global_search_double_ctrl_row);
+            dim_end(dim);
+            const bool dim_gap=dim_begin(!vm.settings_global_search_enabled || !vm.settings_global_search_double_ctrl);
+            const I gaps[]={I::DoubleCtrlFast,I::DoubleCtrlNormal,I::DoubleCtrlSlow};const int gap_values[]={200,300,400};
+            segmented(lay.global_search_gap_card,lay.global_search_gap,gaps,gap_values,vm.settings_global_search_double_ctrl_ms,H::SettingsDoubleCtrlGap,
+                I::GlobalSearchDoubleCtrlGap,I::GlobalSearchDoubleCtrlGapDesc,3,L"\xE916");
+            divider(lay.global_search_gap_card);
+            dim_end(dim_gap);
+            const bool dim_apps=dim_begin(!vm.settings_global_search_enabled);
+            toggle(lay.global_search_apps_row,I::GlobalSearchApps,I::GlobalSearchAppsDesc,L"\xE71D",vm.settings_global_search_apps,43);
+            divider(lay.global_search_apps_row);
+            dim_end(dim_apps);
+            toggle(lay.dialog_jump_row,I::DialogJumpBar,I::DialogJumpBarDesc,L"\xE8E5",vm.settings_dialog_jump_bar,41);divider(lay.dialog_jump_row);
+            const bool dim_auto=dim_begin(!vm.settings_dialog_jump_bar);
+            toggle(lay.dialog_jump_auto_row,I::DialogJumpAuto,I::DialogJumpAutoDesc,L"\xE72A",vm.settings_dialog_jump_auto,42);
+            divider(lay.dialog_jump_auto_row);
+            dim_end(dim_auto);
+        }
         toggle(lay.search_pinyin_row,I::SearchPinyin,I::SearchPinyinDesc,L"\xE721",vm.settings_search_pinyin,9);divider(lay.search_pinyin_row);
+        toggle(lay.jump_history_row,I::JumpHistory,I::JumpHistoryDesc,L"\xE823",vm.settings_jump_history,44,lay.jump_history_clear.left-12*scale_);
+        button(lay.jump_history_clear,l10n::Get(I::JumpHistoryClear),H::SettingsToggle,45,false,!vm.settings_jump_history_empty);
+        divider(lay.jump_history_row);
         label(lay.filename_status,l10n::Get(I::SettingsFilenameIndex),vm.settings_index_status,L"\xE8A5",lay.filename_status.right-16*scale_);divider(lay.filename_status);
         disclosure(lay.disclosure[1],I::SettingsMaintenance,I::SettingsMaintenanceDesc,L"\xE713",1,false);
         label(lay.content_header,l10n::Get(I::SettingsContentFolders),vm.settings_content_summary,L"\xE8B7",

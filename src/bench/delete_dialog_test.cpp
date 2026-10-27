@@ -104,11 +104,16 @@ void CALLBACK Step(HWND, UINT, UINT_PTR timer, DWORD) {
         if (++g_wait > 40) { Check(false, "the delete dialog opens"); KillTimer(nullptr, timer); PostQuitMessage(1); }
         return;
     }
-    if (g_step++ < 3) return; // let the fan settle (120 + 450 ms)
+    if (g_step++ < 3) return; // let it paint
     KillTimer(nullptr, timer);
     RECT client{};
     GetClientRect(dialog, &client);
-    Check(std::abs(client.bottom - static_cast<LONG>(310 * Scale(dialog))) <= 2, "the dialog is 310 DIP tall");
+    // 82 + 2 + 34 per row + 20 + 64: three items and "and N more", or one item.
+    const bool many_rows = g_scenario == 0 || g_scenario == 1 || g_scenario == 5;
+    const float tall = many_rows ? 304.0f : 202.0f;
+    Check(std::abs(client.bottom - static_cast<LONG>(tall * Scale(dialog))) <= 2,
+          many_rows ? "four list rows: 304 DIP tall" : "one list row: 202 DIP tall");
+    const float footer_y = tall - 32.0f;
     switch (g_scenario) {
     case 0: Shot(dialog, L"many", g_dark); SendMessageW(dialog, WM_KEYDOWN, VK_RETURN, 0); break;
     case 1:
@@ -118,12 +123,12 @@ void CALLBACK Step(HWND, UINT, UINT_PTR timer, DWORD) {
         SendMessageW(dialog, WM_KEYDOWN, VK_RETURN, 0);
         break;
     case 2: Shot(dialog, L"one-nobin", g_dark); SendMessageW(dialog, WM_KEYDOWN, VK_ESCAPE, 0); break;
-    case 3: Click(dialog, At(dialog, 460 - 16 - 68, 250 + 30)); break;
+    case 3: Click(dialog, At(dialog, 440 - 24 - 40, footer_y)); break;
     case 4: // where 移到回收站 would be: nothing there, so Escape still cancels
-        Click(dialog, At(dialog, 16 + 56, 250 + 30));
+        Click(dialog, At(dialog, 12 + 40, footer_y));
         if (IsWindow(dialog)) SendMessageW(dialog, WM_KEYDOWN, VK_ESCAPE, 0);
         break;
-    default: Click(dialog, At(dialog, 16 + 56, 250 + 30)); break;
+    default: Click(dialog, At(dialog, 12 + 40, footer_y)); break;
     }
 }
 

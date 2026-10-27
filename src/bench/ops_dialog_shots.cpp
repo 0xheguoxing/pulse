@@ -17,7 +17,7 @@ struct FileOperationWindowTestAccess {
     static HWND Handle(FileOperationWindow& window) { return window.hwnd_; }
     static void Size(FileOperationWindow& window, UINT dpi, bool detailed) {
         window.detailed_ = detailed;
-        RECT rect{0, 0, MulDiv(468, dpi, 96), MulDiv(detailed ? 452 : 348, dpi, 96)};
+        RECT rect{0, 0, MulDiv(440, dpi, 96), MulDiv(detailed ? 422 : 272, dpi, 96)};
         SendMessageW(window.hwnd_, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&rect));
     }
     static void Graph(FileOperationWindow& window, float upto, double base, bool by_progress = true) {
@@ -173,6 +173,7 @@ int wmain(int argc, wchar_t** argv) {
             auto done = Running(ops::OpType::Copy, 100.0f);
             done.active = false;
             done.phase = ops::OpPhase::Completed;
+            done.destination_dir = L"D:\\Backup\\Projects 2026";
             window.Update(done);
             Access::Graph(window, 1.0f, 212.0 * mb);
             Access::Elapsed(window, 88000, true);
@@ -332,8 +333,8 @@ int wmain(int argc, wchar_t** argv) {
         Access::Graph(window, 1.0f, 212.0 * mb);
         Access::Elapsed(window, 88000, true);
         Check(Access::Board(window), "partial failure lists the failed items");
-        Check(Access::Height(window) == plain_h + MulDiv(4 * 36 + 22 + 10, 96, 96),
-              "card grows by four rows, the more line and a gap");
+        Check(Access::Height(window) == plain_h + MulDiv(90 + 4 * 36 + 22 + 2 + 14 - 216, 96, 96),
+              "window fits four rows and the more line");
         Check(Access::Shown(window).failed_items == 6, "six items still failed");
         Check(!Access::Pending(window), "partial failure does not auto-close");
         Check(Access::CanRetry(window),
@@ -422,6 +423,71 @@ int wmain(int argc, wchar_t** argv) {
               Access::Shown(window).phase == ops::OpPhase::Completed,
               "a retry finished while another was reported is looked up");
         window.Hide();
+    }
+
+    // Acrylic: over one of our windows the card blurs what that window shows,
+    // the way menus do; anywhere else it keeps the plain surface.
+    {
+        ui::Compositor::SetFrameCopyEnabled(true);
+        Check(ui::Compositor::GetAcrylicPlateBuilder() != nullptr, "window_material registers the dialog acrylic");
+        WNDCLASSW cls{};
+        cls.lpfnWndProc = DefWindowProcW;
+        cls.hInstance = GetModuleHandleW(nullptr);
+        cls.lpszClassName = L"PulseOpsShotsSource";
+        RegisterClassW(&cls);
+        HWND source_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, cls.lpszClassName, L"", WS_POPUP,
+                                           -4000, -4000, 900, 600, nullptr, nullptr, cls.hInstance, nullptr);
+        ShowWindow(source_hwnd, SW_SHOWNOACTIVATE);
+        ui::Compositor source;
+        const bool source_ok = source_hwnd && source.Init(source_hwnd);
+        Check(source_ok, "source window compositor");
+        auto paint = [&](bool dark) {
+            ID2D1DeviceContext* dc = source.Dc();
+            dc->BeginDraw();
+            dc->Clear(dark ? ui::HexColor(0x1C1C1C) : ui::HexColor(0xF7F7F7));
+            ui::ComPtr<ID2D1SolidColorBrush> brush;
+            dc->CreateSolidColorBrush(ui::HexColor(0x000000), &brush);
+            const uint32_t colors[] = { 0x0078D4, 0xE3008C, 0xFFB900, 0x107C10, 0x8764B8, 0xD83B01 };
+            for (int i = 0; i < 6; ++i) {
+                brush->SetColor(ui::HexColor(colors[i]));
+                const float x = 60.0f + static_cast<float>(i) * 135.0f;
+                dc->FillRectangle(D2D1::RectF(x, 120.0f, x + 110.0f, 300.0f), brush.get());
+            }
+            brush->SetColor(dark ? ui::HexColor(0xE0E0E0) : ui::HexColor(0x202020));
+            for (int row = 0; row < 12; ++row) {
+                const float y = 330.0f + static_cast<float>(row) * 22.0f;
+                const float w = 220.0f + static_cast<float>((row * 37) % 180);
+                dc->FillRectangle(D2D1::RectF(240.0f, y, 240.0f + w, y + 8.0f), brush.get());
+            }
+            dc->EndDraw();
+            source.Present();
+        };
+        const HWND card_hwnd = Access::Handle(window);
+        for (const bool dark : {true, false}) {
+            if (!source_ok) break;
+            paint(dark);
+            window.SetTheme(dark, ui::HexColor(0x6474C7));
+            Access::Size(window, 96, false);
+            auto st = Running(ops::OpType::Copy, 63.0f);
+            st.task_id = dark ? 81 : 82;
+            window.Update(st);
+            Access::Graph(window, 0.63f, 212.0 * mb);
+            Access::Elapsed(window, 61000, false);
+            Access::Place(window, -4000 + 230, -4000 + 160);
+            SetWindowPos(card_hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            RECT card{};
+            GetWindowRect(card_hwnd, &card);
+            Check(ui::Compositor::FrameSourceUnder(card_hwnd, card) == &source,
+                  "the window under the card lends its frame");
+            shot(L"15-acrylic-" + std::wstring(dark ? L"dark" : L"light"));
+        }
+        Access::Place(window, -4000 + 2000, -4000);
+        RECT away{};
+        GetWindowRect(card_hwnd, &away);
+        Check(ui::Compositor::FrameSourceUnder(card_hwnd, away) == nullptr, "nothing of ours under the card");
+        source.Shutdown();
+        if (source_hwnd) DestroyWindow(source_hwnd);
+        ui::Compositor::SetFrameCopyEnabled(false);
     }
 
     std::printf("%s\n", failures == 0 ? "ALL PASS" : "FAILURES");

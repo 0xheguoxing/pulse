@@ -54,6 +54,10 @@ struct SearchResult {
     // Filtered searches: parent folders DirVisibility could not answer yet.
     // No hits are produced until every one of them has been checked.
     std::vector<std::pair<int32_t, std::wstring>> unchecked_dirs;
+    // Filtered ranked searches (DirVisibility::TopFirst): the hits are final
+    // but folders of lower-ranked matches are still unchecked, so `total`
+    // counts confirmed names only. The host follows up with the full count.
+    bool partial = false;
     uint64_t layout = 0;  // Engine::LayoutEpoch() the node ids above belong to
 };
 
@@ -65,6 +69,8 @@ class DirVisibility {
 public:
     virtual ~DirVisibility() = default;
     virtual int State(int32_t dir) const = 0;  // 1 listable, 0 not, -1 unknown
+    // Ranked pages: ask only for the folders that decide the page.
+    virtual bool TopFirst() const { return false; }
 };
 
 } // namespace pulse::index

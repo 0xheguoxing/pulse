@@ -474,6 +474,9 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                     r.index = 6;
                     return r;
                 }
+                if (ContainsPt(lay.thumb_cache_button, x, y)) {
+                    r.region = HitTestResult::SettingsThumbCache; r.index = 0; return r;
+                }
                 if (ContainsPt(lay.alias_mark_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 39; return r;
                 }
@@ -550,8 +553,29 @@ HitTestResult MainRenderer::HitTest(const WindowViewModel& vm, const D2D1_RECT_F
                 if (ContainsPt(lay.global_search_hotkey_button, x, y)) {
                     r.region = HitTestResult::SettingsGlobalSearchHotkey; return r;
                 }
+                if (vm.settings_global_search_enabled && ContainsPt(lay.global_search_double_ctrl_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 40; return r;
+                }
+                for (int i = 0; i < 3; ++i) if (vm.settings_global_search_enabled && vm.settings_global_search_double_ctrl && ContainsPt(lay.global_search_gap[i], x, y)) {
+                    r.region = HitTestResult::SettingsDoubleCtrlGap; r.index = i; return r;
+                }
+                if (vm.settings_global_search_enabled && ContainsPt(lay.global_search_apps_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 43; return r;
+                }
+                if (ContainsPt(lay.dialog_jump_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 41; return r;
+                }
+                if (vm.settings_dialog_jump_bar && ContainsPt(lay.dialog_jump_auto_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 42; return r;
+                }
                 if (ContainsPt(lay.search_pinyin_row, x, y)) {
                     r.region = HitTestResult::SettingsToggle; r.index = 9; return r;
+                }
+                if (!vm.settings_jump_history_empty && ContainsPt(lay.jump_history_clear, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 45; return r;
+                }
+                if (ContainsPt(lay.jump_history_row, x, y)) {
+                    r.region = HitTestResult::SettingsToggle; r.index = 44; return r;
                 }
                 if (ContainsPt(lay.content_index_row, x, y)) {
                     r.region = HitTestResult::SettingsContentIndex; return r;

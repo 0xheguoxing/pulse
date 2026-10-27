@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -7,6 +8,7 @@
 #include "../ui/window_material.h"
 
 namespace pulse {
+namespace app { class JumpHistory; }
 // What the quick search window hands to the main window when the user asks to
 // continue there (Shift+Enter or the footer link). folder is empty when the
 // search covers every indexed location.
@@ -30,6 +32,15 @@ struct GlobalSearchContext {
     std::vector<std::wstring> pinned_folders;   // Quick access pins (first few become scopes)
     std::vector<std::wstring> recent_queries;
     std::vector<GlobalSearchRecentFile> recent_files;
+    // Folders Pulse already knows, most relevant first: open tabs, Quick
+    // access, recently opened folders. Typed text matches them instantly
+    // (跳转 group, above the index results).
+    struct JumpFolder { std::wstring path, label; };  // label: shown name when not the folder name
+    std::vector<JumpFolder> jump_folders;
+    // 应用 group: Start menu programs right after the best matches, the
+    // most started first among equal matches (history: may be null).
+    bool show_apps = true;
+    std::shared_ptr<app::JumpHistory> history;
     int width = 0, height = 0;                  // DIP; 0 = default
 };
 struct GlobalSearchEvents {
@@ -51,6 +62,10 @@ public:
     void SetContext(GlobalSearchContext context);
     void SetEvents(GlobalSearchEvents events);
     void Hide();
+    // Creates the hidden popup and renders one frame `delay_ms` from now,
+    // once and only while no input is pending, so the first summon is warm.
+    // `prepare` runs first, on the UI thread (context and appearance).
+    void Prewarm(uint32_t delay_ms, std::function<void()> prepare);
     void Shutdown();
     bool Visible() const;
 private:

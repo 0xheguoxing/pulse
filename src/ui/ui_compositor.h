@@ -124,6 +124,20 @@ public:
     static void SetFrameCopyEnabled(bool enabled) noexcept;
     static bool FrameCopyEnabled() noexcept;
     ID2D1Bitmap1* FrameCopy() const { return frameCopy_.get(); }
+    // Counts the copies, so a reader can tell the frame has changed.
+    unsigned long long FrameCopySerial() const { return frameCopySerial_; }
+
+    // Dialog acrylic (window_helpers BeginSurface): the Pulse window right
+    // under a dialog, blurred like menu acrylic. window_material registers
+    // the builder; targets built without it keep the plain dialog surface.
+    using AcrylicPlateBuilder = bool (*)(ID2D1DeviceContext* dc, ID2D1Bitmap1* frame, POINT frame_origin,
+                                         const RECT& card, float scale, bool dark, ComPtr<ID2D1Bitmap1>& plate);
+    static void SetAcrylicPlateBuilder(AcrylicPlateBuilder builder) noexcept;
+    static AcrylicPlateBuilder GetAcrylicPlateBuilder() noexcept;
+    // The window of this thread whose frame copy shows right under `dialog`
+    // (screen rect `area`); null when another program's window is in between
+    // or nothing of ours is there.
+    static Compositor* FrameSourceUnder(HWND dialog, const RECT& area);
 
     // Theme reveal: the next Present() also keeps that frame in HeldFrame()
     // until ReleaseHeldFrame() (or a resize / device loss drops it).
@@ -165,6 +179,7 @@ private:
     ComPtr<ID2D1DeviceContext> dc_;
     ComPtr<ID2D1Bitmap1> targetBitmap_;
     ComPtr<ID2D1Bitmap1> frameCopy_;
+    unsigned long long frameCopySerial_ = 0;
     ComPtr<ID2D1Bitmap1> held_;
     bool captureNext_ = false;
     ComPtr<IDWriteFactory2> dwriteFactory_;

@@ -4,6 +4,7 @@
 #include "search_query.h"
 #include "../ui/address_search_layout.h"
 #include "../ui/toolbar_layout.h"
+#include "../ui/ui_renderer.h"
 #include "../common/localization.h"
 #include <fstream>
 #include <filesystem>

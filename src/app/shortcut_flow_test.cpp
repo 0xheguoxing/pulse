@@ -5,6 +5,7 @@
 #include "keymap.h"
 #include "shortcut_page.h"
 #include "shortcut_settings.h"
+#include "../ui/ui_renderer.h"
 #include <filesystem>
 #include "../ops/clipboard.h"
 #include <cstdio>

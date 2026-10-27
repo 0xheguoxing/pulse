@@ -421,7 +421,7 @@ target_link_libraries(pulse_file_operation_authorization_dialog_test PRIVATE
 pulse_enable_lumatext(pulse_file_operation_authorization_dialog_test)
 # Progress card states rendered to PNG + the 2.5 s auto-close (pulse_ops_dialogs.html).
 add_executable(pulse_ops_dialog_shots
-    src/bench/ops_dialog_shots.cpp ${PULSE_PERMISSION_UI_SOURCES})
+    src/bench/ops_dialog_shots.cpp ${PULSE_PERMISSION_UI_SOURCES} src/ui/window_material.cpp)
 target_link_libraries(pulse_ops_dialog_shots PRIVATE
     d3d11 d2d1 dwrite dxgi dcomp dwmapi shcore ole32 windowscodecs comctl32 uxtheme gdiplus pulse_localization)
 pulse_enable_lumatext(pulse_ops_dialog_shots)
@@ -807,7 +807,7 @@ add_executable(pulse_preview WIN32 src/preview_host/main.cpp src/preview_host/vi
     src/preview_host/pdf_raster.cpp src/preview_host/dwg_thumb.cpp
     src/preview_host/archive_listing.cpp src/preview_host/udf_listing.cpp src/preview_host/psd_raster.cpp
     src/preview_host/font_raster.cpp src/preview_host/preview_decoders.cpp
-    src/preview_host/jpeg_dc_preview.cpp src/preview_host/tiff_reduce.cpp
+    src/preview_host/jpeg_dc_preview.cpp src/preview_host/jpeg_embedded_preview.cpp src/preview_host/tiff_reduce.cpp
     src/preview_host/preview_properties.cpp src/preview_host/preview_file_utils.cpp
     src/preview_host/zip_entry.cpp src/preview_host/office_model.cpp src/preview_host/office_sketch.cpp
     src/preview_host/folder_listing.cpp src/preview_host/markdown_document.cpp third_party/md4c/md4c.c
@@ -1129,6 +1129,9 @@ add_executable(pulse_usn_packet_queue_test src/bench/usn_packet_queue_test.cpp)
 add_executable(pulse_change_tracking_client_test src/bench/change_tracking_client_test.cpp)
 add_executable(pulse_global_search_hotkey_test src/bench/global_search_hotkey_test.cpp src/app/global_search_hotkey.cpp)
 target_link_libraries(pulse_global_search_hotkey_test PRIVATE user32)
+add_executable(pulse_quick_jump_test src/bench/quick_jump_test.cpp src/app/double_ctrl.cpp src/app/jump_match.cpp src/app/jump_history.cpp src/app/app_catalog.cpp
+    src/index/filename_pinyin.cpp src/index/index_query.cpp src/index/search_kinds.cpp)
+target_link_libraries(pulse_quick_jump_test PRIVATE user32 shell32 ole32 uuid)
 add_executable(pulse_frame_pump_test src/bench/frame_pump_test.cpp src/app/frame_pump.cpp)
 target_link_libraries(pulse_frame_pump_test PRIVATE dwmapi user32)
 

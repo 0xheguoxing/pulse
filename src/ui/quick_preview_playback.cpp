@@ -111,9 +111,10 @@ float QuickPreviewWindow::PlaybackHeight() const noexcept {
     return HasPlayback() ? (kVideoChrome ? kChromeBarHeight : kPlaybackHeight) * scale_ : 0.0f;
 }
 D2D1_RECT_F QuickPreviewWindow::PlaybackRect() const {
-    const float height = static_cast<float>(compositor_.Height());
-    return D2D1::RectF(0, height - PlaybackHeight(),
-        static_cast<float>(compositor_.Width()), height);
+    // Directly above the footer.
+    const float bottom = static_cast<float>(compositor_.Height()) - FooterHeight();
+    return D2D1::RectF(0, bottom - PlaybackHeight(),
+        static_cast<float>(compositor_.Width()), bottom);
 }
 QuickPreviewWindow::PlaybackGeometry QuickPreviewWindow::PlaybackLayout() const {
     PlaybackGeometry g;
@@ -464,10 +465,50 @@ void QuickPreviewWindow::EndPlaybackDrag(bool resume) {
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+float QuickPreviewWindow::PlaybackBarOpacity() {
+    // The pointer is polled: over the video it belongs to the player's window.
+    const uint64_t now = GetTickCount64();
+    POINT cursor{};
+    RECT window{};
+    if (GetCursorPos(&cursor) && GetWindowRect(hwnd_, &window) && PtInRect(&window, cursor) &&
+        (cursor.x != pointer_last_.x || cursor.y != pointer_last_.y)) {
+        pointer_last_ = cursor;
+        pointer_tick_ = now;
+    }
+    const auto state = video_.Snapshot();
+    if (!state.playing || playback_drag_ || playback_hover_x_ >= 0.0f || playback_hover_button_ >= 0 ||
+        VideoPreview::IsAudio(item_.path))
+        pointer_tick_ = now;
+    const uint64_t idle = now - pointer_tick_;
+    if (idle <= 2000) return 1.0f;
+    return (std::max)(0.0f, 1.0f - static_cast<float>(idle - 2000) / 300.0f);
+}
+
 void QuickPreviewWindow::DrawPlayback(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* brush) {
     if (!HasPlayback() || !dc || !brush) return;
     if (kVideoChrome) {
+        const auto state = video_.Snapshot();
+        const bool picture = video_.active() && !VideoPreview::IsAudio(item_.path) && state.ready &&
+            SUCCEEDED(state.error) && !CodecCardVisible(state) && !Palette().high_contrast;
+        if (!picture) {
+            DrawPlaybackChrome(dc, brush);
+            return;
+        }
+        // On the video's black: light ink whatever the theme, fading while the pointer rests.
+        const float opacity = PlaybackBarOpacity();
+        if (opacity <= 0.01f) return;
+        const bool saved_dark = dark_;
+        const D2D1_COLOR_F saved_color = brush->GetColor();
+        dark_ = true;
+        brush->SetColor(D2D1::ColorF(0xF4F4F4));
+        const bool layer = opacity < 0.99f;
+        if (layer)
+            dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), opacity), nullptr);
         DrawPlaybackChrome(dc, brush);
+        if (layer) dc->PopLayer();
+        dark_ = saved_dark;
+        brush->SetColor(saved_color);
         return;
     }
     const auto bar = PlaybackRect();
@@ -1155,4 +1196,25 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
     caption->SetParagraphAlignment(sp);
     brush->SetColor(original);
 }
+void QuickPreviewWindow::SetMediaFooter(const VideoPreview::State& state, std::vector<std::wstring> extra) {
+    std::vector<std::wstring> parts;
+    std::wstring ext;
+    if (const size_t dot = item_.name.find_last_of(L'.'); dot != std::wstring::npos && dot + 1 < item_.name.size()) {
+        ext = item_.name.substr(dot + 1);
+        for (wchar_t& c : ext) c = static_cast<wchar_t>(std::towupper(c));
+    }
+    if (!ext.empty()) parts.push_back(std::move(ext));
+    if (!state.codec_name.empty()) parts.push_back(state.codec_name);
+    if (state.width && state.height) {
+        wchar_t dims[48];
+        swprintf_s(dims, L"%u \x00D7 %u", state.width, state.height);
+        parts.push_back(dims);
+    }
+    if (state.duration > 0) parts.push_back(ShortClock(state.duration, state.duration >= 36000000000LL));
+    for (std::wstring& part : extra)
+        if (!part.empty()) parts.push_back(std::move(part));
+    if (item_.size) parts.push_back(pulse::format::ByteSize(item_.size, true));
+    SetFooterParts(std::move(parts));
+}
+
 } // namespace pulse::ui

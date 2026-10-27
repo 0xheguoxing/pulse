@@ -62,7 +62,7 @@ constexpr SettingDestination destinations[]={
     {I::SettingsClickOpen,9,0},{I::SettingsItemCheckboxes,9,0},{I::SettingsBlankClickBack,9,0},
     {I::SettingsShowHidden,9,0},{I::SettingsShowProtected,9,0},{I::SettingsFolderSort,9,0},
     {I::SettingsRowHeight,9,0},{I::ListZebraRows,9,0},{I::ListSmartDate,9,0},{I::ListSizeBar,9,0},{I::ListTagNameColor,9,0},
-    {I::ListSelectionOutline,9,0},{I::ListThumbnailBadges,9,0},{I::AliasMark,9,0},{I::SettingsTreeSticky,9,0},
+    {I::ListSelectionOutline,9,0},{I::ListThumbnailBadges,9,0},{I::ThumbCache,9,0},{I::AliasMark,9,0},{I::SettingsTreeSticky,9,0},
     {I::ListMtimeHint,9,0},{I::ListMtimeRange,9,0},{I::ListMtimePalette,9,0},{I::SyncOneDrive,9,0},{I::SyncSvn,9,0},
     // 10 标签页与窗口
     {I::SettingsHomeFolder,10,0},{I::SettingsStartupOpen,10,0},{I::SettingsNewTabOpen,10,0},{I::SettingsExternalOpen,10,0},
@@ -75,7 +75,7 @@ constexpr SettingDestination destinations[]={
     {I::SettingsConfirmDelete,12,0},{I::SettingsTrayIcon,12,0},{I::TrayHideWhenEmpty,12,0},
     {I::SettingsLanDiscovery,12,0},{I::SettingsLanCache,12,0},{I::SettingsNetworkRecent,12,0},{I::NetworkShowHiddenShares,12,0},
     {I::SettingsClearNetwork,12,0},{I::SettingsChangeTracking,12,0},
-    {I::GlobalSearch,1,0},{I::GlobalSearchHotkey,1,0},{I::SearchPinyin,1,0},{I::ContentIndexManage,1,0},{I::IndexLocation,1,2},{I::LocalDrives,1,2},
+    {I::GlobalSearch,1,0},{I::GlobalSearchHotkey,1,0},{I::GlobalSearchDoubleCtrl,1,0},{I::GlobalSearchDoubleCtrlGap,1,0},{I::GlobalSearchApps,1,0},{I::DialogJumpBar,1,0},{I::DialogJumpAuto,1,0},{I::SearchPinyin,1,0},{I::JumpHistory,1,0},{I::ContentIndexManage,1,0},{I::IndexLocation,1,2},{I::LocalDrives,1,2},
     {I::Exclusions,1,2},{I::ServerFolders,1,2},{I::SettingsContextMenu,2,0},{I::SettingsDuplicates,4,0},{I::QuickPreview,5,4},{I::PreviewPacks,8,0},
     {I::SettingsAboutDiagnostics,3,0},{I::SettingsShowPerformance,3,0},{I::SettingsHints,3,0},{I::SettingsHintsReset,3,0},{I::SettingsTransfer,3,0},{I::SettingsAutoUpdate,3,0},
 };
@@ -306,6 +306,11 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
     case H::SettingsToggle: {
         // Pulse menu preview: pressing a movable row arms a drag (app_input
         // follows the pointer and drops); the fixed rows do nothing.
+        if(hit.index==45) {  // 清除记录 beside 记住常去的位置
+            s.core.jumpHistory->Clear();
+            InvalidateRect(s.hwnd,nullptr,FALSE);
+            return true;
+        }
         if(hit.index<ui::kSettingsMenuFixedHit) return false;
         if(hit.index<ui::kSettingsMenuRowHit) return true;
         const auto vm=BuildVm(s,false);

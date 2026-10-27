@@ -2621,6 +2621,8 @@ struct SettingsLayout {
     D2D1_RECT_F pinned_names_row{};
     D2D1_RECT_F alias_mark_row{};
     D2D1_RECT_F tree_sticky_row{};
+    D2D1_RECT_F thumb_cache_row{};     // 缩略图缓存: usage bar and 清除缓存
+    D2D1_RECT_F thumb_cache_button{};
     D2D1_RECT_F vertical_tabs_row{};
     D2D1_RECT_F tray_hide_row{};
     D2D1_RECT_F lan_discovery_row{}, network_recent_row{}, hidden_shares_row{};
@@ -2642,6 +2644,9 @@ struct SettingsLayout {
     D2D1_RECT_F search_pinyin_row{};
     D2D1_RECT_F search_master_section{}, search_master_row{};
     D2D1_RECT_F global_search_row{}, global_search_hotkey_row{}, global_search_hotkey_button{};
+    D2D1_RECT_F global_search_double_ctrl_row{}, global_search_gap_card{}, global_search_gap[3]{};
+    D2D1_RECT_F global_search_apps_row{}, dialog_jump_row{}, dialog_jump_auto_row{};
+    D2D1_RECT_F jump_history_row{}, jump_history_clear{};
     D2D1_RECT_F content_index_row{};
     D2D1_RECT_F index_info{};
     D2D1_RECT_F index_status{};

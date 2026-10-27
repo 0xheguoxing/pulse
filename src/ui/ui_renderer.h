@@ -829,6 +829,8 @@ private:
     void DrawList(const PaneViewModel& vm, float x, float y, float w, float h, const Theme& theme,
                   int hover_region = 0, int hover_control_index = -1, bool pane_focused = true,
                   int pane_index = 0);
+    // Grid views: queue the thumbnails of the screen below the visible one.
+    void PrefetchNextScreen(const PaneViewModel& vm, int first, int last, uint32_t pixels, int pane_index);
     // Placeholder rows with a soft shimmer for slow (network) folders.
     void DrawListSkeleton(const D2D1_RECT_F& viewport, const Theme& theme, int pane_index);
     void DrawScrollbar(const PaneViewModel& vm, float x, float y, float w, float h, const Theme& theme);
@@ -1074,6 +1076,7 @@ private:
     } col_badge_;
     void DrawColumnBadge(int pane_index, const Theme& theme);
     std::array<uint64_t, 8> list_loading_since_{};
+    std::array<uint64_t, 8> prefetch_signature_{};  // per pane: what was last prefetched
     bool list_loading_animate_ = true;
     bool list_loading_active_ = false;
     // Tab strip overflow state: ComputeTabStrip clamps the scroll and reveals

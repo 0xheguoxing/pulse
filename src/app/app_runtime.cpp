@@ -637,6 +637,13 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             vm.settings_search_pinyin = s.appPrefs.search_pinyin;
             vm.settings_search_enabled = s.appPrefs.search_enabled;
             vm.settings_global_search_enabled = s.appPrefs.global_search_enabled;
+            vm.settings_global_search_double_ctrl = s.appPrefs.global_search_double_ctrl;
+            vm.settings_global_search_double_ctrl_ms = s.appPrefs.global_search_double_ctrl_ms;
+            vm.settings_dialog_jump_bar = s.appPrefs.dialog_jump_bar;
+            vm.settings_dialog_jump_auto = s.appPrefs.dialog_jump_auto;
+            vm.settings_jump_history = s.appPrefs.jump_history;
+            vm.settings_jump_history_empty = s.core.jumpHistory->Size() == 0;
+            vm.settings_global_search_apps = s.appPrefs.global_search_apps;
             vm.settings_global_search_capturing = s.settings.global_search_hotkey_capturing();
             vm.settings_global_search_hotkey = s.settings.GlobalSearchHotkeyText();
             vm.settings_global_search_error = s.settings.global_search_error();
@@ -646,6 +653,12 @@ void FillPaneSlots(AppState& s, ui::WindowViewModel& vm) {
             FillShortcutsVm(s, vm);  // 快捷键: sidebar badge everywhere, the page view on page 7
             if (vm.settings_page == ui::kSettingsPageAi) pulse::FillAiSettingsVm(s, vm);   // 增强包 > AI 与 MCP
             if (vm.settings_page == 5) vm.settings_preview_codecs = ui::DetectPreviewCodecs(false, s.hwnd);
+            if (vm.settings_page == 9) {
+                const auto cache = s.settings.ThumbCache(s.hwnd);
+                vm.settings_thumb_cache_phase = static_cast<uint8_t>(cache.phase);
+                vm.settings_thumb_cache_bytes = cache.bytes;
+                vm.settings_thumb_cache_cleared = cache.cleared;
+            }
             if (vm.settings_page == 6) {
                 // 系统右键菜单: the first visit starts a background scan.
                 auto& sysctx = s.settings.SystemCtx();
@@ -3455,9 +3468,11 @@ std::wstring TooltipForHover(AppState& s) {
     case R::SettingsBlankClick: return text(I::SettingsBlankClickBack);
     case R::SettingsHomeFolder:
         return text(s.hoverControlIndex == 1 ? I::ThisPc : I::SettingsHomeFolderPick);
+    case R::SettingsThumbCache: return text(I::ThumbCacheTooltip);
     case R::SettingsTextRender: return text(I::SettingsTextRender);
     case R::SettingsUiFontSize: return text(I::SettingsUiFontSize);
     case R::SettingsTrayIcon: return text(I::SettingsTrayIcon);
+    case R::SettingsDoubleCtrlGap: return text(I::GlobalSearchDoubleCtrlGap);
     case R::SettingsWallpaperLook: return text(I::SettingsWallpaperLook);
     case R::SettingsWallpaperBlur: return text(I::SettingsWallpaperBlur);
     case R::SettingsFrameLook: return text(I::SettingsFrameLook);

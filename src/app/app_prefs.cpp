@@ -110,6 +110,12 @@ void AppPrefs::ResetToDefaults() {
     global_search_key = 32;
     global_search_width = 0;
     global_search_height = 0;
+    global_search_double_ctrl = true;
+    global_search_double_ctrl_ms = 300;
+    dialog_jump_bar = true;
+    dialog_jump_auto = false;
+    jump_history = true;
+    global_search_apps = true;
     show_hidden_files = false;
     show_file_extensions = true;
     show_protected_os_files = false;
@@ -286,6 +292,17 @@ std::wstring AppPrefs::ToJson() const {
     out += L",\n  \"global_search_key\":" + std::to_wstring(global_search_key);
     out += L",\n  \"global_search_width\":" + std::to_wstring(global_search_width);
     out += L",\n  \"global_search_height\":" + std::to_wstring(global_search_height);
+    out += L",\n  \"global_search_double_ctrl\":";
+    out += global_search_double_ctrl ? L"true" : L"false";
+    out += L",\n  \"global_search_double_ctrl_ms\":" + std::to_wstring(global_search_double_ctrl_ms);
+    out += L",\n  \"dialog_jump_bar\":";
+    out += dialog_jump_bar ? L"true" : L"false";
+    out += L",\n  \"dialog_jump_auto\":";
+    out += dialog_jump_auto ? L"true" : L"false";
+    out += L",\n  \"jump_history\":";
+    out += jump_history ? L"true" : L"false";
+    out += L",\n  \"global_search_apps\":";
+    out += global_search_apps ? L"true" : L"false";
     out += L",\n  \"blank_click_action\":";
     out += std::to_wstring(blank_click_action);
     // Kept for older builds, which only know on/off.
@@ -535,6 +552,15 @@ bool AppPrefs::FromJson(const std::wstring& json) {
     global_search_key = key > 0 && key <= 254 ? static_cast<uint32_t>(key) : 32;
     global_search_width = std::clamp(pulse::json::ExtractInt(json, L"global_search_width", 0), 0, 4000);
     global_search_height = std::clamp(pulse::json::ExtractInt(json, L"global_search_height", 0), 0, 4000);
+    global_search_double_ctrl = pulse::json::ExtractBool(json, L"global_search_double_ctrl", true);
+    dialog_jump_bar = pulse::json::ExtractBool(json, L"dialog_jump_bar", true);
+    dialog_jump_auto = pulse::json::ExtractBool(json, L"dialog_jump_auto", false);
+    jump_history = pulse::json::ExtractBool(json, L"jump_history", true);
+    global_search_apps = pulse::json::ExtractBool(json, L"global_search_apps", true);
+    {
+        const int gap = pulse::json::ExtractInt(json, L"global_search_double_ctrl_ms", 300);
+        global_search_double_ctrl_ms = gap == 200 || gap == 400 ? gap : 300;
+    }
     show_hidden_files = pulse::json::ExtractBool(json, L"show_hidden_files", false);
     show_file_extensions = pulse::json::ExtractBool(json, L"show_file_extensions", true);
     show_protected_os_files = pulse::json::ExtractBool(json, L"show_protected_os_files", false);

@@ -121,9 +121,9 @@ void CALLBACK Step(HWND, UINT, UINT_PTR timer, DWORD) {
         Shot(dialog, L"end");
         SendMessageW(dialog, WM_KEYDOWN, VK_RETURN, 0);
         return;
-    case 2: // Tab reaches the end-and-retry button
+    case 2: // Left (Shift+Tab) from 取消 reaches the end-and-retry button
         KillTimer(nullptr, timer);
-        SendMessageW(dialog, WM_KEYDOWN, VK_TAB, 0);
+        SendMessageW(dialog, WM_KEYDOWN, VK_LEFT, 0);
         SendMessageW(dialog, WM_KEYDOWN, VK_RETURN, 0);
         return;
     case 4: // release the file: the dialog continues by itself
@@ -210,12 +210,12 @@ int wmain(int argc, wchar_t** argv) {
     g_scenario = 1;
     Check(Run(owner, closable, false) == LockedItemChoice::Cancel, "Enter on the default focus does not end processes");
     g_scenario = 2;
-    Check(Run(owner, closable, false) == LockedItemChoice::EndAndRetry, "Tab, Enter ends and retries");
+    Check(Run(owner, closable, false) == LockedItemChoice::EndAndRetry, "Left, Enter ends and retries");
 
     // Skip: footer y depends on the height; read it from the window.
     g_scenario = 3;
     {
-        // Click at the skip button: footer top = height - 60, button at +13..+47.
+        // Click at the skip button: the 64-DIP footer, button centred, from x 12.
         struct Local {
             static void CALLBACK SkipStep(HWND, UINT, UINT_PTR timer, DWORD) {
                 HWND dialog = Dialog();
@@ -224,8 +224,8 @@ int wmain(int argc, wchar_t** argv) {
                 RECT client{};
                 GetClientRect(dialog, &client);
                 const float scale = Scale(dialog);
-                const float footer = client.bottom / scale - 60.0f;
-                Click(dialog, At(dialog, 16 + 52, footer + 30));
+                const float footer = client.bottom / scale - 64.0f;
+                Click(dialog, At(dialog, 12 + 40, footer + 32));
             }
         };
         g_step = 0;

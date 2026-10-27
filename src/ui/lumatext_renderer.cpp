@@ -1525,6 +1525,7 @@ struct LumaTextRenderer::Impl {
         }
         std::wstring visible = text;
         D2D1_COLOR_F visible_color = foreground;
+        bool cue_shown = false;
         if (visible.empty()) {
             wchar_t cue[256]{};
             // A multi-line EDIT has no cue banner; its owner hands the text over.
@@ -1540,6 +1541,7 @@ struct LumaTextRenderer::Impl {
             } else if (SendMessageW(hwnd, EM_GETCUEBANNER, reinterpret_cast<WPARAM>(cue),
                              ARRAYSIZE(cue)) && cue[0] != 0) {
                 visible = cue;
+                cue_shown = true;
                 visible_color = D2D1::ColorF(foreground.r, foreground.g, foreground.b,
                                              foreground.a * 0.45f);
             }
@@ -1547,9 +1549,23 @@ struct LumaTextRenderer::Impl {
         bool text_drawn = visible.empty();
         if (!visible.empty()) {
             // Same layout, params and grayscale AA as the surrounding UI text.
-            const auto visible_layout = visible == text && dw_layout
+            auto visible_layout = visible == text && dw_layout
                 ? dw_layout
                 : DwEditLayout(visible, format, static_cast<float>(h), multiline > 0.0f ? wrap_width : 0.0f, multiline);
+            // A host can ask for a smaller hint than the typed text (quick
+            // search); the cached layout is shared, so size a private copy.
+            const auto cue_px = static_cast<float>(
+                reinterpret_cast<INT_PTR>(GetPropW(hwnd, L"Pulse.EditCueSize")));
+            if (cue_shown && cue_px > 0 && visible_layout && dw_factory) {
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> hint;
+                if (SUCCEEDED(dw_factory->CreateTextLayout(visible.c_str(),
+                        static_cast<UINT32>(visible.size()), format, 100000.0f,
+                        static_cast<float>(h), &hint))) {
+                    hint->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                    hint->SetFontSize(cue_px, {0, static_cast<UINT32>(visible.size())});
+                    visible_layout = hint;
+                }
+            }
             if (visible_layout && brush) {
                 DWRITE_TEXT_METRICS metrics{};
                 if (FAILED(visible_layout->GetMetrics(&metrics))) {
