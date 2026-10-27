@@ -78,6 +78,14 @@ Handle InheritableNul() {
     return Handle{CreateFileW(L"NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, 0, nullptr)};
 }
 
+// The child's stderr: ours when usable, else NUL. Two returns instead of a
+// conditional expression, which needs a copy constructor Handle does not have
+// on older toolsets (C2280 with MSVC 14.44).
+Handle ChildErrorHandle(HANDLE err) {
+    if (Usable(err)) return Inheritable(err);
+    return InheritableNul();
+}
+
 std::wstring Quote(const std::wstring& arg) { return L"\"" + arg + L"\""; }
 
 } // namespace
@@ -106,7 +114,7 @@ int RunMcpStdioLauncher(HINSTANCE instance) {
 
     Handle child_in = Inheritable(in);
     Handle child_out = Inheritable(out);
-    Handle child_err = Usable(err) ? Inheritable(err) : InheritableNul();
+    Handle child_err = ChildErrorHandle(err);
     if (!child_in || !child_out || !child_err || self.empty()) {
         Report(instance, err, L"无法启动 Pulse.AI.exe", GetLastError());
         return kLauncherStartFailed;
