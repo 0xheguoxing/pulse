@@ -250,7 +250,7 @@ int main() {
     Check(NormalizeCloudRootPath(L"C:\\Foo\\\\") == L"C:\\Foo", "trailing separators trimmed");
     Check(NormalizeCloudRootPath(L"D:\\") == L"D:\\", "drive root keeps its separator");
     Check(NormalizeCloudRootPath(L"D:/Baidu/Sync") == L"D:\\Baidu\\Sync", "forward slashes normalized");
-    Check(SameCloudRootPath(L"c:\\users\\ss\\WPSDrive\\", L"C:\\Users\\SS\\wpsdrive"),
+    Check(SameCloudRootPath(L"c:\\users\\user\\WPSDrive\\", L"C:\\Users\\User\\wpsdrive"),
           "path comparison is case-insensitive");
     Check(NormalizeCloudRootPath(L"").empty(), "empty path stays empty");
     Check(CurrentUserSidString().rfind(L"S-1-", 0) == 0, "process SID string");
@@ -270,14 +270,14 @@ int main() {
               CloudStateFromAttrs(pulse::fs::kAttrPinned) == CloudState::Pinned &&
               CloudStateFromAttrs(pulse::fs::kAttrPinned | pulse::fs::kAttrRecallOnDataAccess) == CloudState::Pinned,
           "cloud state from attributes");
-    Check(!IsUnderCloudFilesRoot(L"C:\\Users\\SS\\OneDrive"), "nothing published yet");
-    PublishCloudFilesRoots({L"C:\\Users\\SS\\OneDrive\\", L"", L"D:\\"});
-    Check(IsUnderCloudFilesRoot(L"C:\\Users\\SS\\OneDrive") &&
-              IsUnderCloudFilesRoot(L"c:\\users\\ss\\onedrive\\Docs\\a") &&
-              !IsUnderCloudFilesRoot(L"C:\\Users\\SS\\OneDriveOld") &&
-              !IsUnderCloudFilesRoot(L"C:\\Users\\SS") && IsUnderCloudFilesRoot(L"D:\\x") &&
-              IsUnderCloudFilesRoot(L"\\\\?\\C:\\Users\\SS\\OneDrive\\Docs") &&
-              !IsUnderCloudFilesRoot(L"\\\\?\\C:\\Users\\SS\\OneDriveOld"),
+    Check(!IsUnderCloudFilesRoot(L"C:\\Users\\User\\OneDrive"), "nothing published yet");
+    PublishCloudFilesRoots({L"C:\\Users\\User\\OneDrive\\", L"", L"D:\\"});
+    Check(IsUnderCloudFilesRoot(L"C:\\Users\\User\\OneDrive") &&
+              IsUnderCloudFilesRoot(L"c:\\users\\user\\onedrive\\Docs\\a") &&
+              !IsUnderCloudFilesRoot(L"C:\\Users\\User\\OneDriveOld") &&
+              !IsUnderCloudFilesRoot(L"C:\\Users\\User") && IsUnderCloudFilesRoot(L"D:\\x") &&
+              IsUnderCloudFilesRoot(L"\\\\?\\C:\\Users\\User\\OneDrive\\Docs") &&
+              !IsUnderCloudFilesRoot(L"\\\\?\\C:\\Users\\User\\OneDriveOld"),
           "cloud files root prefix matching respects folder boundaries");
     PublishCloudFilesRoots({L"\\\\nas\\share\\Sync"});
     Check(IsUnderCloudFilesRoot(L"\\\\?\\UNC\\nas\\share\\Sync\\a") &&
@@ -462,14 +462,14 @@ int main() {
 
     {
         // C4b 下载并预览: provider names for the well.
-        PublishCloudRootLabels({{L"C:\\Users\\SS\\WPSDrive", L"WPS\u7f51\u76d8"},
-                                {L"C:\\Users\\SS\\WPSDrive\\Team", L"Team"},
+        PublishCloudRootLabels({{L"C:\\Users\\User\\WPSDrive", L"WPS\u7f51\u76d8"},
+                                {L"C:\\Users\\User\\WPSDrive\\Team", L"Team"},
                                 {L"D:\\", L"Disk"}});
-        Check(CloudRootLabelFor(L"c:\\users\\ss\\wpsdrive\\a.docx") == L"WPS\u7f51\u76d8", "label: file under a root");
-        Check(CloudRootLabelFor(L"C:\\Users\\SS\\WPSDrive\\Team\\x.txt") == L"Team", "label: the deepest root wins");
-        Check(CloudRootLabelFor(L"C:\\Users\\SS\\WPSDriveOld\\x").empty() && CloudRootLabelFor(L"C:\\Users").empty(),
+        Check(CloudRootLabelFor(L"c:\\users\\user\\wpsdrive\\a.docx") == L"WPS\u7f51\u76d8", "label: file under a root");
+        Check(CloudRootLabelFor(L"C:\\Users\\User\\WPSDrive\\Team\\x.txt") == L"Team", "label: the deepest root wins");
+        Check(CloudRootLabelFor(L"C:\\Users\\User\\WPSDriveOld\\x").empty() && CloudRootLabelFor(L"C:\\Users").empty(),
               "label: name prefixes and parents are not inside");
-        Check(CloudRootLabelFor(L"\\\\?\\C:\\Users\\SS\\WPSDrive\\a") == L"WPS\u7f51\u76d8" &&
+        Check(CloudRootLabelFor(L"\\\\?\\C:\\Users\\User\\WPSDrive\\a") == L"WPS\u7f51\u76d8" &&
                   CloudRootLabelFor(L"D:\\x") == L"Disk",
               "label: long-path prefix and drive roots");
     }

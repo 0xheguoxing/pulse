@@ -308,7 +308,7 @@ int wmain(int argc, wchar_t** argv) {
                                      L"\x7cfb\x7edf\x6587\x4ef6", L"\x88ab Lightroom Classic \x5360\x7528",
                                      L"\x6587\x4ef6\x540d\x592a\x957f" };
         for (size_t i = 0; i < listed; ++i)
-            st.failures.push_back({ std::wstring(L"C:\\Users\\SS\\Downloads\\") + names[i % 5],
+            st.failures.push_back({ std::wstring(L"C:\\Users\\User\\Downloads\\") + names[i % 5],
                                     std::wstring(L"D:\\Backup\\Projects 2026\\") + names[i % 5],
                                     reasons[i % 5], E_ACCESSDENIED });
         st.failed_items = failed_count;
