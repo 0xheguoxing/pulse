@@ -2389,7 +2389,6 @@ enum class StringId : UINT {
     OpAverageLead = IDS_OP_AVERAGE_LEAD,
     OpTookLead = IDS_OP_TOOK_LEAD,
     OpPausing = IDS_OP_PAUSING,
-    OpHoverKeepsOpen = IDS_OP_HOVER_KEEPS_OPEN,
     OpProcessedItems = IDS_OP_PROCESSED_ITEMS,
     OpTransferredBytes = IDS_OP_TRANSFERRED_BYTES,
     OpAverageSpeed = IDS_OP_AVERAGE_SPEED,
@@ -4311,6 +4310,10 @@ enum class StringId : UINT {
     SettingsTreeStickyDesc = IDS_SETTINGS_TREE_STICKY_DESC,
     FavoritesBarMoveToBar = IDS_FAVORITES_BAR_MOVE_TO_BAR,
     FavoritesBarMoveToSidebar = IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR,
+    AdvScopeSubtitle = IDS_ADV_SCOPE_SUBTITLE,
+    AdvTry = IDS_ADV_TRY,
+    AdvWholeWordShort = IDS_ADV_WHOLE_WORD_SHORT,
+    AdvLabelValueFormat = IDS_ADV_LABEL_VALUE_FORMAT,
 };
 
 bool IsLanguageId(std::wstring_view id) noexcept;

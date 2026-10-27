@@ -2393,7 +2393,6 @@
 #define IDS_OP_AVERAGE_LEAD                                                              3562
 #define IDS_OP_TOOK_LEAD                                                                 3563
 #define IDS_OP_PAUSING                                                                   3564
-#define IDS_OP_HOVER_KEEPS_OPEN                                                          3565
 #define IDS_OP_PROCESSED_ITEMS                                                           3566
 #define IDS_OP_TRANSFERRED_BYTES                                                         3567
 #define IDS_OP_AVERAGE_SPEED                                                             3568
@@ -4319,5 +4318,9 @@
 #define IDS_SETTINGS_TREE_STICKY_DESC                                                    5526
 #define IDS_FAVORITES_BAR_MOVE_TO_BAR                                                    5527
 #define IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR                                                5528
+#define IDS_ADV_SCOPE_SUBTITLE                                                           5529
+#define IDS_ADV_TRY                                                                      5530
+#define IDS_ADV_WHOLE_WORD_SHORT                                                         5531
+#define IDS_ADV_LABEL_VALUE_FORMAT                                                       5532
 
 #endif  // PULSE_STRING_IDS_H

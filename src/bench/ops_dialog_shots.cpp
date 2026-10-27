@@ -60,6 +60,7 @@ struct FileOperationWindowTestAccess {
     static bool Closing(FileOperationWindow& window) { return window.closing_; }
     static void Tick(FileOperationWindow& window, ULONGLONG now) { window.TickAutoClose(now); }
     static ULONGLONG Base(FileOperationWindow& window) { return window.countdown_base_; }
+    static void Keep(FileOperationWindow& window) { window.KeepOpen(); }
     static void Place(FileOperationWindow& window, int x, int y) {
         window.positioned_ = true;
         SetWindowPos(window.hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -229,8 +230,9 @@ int wmain(int argc, wchar_t** argv) {
         }
     }
 
-    // Auto-close: a success seen while visible counts down 2.5 s, then zooms
-    // out and dismisses; hovering holds it; failures never auto-close.
+    // Auto-close: a success seen while visible counts down 3 s, then zooms
+    // out and dismisses; a click on the finished card keeps it; failures
+    // never auto-close.
     {
         window.SetTheme(true, ui::HexColor(0x6474C7));
         Access::Size(window, 96, false);
@@ -250,8 +252,10 @@ int wmain(int argc, wchar_t** argv) {
         Access::Tick(window, base + 1200);
         Check(window.IsVisible() && !Access::Closing(window), "still open at 1.2 s");
         Access::Tick(window, base + 2600);
-        Check(Access::Closing(window), "exit animation starts after 2.5 s");
-        Access::Tick(window, base + 2600 + 250);
+        Check(window.IsVisible() && !Access::Closing(window), "still open at 2.6 s");
+        Access::Tick(window, base + 3100);
+        Check(Access::Closing(window), "exit animation starts after 3 s");
+        Access::Tick(window, base + 3100 + 250);
         Check(!window.IsVisible() && dismissed == 1, "closed and dismissed after the zoom");
 
         auto fail = st;
@@ -270,6 +274,21 @@ int wmain(int argc, wchar_t** argv) {
         window.Update(late);
         window.Show(false);
         Check(!Access::Pending(window), "summary opened after the finish stays open");
+        window.Hide();
+
+        auto kept = st;
+        kept.task_id = 24;
+        window.Update(kept);
+        window.Show(false);
+        kept.active = false;
+        kept.phase = ops::OpPhase::Completed;
+        kept.percent = 100.0f;
+        window.Update(kept);
+        Check(Access::Pending(window), "a new task counts down again");
+        Access::Keep(window);
+        Check(!Access::Pending(window) && window.IsVisible(), "a click on the finished card keeps it open");
+        window.Update(kept);
+        Check(!Access::Pending(window), "kept stays kept on the next update");
         window.Hide();
     }
 

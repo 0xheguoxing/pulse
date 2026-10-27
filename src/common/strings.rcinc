@@ -2338,7 +2338,6 @@ BEGIN
     IDS_OP_AVERAGE_LEAD "平均 "
     IDS_OP_TOOK_LEAD "用时 "
     IDS_OP_PAUSING "正在暂停…"
-    IDS_OP_HOVER_KEEPS_OPEN "鼠标停留时保持打开"
     IDS_OP_PROCESSED_ITEMS "已处理"
     IDS_OP_TRANSFERRED_BYTES "已传输"
     IDS_OP_AVERAGE_SPEED "平均速度"
@@ -4301,6 +4300,10 @@ BEGIN
     IDS_SETTINGS_TREE_STICKY_DESC "展开的文件夹滚出顶部时停在列表上方"
     IDS_FAVORITES_BAR_MOVE_TO_BAR "改成横向收藏栏"
     IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR "放回侧边栏"
+    IDS_ADV_SCOPE_SUBTITLE "在 %s 中查找"
+    IDS_ADV_TRY "试试"
+    IDS_ADV_WHOLE_WORD_SHORT "全字"
+    IDS_ADV_LABEL_VALUE_FORMAT "%s：%s"
 END
 
 LANGUAGE 0x09, 0x01
@@ -6638,7 +6641,6 @@ BEGIN
     IDS_OP_AVERAGE_LEAD "Avg "
     IDS_OP_TOOK_LEAD "Took "
     IDS_OP_PAUSING "Pausing…"
-    IDS_OP_HOVER_KEEPS_OPEN "Stays open while hovered"
     IDS_OP_PROCESSED_ITEMS "Processed"
     IDS_OP_TRANSFERRED_BYTES "Transferred"
     IDS_OP_AVERAGE_SPEED "Average speed"
@@ -8601,6 +8603,10 @@ BEGIN
     IDS_SETTINGS_TREE_STICKY_DESC "Expanded folders stay at the top of the list as you scroll past"
     IDS_FAVORITES_BAR_MOVE_TO_BAR "Show favorites as a bar"
     IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR "Back to the sidebar"
+    IDS_ADV_SCOPE_SUBTITLE "Looking in %s"
+    IDS_ADV_TRY "Try"
+    IDS_ADV_WHOLE_WORD_SHORT "Whole word"
+    IDS_ADV_LABEL_VALUE_FORMAT "%s: %s"
 END
 
 // Traditional Chinese (Taiwan), generated from the Simplified entries above.

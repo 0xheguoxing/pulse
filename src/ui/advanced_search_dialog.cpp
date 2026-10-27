@@ -6,6 +6,7 @@
 #include "fluent_components.h"
 #include "fluent_menu.h"
 #include "folder_picker_dialog.h"
+#include "svg_path_icon.h"
 #include "typography.h"
 #include "ui_compositor.h"
 #include "window_helpers.h"
@@ -23,10 +24,12 @@
 
 #pragma comment(lib, "uxtheme.lib")
 
-// Advanced search, redesigned for everyday use:
-//   quick recipes -> one keyword box -> "names | contents" -> clickable pills for
-//   type/date/size/location -> collapsible expert options -> a plain-language
-//   summary with a live result count.
+// Advanced search, in the dialog family of batch rename / confirm / progress
+// (pulse 复制自动关闭与高级搜索_效果图.html §2):
+//   52-dip title bar (tile, title, scope subtitle, names | contents switch)
+//   -> one keyword box -> "try" recipe chips -> a card of type/date/size/
+//   location rows -> collapsible expert options -> a footer band with a
+//   plain-language summary and the live result count.
 namespace pulse::ui {
 namespace {
 
@@ -34,9 +37,13 @@ using I = l10n::StringId;
 
 constexpr wchar_t kClass[] = L"PulseAdvancedSearchWindow";
 constexpr float kDlgW = 640.0f;
-constexpr float kPad = 24.0f;
-constexpr float kLabelW = 84.0f;
-constexpr float kPillH = 30.0f;
+constexpr float kPad = 18.0f;       // body inset, as batch rename
+constexpr float kTitleH = 52.0f;
+constexpr float kLabelW = 66.0f;    // condition labels inside the card
+constexpr float kPillH = 28.0f;
+constexpr float kChipH = 26.0f;
+constexpr float kRowH = 46.0f;
+constexpr float kFootH = 68.0f;
 constexpr UINT_PTR kCountTimer = 73;
 constexpr UINT_PTR kRecoveryTimer = 74;
 
@@ -143,14 +150,79 @@ std::wstring ContentModeLabel(index::ContentMatchMode mode) {
     }
 }
 
+enum class Ico { None, Globe, Folder, FolderAdd };
+
 struct Pill {
     D2D1_RECT_F bounds{};
     std::wstring text;
-    const wchar_t* glyph = L"";
+    Ico icon = Ico::None;
     int id = 0;
     bool selected = false;
     bool enabled = true;
+    bool chip = false;   // a "try" recipe chip rather than a condition pill
 };
+
+// ---- look (same palette as batch rename) ---------------------------------------
+
+D2D1_COLOR_F Hex(uint32_t rgb, float a = 1.0f) {
+    return D2D1::ColorF(((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f, a);
+}
+D2D1_COLOR_F Mix(D2D1_COLOR_F a, D2D1_COLOR_F b, float t) {
+    return D2D1::ColorF(a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t);
+}
+D2D1_COLOR_F Alpha(D2D1_COLOR_F c, float a) { c.a *= a; return c; }
+
+struct Pal {
+    D2D1_COLOR_F accent, accent_soft, accent_line, card, sheet, line, line2, text, text2, text3, hover, danger;
+};
+
+Pal MakePal(bool dark, bool high_contrast, const Theme& theme) {
+    Pal p{};
+    if (high_contrast) {
+        p.card = p.sheet = theme.bg;
+        p.line = p.line2 = theme.text;
+        p.text = p.text2 = p.text3 = theme.text;
+        p.hover = Alpha(theme.text, 0.15f);
+        p.accent = theme.accent;
+        p.accent_soft = theme.bg;
+        p.accent_line = theme.accent;
+        p.danger = theme.danger;
+        return p;
+    }
+    if (!dark) {
+        p.card = Hex(0xffffff); p.sheet = Hex(0xeef0ec); p.line = Hex(0xe3e4dd); p.line2 = Hex(0xecede7);
+        p.text = Hex(0x1f2328); p.text2 = Hex(0x5b626c); p.text3 = Hex(0x8d939b); p.hover = Hex(0xe9ebe4);
+    } else {
+        p.card = Hex(0x2a2d2b); p.sheet = Hex(0x202221); p.line = Hex(0x353936); p.line2 = Hex(0x2d302e);
+        p.text = Hex(0xe6e8e5); p.text2 = Hex(0xb1b6b0); p.text3 = Hex(0x858b85); p.hover = Hex(0x333734);
+    }
+    p.accent = theme.accent;
+    p.accent.a = 1.0f;
+    p.accent_soft = Mix(p.card, p.accent, dark ? 0.20f : 0.13f);
+    p.accent_line = Alpha(p.accent, 0.35f);
+    p.danger = theme.danger;
+    return p;
+}
+
+constexpr SvgPart kIcoTile[] = {
+    {"M6.6 2.3a4.3 4.3 0 1 0 0 8.6a4.3 4.3 0 1 0 0-8.6z", false, 1.4f, 1.0f},
+    {"M9.8 9.8l3.6 3.6", false, 1.4f, 1.0f}, {"M4.6 5.6h4M4.6 7.6h2.6", false, 1.4f, 1.0f}};
+constexpr SvgPart kIcoModeName[] = {{"M3 3.5h10M8 3.5v9.5", false, 1.4f, 1.0f}};
+constexpr SvgPart kIcoModeContent[] = {
+    {"M4 1.8h5.2L12.5 5v9.2H4z", false, 1.3f, 1.0f}, {"M6 8h4.5M6 10.5h4.5", false, 1.3f, 1.0f}};
+constexpr SvgPart kIcoGlobe[] = {
+    {"M8 2a6 6 0 1 0 0 12a6 6 0 1 0 0-12z", false, 1.3f, 1.0f},
+    {"M2 8h12M8 2c2 2 2.6 4 2.6 6c0 2-.6 4-2.6 6M8 2C6 4 5.4 6 5.4 8c0 2 .6 4 2.6 6", false, 1.3f, 1.0f}};
+constexpr SvgPart kIcoFolder[] = {
+    {"M1.8 4.5a1 1 0 0 1 1-1h3.4l1.4 1.5h5.6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1z", false, 1.3f, 1.0f}};
+constexpr SvgPart kIcoFolderAdd[] = {
+    {"M1.8 4.5a1 1 0 0 1 1-1h3.4l1.4 1.5h5.6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2.8a1 1 0 0 1-1-1z", false, 1.3f, 1.0f},
+    {"M8 7.5v3.5M6.3 9.2H9.7", false, 1.3f, 1.0f}};
+constexpr SvgPart kIcoX[] = {{"M3 3l8 8M11 3l-8 8", false, 1.3f, 1.0f}};
+constexpr SvgPart kIcoChevRight[] = {{"M4.5 2.5L8 6l-3.5 3.5", false, 1.3f, 1.0f}};
+constexpr SvgPart kIcoChevDown[] = {{"M2.5 4.5L6 8l3.5-3.5", false, 1.3f, 1.0f}};
+
+enum Fmt { kF15b, kF13, kF13b, kF125, kF12, kF12b, kFmtCount };
 
 struct RowLabel {
     D2D1_RECT_F bounds{};
@@ -159,6 +231,10 @@ struct RowLabel {
 
 class AdvancedSearchWindow {
 public:
+    AdvancedSearchWindow() = default;
+    AdvancedSearchWindow(const AdvancedSearchWindow&) = delete;
+    AdvancedSearchWindow& operator=(const AdvancedSearchWindow&) = delete;
+    ~AdvancedSearchWindow() { ReleaseFormats(); }
 #ifdef PULSE_WITH_SELFTEST
     bool TestDeviceRecovery(HWND host) {
         hwnd_ = host;
@@ -317,7 +393,7 @@ private:
     }
 
     D2D1_RECT_F R(float x, float y, float w, float h) const { return DipRect(scale_, x, y, w, h); }
-    D2D1_RECT_F CloseRect() const { return R(kDlgW - 46, 0, 46, 36); }
+    D2D1_RECT_F CloseRect() const { return R(kDlgW - 8 - 36, 8, 36, 36); }
 
     // ---- state helpers -------------------------------------------------------------
 
@@ -334,21 +410,6 @@ private:
                        spec_.date == app::DatePreset::Any && plain_size;
         default: return false;
         }
-    }
-
-    int AdvancedSetCount() const {
-        int n = 0;
-        if (!EditText(edit_exts_).empty()) ++n;
-        if (!EditText(edit_exclude_).empty()) ++n;
-        if (content_mode_) {
-            if (!EditText(edit_name_also_).empty()) ++n;
-            if (spec_.content_mode != index::ContentMatchMode::AllWords) ++n;
-            if (spec_.whole_word) ++n;
-            if (spec_.case_sensitive) ++n;
-        } else if (spec_.name_how != app::NameMatchHow::Contains) {
-            ++n;
-        }
-        return n;
     }
 
     void SyncFromEdits() {
@@ -368,7 +429,36 @@ private:
         else if (spec_.kind == index::SearchKind::Custom) spec_.kind = index::SearchKind::Any;
     }
 
-    std::wstring Summary() const {
+    std::wstring ScopeName() const {
+        if (spec_.location == app::LocationScope::CurrentFolder && !spec_.current_folder.empty())
+            return FolderLeaf(spec_.current_folder);
+        if (spec_.location == app::LocationScope::CustomFolder && !spec_.custom_folder.empty())
+            return FolderLeaf(spec_.custom_folder);
+        return l10n::Get(I::LocationIndexed);
+    }
+
+    // What the collapsed expert options hold, in faint text after the toggle.
+    std::wstring MoreSummary() const {
+        std::vector<std::wstring> parts;
+        auto add = [&](I label, const std::wstring& value) {
+            wchar_t text[512]{};
+            swprintf_s(text, l10n::Get(I::AdvLabelValueFormat).c_str(), l10n::Get(label).c_str(), value.c_str());
+            parts.push_back(text);
+        };
+        add(I::AdvMatch, content_mode_ ? ContentModeLabel(spec_.content_mode) : NameHowLabel(spec_.name_how));
+        if (!spec_.custom_exts.empty()) add(I::AdvSearchExtensions, ExtLabel(spec_.custom_exts));
+        const std::wstring& exclude = content_mode_ ? spec_.content_exclude : spec_.exclude_name;
+        if (!exclude.empty()) add(I::AdvSearchExclude, exclude);
+        if (content_mode_ && !spec_.name.empty()) add(I::AdvSearchName, spec_.name);
+        std::wstring out;
+        for (const auto& part : parts) {
+            if (!out.empty()) out += L" \u00b7 ";
+            out += part;
+        }
+        return out;
+    }
+
+    std::vector<std::wstring> SummaryParts() const {
         std::vector<std::wstring> parts;
         std::wstring what = spec_.kind == index::SearchKind::Any ? l10n::Get(I::AdvSumFiles)
             : spec_.kind == index::SearchKind::Custom ? ExtLabel(spec_.custom_exts)
@@ -388,14 +478,13 @@ private:
             parts.push_back(LowerFirst(SizeLabel(spec_.size, spec_.size_custom)));
         const std::wstring& exclude = content_mode_ ? spec_.content_exclude : spec_.exclude_name;
         if (!exclude.empty()) parts.push_back(Format(I::AdvSumExcludeFormat, exclude));
-        std::wstring where = l10n::Get(I::LocationIndexed);
-        if (spec_.location == app::LocationScope::CurrentFolder && !spec_.current_folder.empty())
-            where = FolderLeaf(spec_.current_folder);
-        else if (spec_.location == app::LocationScope::CustomFolder && !spec_.custom_folder.empty())
-            where = FolderLeaf(spec_.custom_folder);
-        parts.push_back(Format(I::AdvSumInFormat, where));
+        parts.push_back(Format(I::AdvSumInFormat, ScopeName()));
+        return parts;
+    }
+
+    std::wstring Summary() const {
         std::wstring out;
-        for (const auto& part : parts) {
+        for (const auto& part : SummaryParts()) {
             if (!out.empty()) out += L" \u00b7 ";
             out += part;
         }
@@ -417,19 +506,21 @@ private:
 
     // ---- layout --------------------------------------------------------------------
 
-    float PillWidth(const std::wstring& text, const wchar_t* glyph) const {
-        float w = painter_.MeasureButtonWidth(text, glyph ? glyph : L"", false);
-        if (w < 1.0f) w = (24.0f + static_cast<float>(text.size()) * 8.0f) * scale_;
-        return std::max(44.0f * scale_, std::ceil(w + 4.0f * scale_));
+    float X(float dip) const { return dip * scale_; }
+
+    float PillWidth(const Pill& pill) const {
+        if (pill.chip) return std::ceil(Measure(pill.text, kF125) + X(22 + 2));
+        float w = Measure(pill.text, kF13b) + X(24 + 2);  // semibold when chosen: no width jump
+        if (pill.icon != Ico::None) w += X(14 + 6);
+        return std::ceil(w);
     }
 
     // Lays pills out left to right, wrapping inside [left, right]. Returns the bottom.
-    float FlowPills(std::vector<Pill> row, float left, float right, float top) {
-        const float gap = 6.0f * scale_;
-        const float h = kPillH * scale_;
+    float FlowPills(std::vector<Pill> row, float left, float right, float top, float h) {
+        const float gap = X(6);
         float x = left, y = top;
         for (auto& pill : row) {
-            const float w = std::min(right - left, PillWidth(pill.text, pill.glyph));
+            const float w = std::min(right - left, PillWidth(pill));
             if (x > left && x + w > right) {
                 x = left;
                 y += h + gap;
@@ -441,158 +532,184 @@ private:
         return y + h;
     }
 
-    void AddRowLabel(I id, float top) {
-        rows_.push_back({D2D1::RectF(kPad * scale_, top, (kPad + kLabelW - 6.0f) * scale_,
-                                     top + kPillH * scale_), l10n::Get(id)});
+    // One condition row inside a card: label on the left, pills flowing on the
+    // right; at least 46 dip high, taller when the pills wrap.
+    float PillRow(I label, std::vector<Pill> row, const D2D1_RECT_F& card, float top) {
+        const float pills_bottom = FlowPills(std::move(row), card.left + X(14 + kLabelW + 6), card.right - X(12),
+                                             top + X(9), X(kPillH));
+        const float bottom = std::max(top + X(kRowH), pills_bottom + X(9));
+        rows_.push_back({D2D1::RectF(card.left + X(14), top + X(9), card.left + X(14 + kLabelW), top + X(9 + kPillH)),
+                         l10n::Get(label)});
+        return bottom;
+    }
+
+    // A row holding a single-line field (expert options).
+    float FieldRow(I label, D2D1_RECT_F& field, const D2D1_RECT_F& card, float top) {
+        field = D2D1::RectF(card.left + X(14 + kLabelW + 6), top + X(7), card.right - X(12), top + X(7 + 32));
+        rows_.push_back({D2D1::RectF(card.left + X(14), top + X(9), card.left + X(14 + kLabelW), top + X(9 + kPillH)),
+                         l10n::Get(label)});
+        return top + X(kRowH);
     }
 
     void Layout() {
+        EnsureFormats();
         pills_.clear();
         rows_.clear();
+        separators_.clear();
         const float s = scale_;
         const float left = kPad * s;
         const float right = (kDlgW - kPad) * s;
-        const float value_left = (kPad + kLabelW) * s;
-        float y = 52.0f * s;
 
-        // Quick recipes: a whole search in one click.
-        {
-            std::vector<Pill> row;
-            const I labels[] = {I::AdvRecipeDocs, I::AdvRecipeBig, I::AdvRecipeImages, I::AdvRecipeMentions};
-            const wchar_t* glyphs[] = {L"\xE8A5", L"\xE7B8", L"\xEB9F", L"\xE721"};
-            for (int i = 0; i < 4; ++i)
-                row.push_back({{}, l10n::Get(labels[i]), glyphs[i], kHitRecipe + i, RecipeActive(i), true});
-            y = FlowPills(std::move(row), left, right, y) + 14.0f * s;
-        }
-        kw_rect_ = D2D1::RectF(left, y, right, y + 36.0f * s);
-        y = kw_rect_.bottom + 10.0f * s;
+        // Title bar: names | contents switch left of the close button.
         {
             const std::wstring a = l10n::Get(I::AdvModeName), b = l10n::Get(I::AdvModeContent);
-            const float w = std::max(PillWidth(a, L"\xE8D2"), PillWidth(b, L"\xE8A5")) + 8.0f * s;
-            mode_rect_[0] = D2D1::RectF(left, y, left + w, y + kPillH * s);
-            mode_rect_[1] = D2D1::RectF(left + w + 6.0f * s, y, left + 2.0f * w + 6.0f * s, y + kPillH * s);
-            y = mode_rect_[0].bottom + 16.0f * s;
+            const float w0 = X(12 + 14 + 6 + 12) + Measure(a, kF13);
+            const float w1 = X(12 + 14 + 6 + 12) + Measure(b, kF13);
+            const float mw = w0 + w1 + X(6);
+            const D2D1_RECT_F close = CloseRect();
+            seg_rect_ = D2D1::RectF(close.left - X(6) - mw, X(9), close.left - X(6), X(9 + 34));
+            mode_rect_[0] = D2D1::RectF(seg_rect_.left + X(3), seg_rect_.top + X(3), seg_rect_.left + X(3) + w0,
+                                        seg_rect_.bottom - X(3));
+            mode_rect_[1] = D2D1::RectF(mode_rect_[0].right, mode_rect_[0].top, mode_rect_[0].right + w1,
+                                        mode_rect_[0].bottom);
         }
-        // Type
+
+        // Keyword box; in content mode it carries the whole-word / match-case toggles.
+        float y = X(kTitleH + 4);
+        kw_rect_ = D2D1::RectF(left, y, right, y + X(40));
+        ww_rect_ = mc_rect_ = D2D1::RectF(0, 0, 0, 0);
+        float edit_right = kw_rect_.right;
+        if (content_mode_) {
+            const float wa = Measure(L"Aa", kF12b) + X(12);
+            const float ww = Measure(l10n::Get(I::AdvWholeWordShort), kF12b) + X(12);
+            mc_rect_ = D2D1::RectF(kw_rect_.right - X(8) - wa, kw_rect_.top + X(8), kw_rect_.right - X(8),
+                                   kw_rect_.bottom - X(8));
+            ww_rect_ = D2D1::RectF(mc_rect_.left - X(2) - ww, mc_rect_.top, mc_rect_.left - X(2), mc_rect_.bottom);
+            edit_right = ww_rect_.left + X(10) - X(6);
+        }
+        // PlaceEdit insets 10 dip; the search glyph takes 18 + 6.
+        kw_edit_rect_ = D2D1::RectF(kw_rect_.left + X(24), kw_rect_.top, edit_right, kw_rect_.bottom);
+        y = kw_rect_.bottom + X(10);
+
+        // "Try": a whole search in one click.
         {
-            AddRowLabel(I::AdvSearchKind, y);
+            const std::wstring label = l10n::Get(I::AdvTry);
+            const float lw = Measure(label, kF125);
+            try_label_rect_ = D2D1::RectF(left, y, left + lw, y + X(kChipH));
+            std::vector<Pill> row;
+            const I labels[] = {I::AdvRecipeDocs, I::AdvRecipeBig, I::AdvRecipeImages, I::AdvRecipeMentions};
+            for (int i = 0; i < 4; ++i) {
+                Pill chip{{}, l10n::Get(labels[i]), Ico::None, kHitRecipe + i, RecipeActive(i), true, true};
+                row.push_back(std::move(chip));
+            }
+            y = FlowPills(std::move(row), left + lw + X(8), right, y, X(kChipH));
+        }
+
+        // Conditions card.
+        card_[0] = D2D1::RectF(left, y + X(14), right, y + X(14));
+        {
+            float row_top = card_[0].top;
             std::vector<Pill> row;
             const index::SearchKind kinds[] = {
                 index::SearchKind::Any, index::SearchKind::Folder, index::SearchKind::Document,
                 index::SearchKind::Image, index::SearchKind::Video, index::SearchKind::Audio,
                 index::SearchKind::Archive, index::SearchKind::Code};
             for (auto kind : kinds)
-                row.push_back({{}, KindLabel(kind), L"", kHitType + static_cast<int>(kind), spec_.kind == kind, true});
+                row.push_back({{}, KindLabel(kind), Ico::None, kHitType + static_cast<int>(kind), spec_.kind == kind, true});
             if (spec_.kind == index::SearchKind::Custom && !spec_.custom_exts.empty())
-                row.push_back({{}, ExtLabel(spec_.custom_exts), L"",
+                row.push_back({{}, ExtLabel(spec_.custom_exts), Ico::None,
                                kHitType + static_cast<int>(index::SearchKind::Custom), true, true});
-            y = FlowPills(std::move(row), value_left, right, y) + 10.0f * s;
-        }
-        // Date
-        {
-            AddRowLabel(I::AdvSearchDate, y);
-            std::vector<Pill> row;
+            row_top = PillRow(I::AdvSearchKind, std::move(row), card_[0], row_top);
+            separators_.push_back(row_top);
+
+            row.clear();
             for (int v = 0; v <= static_cast<int>(app::DatePreset::ThisYear); ++v) {
                 const auto preset = static_cast<app::DatePreset>(v);
-                row.push_back({{}, DateLabel(preset), L"", kHitDate + v, spec_.date == preset, true});
+                row.push_back({{}, DateLabel(preset), Ico::None, kHitDate + v, spec_.date == preset, true});
             }
             if (spec_.date == app::DatePreset::Custom)
-                row.push_back({{}, DateLabel(spec_.date), L"",
+                row.push_back({{}, DateLabel(spec_.date), Ico::None,
                                kHitDate + static_cast<int>(app::DatePreset::Custom), true, true});
-            y = FlowPills(std::move(row), value_left, right, y) + 10.0f * s;
-        }
-        // Size
-        {
-            AddRowLabel(I::AdvSearchSize, y);
-            std::vector<Pill> row;
+            row_top = PillRow(I::AdvSearchDate, std::move(row), card_[0], row_top);
+            separators_.push_back(row_top);
+
+            row.clear();
             const app::SizePreset sizes[] = {
                 app::SizePreset::Any, app::SizePreset::Lt1MB, app::SizePreset::From1To10MB,
                 app::SizePreset::Gt10MB, app::SizePreset::Gt100MB, app::SizePreset::Gt1GB};
             // Compact, language-neutral labels keep the whole scale on one line.
             const wchar_t* compact[] = {nullptr, L"< 1 MB", L"1\u201310 MB", L"> 10 MB", L"> 100 MB", L"> 1 GB"};
             for (size_t i = 0; i < std::size(sizes); ++i)
-                row.push_back({{}, compact[i] ? std::wstring(compact[i]) : SizeLabel(sizes[i], {}), L"",
+                row.push_back({{}, compact[i] ? std::wstring(compact[i]) : SizeLabel(sizes[i], {}), Ico::None,
                                kHitSize + static_cast<int>(sizes[i]), spec_.size == sizes[i], true});
             if (spec_.size == app::SizePreset::Empty || spec_.size == app::SizePreset::Custom)
-                row.push_back({{}, SizeLabel(spec_.size, spec_.size_custom), L"",
+                row.push_back({{}, SizeLabel(spec_.size, spec_.size_custom), Ico::None,
                                kHitSize + static_cast<int>(spec_.size), true, true});
-            y = FlowPills(std::move(row), value_left, right, y) + 10.0f * s;
-        }
-        // Location
-        {
-            AddRowLabel(I::AdvSearchLocation, y);
-            std::vector<Pill> row;
-            row.push_back({{}, l10n::Get(I::LocationIndexed), L"\xE774", kHitLocation + 0,
+            row_top = PillRow(I::AdvSearchSize, std::move(row), card_[0], row_top);
+            separators_.push_back(row_top);
+
+            row.clear();
+            row.push_back({{}, l10n::Get(I::LocationIndexed), Ico::Globe, kHitLocation + 0,
                            spec_.location == app::LocationScope::Indexed, true});
             std::wstring current = l10n::Get(I::LocationCurrent);
             if (!spec_.current_folder.empty()) current += L" \u00b7 " + FolderLeaf(spec_.current_folder);
-            row.push_back({{}, current, L"\xE8B7", kHitLocation + 1,
+            row.push_back({{}, current, Ico::Folder, kHitLocation + 1,
                            spec_.location == app::LocationScope::CurrentFolder, !spec_.current_folder.empty()});
             const bool custom = spec_.location == app::LocationScope::CustomFolder && !spec_.custom_folder.empty();
             row.push_back({{}, custom ? FolderLeaf(spec_.custom_folder) : l10n::Get(I::AdvPickFolder),
-                           L"\xED25", kHitLocation + 2, custom, true});
-            y = FlowPills(std::move(row), value_left, right, y) + 12.0f * s;
+                           Ico::FolderAdd, kHitLocation + 2, custom, true});
+            row_top = PillRow(I::AdvSearchLocation, std::move(row), card_[0], row_top);
+            card_[0].bottom = row_top;
         }
+
         // Expert options, folded away until asked for.
-        {
-            const int n = AdvancedSetCount();
-            wchar_t text[128]{};
-            if (n > 0) swprintf_s(text, l10n::Get(I::AdvMoreSetFormat).c_str(), n);
-            more_text_ = std::wstring(more_ ? L"\u25be  " : L"\u25b8  ") +
-                         (n > 0 ? std::wstring(text) : l10n::Get(I::AdvMore));
-            more_rect_ = D2D1::RectF(left, y, left + 320.0f * s, y + 26.0f * s);
-            y = more_rect_.bottom + 8.0f * s;
-        }
-        ext_rect_ = exclude_rect_ = name_also_rect_ = ww_rect_ = mc_rect_ = D2D1::RectF(0, 0, 0, 0);
+        more_rect_ = D2D1::RectF(left, card_[0].bottom + X(12), right, card_[0].bottom + X(12 + 22));
+        more_sum_ = more_ ? std::wstring() : MoreSummary();
+        y = more_rect_.bottom;
+        ext_rect_ = exclude_rect_ = name_also_rect_ = D2D1::RectF(0, 0, 0, 0);
+        card_[1] = D2D1::RectF(0, 0, 0, 0);
         if (more_) {
-            const float field_h = 32.0f * s;
-            AddRowLabel(I::AdvSearchExtensions, y);
-            ext_rect_ = D2D1::RectF(value_left, y, right, y + field_h);
-            y = ext_rect_.bottom + 8.0f * s;
-            AddRowLabel(I::AdvSearchExclude, y);
-            exclude_rect_ = D2D1::RectF(value_left, y, right, y + field_h);
-            y = exclude_rect_.bottom + 8.0f * s;
+            card_[1] = D2D1::RectF(left, y + X(8), right, y + X(8));
+            float row_top = card_[1].top;
+            row_top = FieldRow(I::AdvSearchExtensions, ext_rect_, card_[1], row_top);
+            separators_.push_back(row_top);
+            row_top = FieldRow(I::AdvSearchExclude, exclude_rect_, card_[1], row_top);
+            separators_.push_back(row_top);
             if (content_mode_) {
-                AddRowLabel(I::AdvSearchName, y);
-                name_also_rect_ = D2D1::RectF(value_left, y, right, y + field_h);
-                y = name_also_rect_.bottom + 8.0f * s;
+                row_top = FieldRow(I::AdvSearchName, name_also_rect_, card_[1], row_top);
+                separators_.push_back(row_top);
             }
-            AddRowLabel(I::AdvMatch, y);
             std::vector<Pill> row;
-            if (content_mode_) {
-                for (int v = 0; v < 3; ++v) {
+            for (int v = 0; v < 3; ++v) {
+                if (content_mode_) {
                     const auto mode = static_cast<index::ContentMatchMode>(v);
-                    row.push_back({{}, ContentModeLabel(mode), L"", kHitContentMode + v, spec_.content_mode == mode, true});
-                }
-            } else {
-                for (int v = 0; v < 3; ++v) {
+                    row.push_back({{}, ContentModeLabel(mode), Ico::None, kHitContentMode + v, spec_.content_mode == mode, true});
+                } else {
                     const auto how = static_cast<app::NameMatchHow>(v);
-                    row.push_back({{}, NameHowLabel(how), L"", kHitNameHow + v, spec_.name_how == how, true});
+                    row.push_back({{}, NameHowLabel(how), Ico::None, kHitNameHow + v, spec_.name_how == how, true});
                 }
             }
-            y = FlowPills(std::move(row), value_left, right, y) + 8.0f * s;
-            if (content_mode_) {
-                ww_rect_ = D2D1::RectF(value_left, y, value_left + 200.0f * s, y + 28.0f * s);
-                mc_rect_ = D2D1::RectF(value_left + 210.0f * s, y, right, y + 28.0f * s);
-                y = ww_rect_.bottom + 8.0f * s;
-            }
+            row_top = PillRow(I::AdvMatch, std::move(row), card_[1], row_top);
+            card_[1].bottom = row_top;
+            y = card_[1].bottom;
         }
-        // Footer: what will be searched, how many hits, and the buttons.
-        footer_top_ = y + 6.0f * s;
+
+        // Footer band: summary + count on the left, the buttons on the right.
+        footer_top_ = y + X(16);
+        summary_parts_ = SummaryParts();
         summary_ = Summary();
-        const float summary_w = right - left;
-        float summary_h = painter_.MeasureWrappedCaptionHeight(summary_, summary_w);
-        if (summary_h < 1.0f) summary_h = 20.0f * s;
-        summary_origin_ = D2D1::Point2F(left, footer_top_ + 12.0f * s);
-        const float buttons_top = summary_origin_.y + summary_h + 10.0f * s;
-        const float bh = 32.0f * s;
-        search_rect_ = D2D1::RectF(right - 96.0f * s, buttons_top, right, buttons_top + bh);
-        cancel_rect_ = D2D1::RectF(search_rect_.left - 8.0f * s - 80.0f * s, buttons_top,
-                                   search_rect_.left - 8.0f * s, buttons_top + bh);
-        clear_rect_ = D2D1::RectF(cancel_rect_.left - 8.0f * s - 76.0f * s, buttons_top,
-                                  cancel_rect_.left - 8.0f * s, buttons_top + bh);
-        count_rect_ = D2D1::RectF(left, buttons_top, clear_rect_.left - 8.0f * s, buttons_top + bh);
-        height_px_ = search_rect_.bottom + 18.0f * s;
+        const float cy = footer_top_ + X(kFootH) * 0.5f;
+        const float bh = X(32);
+        const float sw = std::max(X(96), Measure(l10n::Get(I::AdvSearchRun), kF13b) + X(32));
+        const float cw = std::max(X(96), Measure(l10n::Get(I::Cancel), kF13) + X(32));
+        const float gw = Measure(l10n::Get(I::ClearAll), kF13) + X(28);
+        search_rect_ = D2D1::RectF(right - sw, cy - bh * 0.5f, right, cy + bh * 0.5f);
+        cancel_rect_ = D2D1::RectF(search_rect_.left - X(8) - cw, search_rect_.top, search_rect_.left - X(8),
+                                   search_rect_.bottom);
+        clear_rect_ = D2D1::RectF(cancel_rect_.left - X(8) - gw, search_rect_.top, cancel_rect_.left - X(8),
+                                  search_rect_.bottom);
+        count_rect_ = D2D1::RectF(left, cy - X(17.5f), clear_rect_.left - X(16), cy + X(17.5f));
+        height_px_ = footer_top_ + X(kFootH);
     }
 
     // ---- edits ---------------------------------------------------------------------
@@ -642,7 +759,7 @@ private:
 
     void LayoutEdits() {
         if (done_) return;
-        PlaceEdit(edit_kw_, kw_rect_);
+        PlaceEdit(edit_kw_, kw_edit_rect_);
         PlaceEdit(edit_exts_, ext_rect_);
         PlaceEdit(edit_exclude_, exclude_rect_);
         PlaceEdit(edit_name_also_, name_also_rect_);
@@ -885,6 +1002,170 @@ private:
 
     // ---- painting ------------------------------------------------------------------
 
+    void EnsureFormats() {
+        if (fmt_scale_ == scale_ && formats_[0]) return;
+        ReleaseFormats();
+        IDWriteFactory2* factory = compositor_.DwriteFactory();
+        if (!factory) return;
+        struct Spec { float size; DWRITE_FONT_WEIGHT weight; };
+        const Spec specs[kFmtCount] = {
+            {15.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD}, {13.0f, DWRITE_FONT_WEIGHT_NORMAL},
+            {13.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD}, {12.5f, DWRITE_FONT_WEIGHT_NORMAL},
+            {12.0f, DWRITE_FONT_WEIGHT_NORMAL}, {12.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD}};
+        for (int i = 0; i < kFmtCount; ++i) {
+            typography::TextFormatSpec spec;
+            spec.size = specs[i].size * scale_;
+            spec.weight = specs[i].weight;
+            typography::CreateTextFormat(factory, spec, &formats_[i]);
+        }
+        fmt_scale_ = scale_;
+    }
+    void ReleaseFormats() {
+        for (auto*& f : formats_) if (f) { f->Release(); f = nullptr; }
+        fmt_scale_ = 0.0f;
+    }
+
+    IDWriteTextLayout* MakeLayout(const std::wstring& text, int f, float w, float h, bool ellipsis) const {
+        IDWriteFactory2* factory = compositor_.DwriteFactory();
+        IDWriteTextFormat* fmt = f >= 0 && f < kFmtCount ? formats_[f] : nullptr;
+        if (!factory || !fmt || text.empty()) return nullptr;
+        IDWriteTextLayout* layout = nullptr;
+        if (FAILED(factory->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), fmt,
+                                             std::max(1.0f, w), std::max(1.0f, h), &layout)))
+            return nullptr;
+        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        if (ellipsis) {
+            DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+            IDWriteInlineObject* sign = nullptr;
+            factory->CreateEllipsisTrimmingSign(fmt, &sign);
+            layout->SetTrimming(&trimming, sign);
+            if (sign) sign->Release();
+        }
+        return layout;
+    }
+
+    float Measure(const std::wstring& text, int f) const {
+        IDWriteTextLayout* layout = MakeLayout(text, f, 10000.0f, 1000.0f, false);
+        if (!layout) return static_cast<float>(text.size()) * 8.0f * scale_;
+        DWRITE_TEXT_METRICS m{};
+        layout->GetMetrics(&m);
+        layout->Release();
+        return std::ceil(m.widthIncludingTrailingWhitespace);
+    }
+
+    // Single line, vertically centred in r, ellipsis at the right; returns the drawn width.
+    float Text(const std::wstring& text, int f, const D2D1_RECT_F& r, D2D1_COLOR_F c, bool center = false) {
+        IDWriteTextLayout* layout = MakeLayout(text, f, r.right - r.left, r.bottom - r.top, true);
+        if (!layout) return 0.0f;
+        if (center) layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        DWRITE_TEXT_METRICS m{};
+        layout->GetMetrics(&m);
+        const float y = std::round(r.top + ((r.bottom - r.top) - m.height) * 0.5f);
+        brush_->SetColor(c);
+        compositor_.DrawTextLayout(D2D1::Point2F(r.left, y), layout, brush_);
+        layout->Release();
+        return std::min(m.widthIncludingTrailingWhitespace, r.right - r.left);
+    }
+
+    void Fill(const D2D1_RECT_F& r, float radius, D2D1_COLOR_F c) {
+        if (c.a <= 0.0f) return;
+        brush_->SetColor(c);
+        if (radius <= 0.0f) compositor_.Dc()->FillRectangle(r, brush_);
+        else compositor_.Dc()->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), brush_);
+    }
+    void Stroke(const D2D1_RECT_F& r, float radius, D2D1_COLOR_F c) {
+        if (c.a <= 0.0f) return;
+        const float h = 0.5f * std::max(1.0f, std::floor(scale_));
+        const D2D1_RECT_F in = D2D1::RectF(r.left + h, r.top + h, r.right - h, r.bottom - h);
+        brush_->SetColor(c);
+        compositor_.Dc()->DrawRoundedRectangle(D2D1::RoundedRect(in, std::max(0.0f, radius - h), std::max(0.0f, radius - h)),
+                                               brush_, h * 2.0f);
+    }
+    template <size_t N>
+    void Icon(const SvgPart (&parts)[N], float view, float x, float y, float size, D2D1_COLOR_F c) {
+        DrawSvgParts(compositor_.Dc(), parts, N, view, D2D1::RectF(x, y, x + size, y + size), c);
+    }
+    void PillIcon(Ico icon, float x, float y, D2D1_COLOR_F c) {
+        if (icon == Ico::Globe) Icon(kIcoGlobe, 16, x, y, X(14), c);
+        else if (icon == Ico::Folder) Icon(kIcoFolder, 16, x, y, X(14), c);
+        else if (icon == Ico::FolderAdd) Icon(kIcoFolderAdd, 16, x, y, X(14), c);
+    }
+
+    void DrawPill(const Pill& pill) {
+        const bool hovered = hover_ == pill.id && pill.enabled;
+        const bool pressed = pressed_ == pill.id && pill.enabled;
+        const D2D1_RECT_F& r = pill.bounds;
+        const float radius = (r.bottom - r.top) * 0.5f;
+        D2D1_COLOR_F fg = pill.enabled ? pal_.text : pal_.text3;
+        if (pill.chip) {
+            Fill(r, radius, pill.selected ? pal_.accent_soft : (hovered ? pal_.hover : pal_.card));
+            Stroke(r, radius, pill.selected ? pal_.accent_line : pal_.line);
+            fg = pill.selected ? pal_.accent : pal_.text2;
+            Text(pill.text, kF125, r, fg, true);
+            return;
+        }
+        if (pill.selected) {
+            Fill(r, radius, pal_.accent_soft);
+            Stroke(r, radius, pal_.accent_line);
+            fg = pal_.accent;
+        } else if (hovered || pressed) {
+            Fill(r, radius, pressed ? Mix(pal_.hover, pal_.text, 0.06f) : pal_.hover);
+        }
+        float x = r.left + X(12);
+        if (pill.icon != Ico::None) {
+            PillIcon(pill.icon, x, (r.top + r.bottom) * 0.5f - X(7), fg);
+            x += X(14 + 6);
+        }
+        Text(pill.text, pill.selected ? kF13b : kF13, D2D1::RectF(x, r.top, r.right - X(10), r.bottom), fg);
+    }
+
+    void DrawFooterSummary(float right) {
+        const float top = count_rect_.top;
+        bool danger = false;
+        const std::wstring count = CountLine(danger);
+        if (danger) {
+            // The scope warning is the one thing to read: both lines, wrapped.
+            IDWriteTextLayout* layout = MakeLayout(count, kF12, right - count_rect_.left, X(40), false);
+            if (!layout) return;
+            layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            DWRITE_TEXT_METRICS m{};
+            layout->GetMetrics(&m);
+            const float y = std::round((count_rect_.top + count_rect_.bottom - m.height) * 0.5f);
+            brush_->SetColor(pal_.danger);
+            compositor_.DrawTextLayout(D2D1::Point2F(count_rect_.left, y), layout, brush_);
+            layout->Release();
+            return;
+        }
+        // Line 1: the search in words, separators faint; ellipsis on overflow.
+        float x = count_rect_.left;
+        const D2D1_RECT_F line1 = D2D1::RectF(x, top, right, top + X(18));
+        const std::wstring dot = L"\u00b7";
+        const float dot_w = Measure(dot, kF13);
+        for (size_t i = 0; i < summary_parts_.size() && x < right; ++i) {
+            if (i > 0) {
+                x += X(6);
+                if (x + dot_w > right) break;
+                Text(dot, kF13, D2D1::RectF(x, line1.top, x + dot_w, line1.bottom), pal_.text3);
+                x += dot_w + X(6);
+            }
+            x += Text(summary_parts_[i], kF13, D2D1::RectF(x, line1.top, right, line1.bottom), pal_.text);
+        }
+        // Line 2: the live count, the number in accent.
+        if (count.empty()) return;
+        const D2D1_RECT_F line2 = D2D1::RectF(count_rect_.left, top + X(19), right, top + X(35));
+        const std::wstring number = count_known_ && !count_pending_ && count_ > 0 && !danger && !content_mode_
+                                        ? GroupDigits(count_) : std::wstring();
+        const size_t at = number.empty() ? std::wstring::npos : count.find(number);
+        if (at == std::wstring::npos) {
+            Text(count, kF12, line2, danger ? pal_.danger : pal_.text3);
+            return;
+        }
+        float cx = line2.left;
+        cx += Text(count.substr(0, at), kF12, D2D1::RectF(cx, line2.top, right, line2.bottom), pal_.text3);
+        cx += Text(number, kF12b, D2D1::RectF(cx, line2.top, right, line2.bottom), pal_.accent);
+        Text(count.substr(at + number.size()), kF12, D2D1::RectF(cx, line2.top, right, line2.bottom), pal_.text3);
+    }
+
     void Render() {
         if (compositor_.NeedsRecovery()) {
             const auto now = GetTickCount64();
@@ -926,118 +1207,131 @@ private:
         painter_.SetScale(scale_);
         BeginSurface(compositor_, painter_, theme, dark_, IsHighContrast(), backdrop_, scale_);
 
-        painter_.DrawText(l10n::Get(I::AdvancedSearch), R(kPad, 12, 300, 26),
-                          compositor_.HeaderFormat(), theme.text);
+        EnsureFormats();
+        pal_ = MakePal(dark_, IsHighContrast(), theme);
+        ID2D1DeviceContext* dc = compositor_.Dc();
+        if (FAILED(dc->CreateSolidColorBrush(pal_.text, &brush_))) brush_ = nullptr;
+        if (brush_) {
+            const float s = scale_;
+            const float W = kDlgW * s;
 
-        for (const auto& pill : pills_) {
-            fluent::ButtonSpec button;
-            button.bounds = pill.bounds;
-            button.text = pill.text;
-            button.glyph = pill.glyph;
-            button.kind = fluent::ButtonKind::Toggle;
-            button.state.selected = button.state.checked = pill.selected;
-            button.state.hovered = hover_ == pill.id;
-            button.state.pressed = pressed_ == pill.id;
-            button.state.enabled = pill.enabled;
-            painter_.DrawButton(button);
-        }
-        for (const auto& row : rows_) {
-            const float h = row.bounds.bottom - row.bounds.top;
-            const float line = 18.0f * scale_;
-            painter_.DrawText(row.text, D2D1::RectF(row.bounds.left, row.bounds.top + (h - line) * 0.5f,
-                              row.bounds.right, row.bounds.top + (h + line) * 0.5f),
-                              compositor_.SmallFormat(), theme.text_secondary);
-        }
+            // Title bar: tile, title, scope, mode switch, close.
+            const D2D1_RECT_F tile = R(18, 12, 28, 28);
+            Fill(tile, X(8), pal_.accent_soft);
+            Icon(kIcoTile, 16, tile.left + X(6), tile.top + X(6), X(16), pal_.accent);
+            float x = X(56);
+            x += Text(l10n::Get(I::AdvancedSearch), kF15b, D2D1::RectF(x, 0, seg_rect_.left - X(12), X(kTitleH)),
+                      pal_.text) + X(10);
+            if (x < seg_rect_.left - X(24))
+                Text(Format(I::AdvScopeSubtitle, ScopeName()), kF13, D2D1::RectF(x, 0, seg_rect_.left - X(12), X(kTitleH)),
+                     pal_.text3);
+            Fill(seg_rect_, X(9), pal_.hover);
+            const D2D1_RECT_F on = mode_rect_[content_mode_ ? 1 : 0];
+            Fill(D2D1::RectF(on.left, on.top + X(1), on.right, on.bottom + X(1)), X(7), Hex(0x000000, dark_ ? 0.25f : 0.08f));
+            Fill(on, X(7), pal_.card);
+            Stroke(on, X(7), Alpha(pal_.text, 0.06f));
+            const I mode_labels[2] = {I::AdvModeName, I::AdvModeContent};
+            for (int i = 0; i < 2; ++i) {
+                const D2D1_RECT_F& r = mode_rect_[i];
+                const bool chosen = content_mode_ == (i == 1);
+                if (!chosen && hover_ == kHitMode + i) Fill(r, X(7), Alpha(pal_.card, 0.5f));
+                const D2D1_COLOR_F c = chosen ? pal_.text : pal_.text2;
+                if (i == 0) Icon(kIcoModeName, 16, r.left + X(12), r.top + X(7), X(14), c);
+                else Icon(kIcoModeContent, 16, r.left + X(12), r.top + X(7), X(14), c);
+                Text(l10n::Get(mode_labels[i]), kF13, D2D1::RectF(r.left + X(32), r.top, r.right, r.bottom), c);
+            }
+            const D2D1_RECT_F close = CloseRect();
+            if (hover_ == kHitClose || pressed_ == kHitClose)
+                Fill(close, X(8), pressed_ == kHitClose ? Mix(pal_.hover, pal_.text, 0.06f) : pal_.hover);
+            Icon(kIcoX, 14, close.left + X(11), close.top + X(11), X(14), pal_.text2);
 
-        auto field = [&](const D2D1_RECT_F& bounds, HWND edit, I placeholder) {
-            if (!Visible(bounds) || !edit) return;
-            fluent::TextFieldSpec spec;
-            spec.bounds = bounds;
-            spec.hosted_edit = true;
-            spec.suppress_text = !EditText(edit).empty();
-            spec.placeholder = l10n::Get(placeholder);
-            spec.leading_glyph = edit == edit_kw_ ? L"\xE721" : L"";
-            spec.state.focused = GetFocus() == edit;
-            painter_.DrawTextField(spec);
-        };
-        field(kw_rect_, edit_kw_, KeywordHint());
-        field(ext_rect_, edit_exts_, I::AdvSearchExtHint);
-        field(exclude_rect_, edit_exclude_, ExcludeHint());
-        field(name_also_rect_, edit_name_also_, I::AdvNameAlso);
+            // Fields (shared look: focus = 2 px accent line at the bottom).
+            auto field = [&](const D2D1_RECT_F& bounds, HWND edit, I placeholder) {
+                if (!Visible(bounds) || !edit) return;
+                fluent::TextFieldSpec spec;
+                spec.bounds = bounds;
+                spec.hosted_edit = true;
+                spec.suppress_text = !EditText(edit).empty();
+                spec.placeholder = l10n::Get(placeholder);
+                spec.leading_glyph = edit == edit_kw_ ? L"\xE721" : L"";
+                spec.state.focused = GetFocus() == edit;
+                painter_.DrawTextField(spec);
+            };
+            field(kw_rect_, edit_kw_, KeywordHint());
+            auto toggle = [&](const D2D1_RECT_F& r, const std::wstring& label, bool on_state, int id) {
+                if (!Visible(r)) return;
+                if (on_state) Fill(r, X(5), pal_.accent_soft);
+                else if (hover_ == id) Fill(r, X(5), pal_.hover);
+                Text(label, on_state ? kF12b : kF12, r, on_state ? pal_.accent : pal_.text2, true);
+            };
+            toggle(ww_rect_, l10n::Get(I::AdvWholeWordShort), spec_.whole_word, kHitWholeWord);
+            toggle(mc_rect_, L"Aa", spec_.case_sensitive, kHitMatchCase);
 
-        const I mode_labels[2] = {I::AdvModeName, I::AdvModeContent};
-        const wchar_t* mode_glyphs[2] = {L"\xE8D2", L"\xE8A5"};
-        for (int i = 0; i < 2; ++i) {
-            // Same toggle look as the pills: the chosen mode reads as "on", not disabled.
-            fluent::ButtonSpec segment;
-            segment.bounds = mode_rect_[i];
-            segment.text = l10n::Get(mode_labels[i]);
-            segment.glyph = mode_glyphs[i];
-            segment.kind = fluent::ButtonKind::Toggle;
-            segment.state.selected = segment.state.checked = content_mode_ == (i == 1);
-            segment.state.hovered = hover_ == kHitMode + i;
-            painter_.DrawButton(segment);
-        }
+            // "Try" chips.
+            Text(l10n::Get(I::AdvTry), kF125, try_label_rect_, pal_.text3);
 
-        painter_.DrawText(more_text_, more_rect_, compositor_.SmallFormat(),
-                          hover_ == kHitMore ? theme.text : theme.accent);
-        if (Visible(ww_rect_)) {
-            fluent::ControlState state;
-            state.checked = spec_.whole_word;
-            state.hovered = hover_ == kHitWholeWord;
-            painter_.DrawCheckBox(ww_rect_, l10n::Get(I::AdvSearchWholeWord), state);
-        }
-        if (Visible(mc_rect_)) {
-            fluent::ControlState state;
-            state.checked = spec_.case_sensitive;
-            state.hovered = hover_ == kHitMatchCase;
-            painter_.DrawCheckBox(mc_rect_, l10n::Get(I::AdvSearchMatchCase), state);
-        }
+            // Cards with hairlines between rows.
+            for (const auto& card : card_) {
+                if (!Visible(card)) continue;
+                Fill(card, X(10), pal_.card);
+                Stroke(card, X(10), pal_.line);
+            }
+            const float hair = std::max(1.0f, std::floor(s));
+            for (float y : separators_) {
+                const D2D1_RECT_F& card = Visible(card_[1]) && y > card_[1].top ? card_[1] : card_[0];
+                Fill(D2D1::RectF(card.left + hair, y - hair, card.right - hair, y), 0.0f, pal_.line2);
+            }
+            for (const auto& row : rows_) Text(row.text, kF13, row.bounds, pal_.text2);
+            for (const auto& pill : pills_) DrawPill(pill);
+            field(ext_rect_, edit_exts_, I::AdvSearchExtHint);
+            field(exclude_rect_, edit_exclude_, ExcludeHint());
+            field(name_also_rect_, edit_name_also_, I::AdvNameAlso);
 
-        // Footer band.
-        {
-            auto band = theme.text;
-            band.a = 0.04f;
-            painter_.FillRoundedRect(D2D1::RectF(0, footer_top_, kDlgW * scale_, height_px_), 0.0f, band);
-            auto line = theme.text;
-            line.a = 0.10f;
-            painter_.FillRoundedRect(D2D1::RectF(0, footer_top_, kDlgW * scale_, footer_top_ + 1.0f), 0.0f, line);
-        }
-        painter_.DrawWrappedCaption(summary_, summary_origin_,
-                                    (kDlgW - 2.0f * kPad) * scale_, theme.text);
-        bool danger = false;
-        const std::wstring count = CountLine(danger);
-        if (!count.empty()) {
-            const float line = 18.0f * scale_;
-            const float mid = (count_rect_.top + count_rect_.bottom) * 0.5f;
-            painter_.DrawText(count, D2D1::RectF(count_rect_.left, mid - line * 0.5f,
-                              count_rect_.right, mid + line * 0.5f),
-                              compositor_.SmallFormat(), danger ? theme.danger : theme.text_secondary);
-        }
+            // More options: chevron, label, and what it holds in faint text.
+            {
+                const D2D1_COLOR_F c = hover_ == kHitMore ? pal_.text : pal_.text2;
+                const float cy = (more_rect_.top + more_rect_.bottom) * 0.5f;
+                if (more_) Icon(kIcoChevDown, 12, more_rect_.left, cy - X(6), X(12), c);
+                else Icon(kIcoChevRight, 12, more_rect_.left, cy - X(6), X(12), c);
+                const float lw = Text(l10n::Get(I::AdvMore), kF13,
+                                      D2D1::RectF(more_rect_.left + X(18), more_rect_.top, more_rect_.right, more_rect_.bottom), c);
+                if (!more_sum_.empty()) {
+                    const float sum_left = more_rect_.left + X(18) + lw + X(16);
+                    const float sw = std::min(Measure(more_sum_, kF125), more_rect_.right - sum_left);
+                    if (sw > X(40))
+                        Text(more_sum_, kF125, D2D1::RectF(more_rect_.right - sw, more_rect_.top, more_rect_.right,
+                                                           more_rect_.bottom), pal_.text3);
+                }
+            }
 
-        fluent::ButtonSpec clear;
-        clear.bounds = clear_rect_;
-        clear.text = l10n::Get(I::ClearAll);
-        clear.kind = fluent::ButtonKind::Transparent;
-        clear.state.hovered = hover_ == kHitClear;
-        painter_.DrawButton(clear);
-        fluent::ButtonSpec cancel;
-        cancel.bounds = cancel_rect_;
-        cancel.text = l10n::Get(I::Cancel);
-        cancel.state.hovered = hover_ == kHitCancel;
-        painter_.DrawButton(cancel);
-        fluent::ButtonSpec search;
-        search.bounds = search_rect_;
-        search.text = l10n::Get(I::AdvSearchRun);
-        search.kind = fluent::ButtonKind::Primary;
-        search.state.hovered = hover_ == kHitSearch;
-        search.state.enabled = !scope_error_;
-        painter_.DrawButton(search);
-
-        fluent::ControlState close_state{};
-        close_state.hovered = hover_ == kHitClose;
-        close_state.pressed = pressed_ == kHitClose;
-        painter_.DrawTitleBarButton(CloseRect(), fluent::TitleBarButtonRole::Close, {}, close_state);
+            // Footer band.
+            Fill(D2D1::RectF(0, footer_top_, W, height_px_), 0.0f, pal_.sheet);
+            Fill(D2D1::RectF(0, footer_top_, W, footer_top_ + hair), 0.0f, pal_.line2);
+            DrawFooterSummary(count_rect_.right);
+            fluent::ButtonSpec clear;
+            clear.bounds = clear_rect_;
+            clear.text = l10n::Get(I::ClearAll);
+            clear.kind = fluent::ButtonKind::Transparent;
+            clear.state.hovered = hover_ == kHitClear;
+            clear.state.pressed = pressed_ == kHitClear;
+            painter_.DrawButton(clear);
+            fluent::ButtonSpec cancel;
+            cancel.bounds = cancel_rect_;
+            cancel.text = l10n::Get(I::Cancel);
+            cancel.state.hovered = hover_ == kHitCancel;
+            cancel.state.pressed = pressed_ == kHitCancel;
+            painter_.DrawButton(cancel);
+            fluent::ButtonSpec search;
+            search.bounds = search_rect_;
+            search.text = l10n::Get(I::AdvSearchRun);
+            search.kind = fluent::ButtonKind::Primary;
+            search.state.hovered = hover_ == kHitSearch;
+            search.state.pressed = pressed_ == kHitSearch;
+            search.state.enabled = !scope_error_;
+            painter_.DrawButton(search);
+            brush_->Release();
+            brush_ = nullptr;
+        }
 #ifdef PULSE_WITH_SELFTEST
         if (!snapshot_path_.empty()) {
             // A flip-chain back buffer is no longer the submitted frame after Present.
@@ -1080,6 +1374,7 @@ private:
             KillTimer(hwnd_, kRecoveryTimer);
             if (font_) { DeleteObject(font_); font_ = nullptr; }
             if (edit_brush_) { DeleteObject(edit_brush_); edit_brush_ = nullptr; }
+            ReleaseFormats();
             compositor_.Shutdown();
             done_ = true;
             return 0;
@@ -1149,8 +1444,16 @@ private:
         }
         case WM_ERASEBKGND:
             return 1;
-        case WM_NCHITTEST:
-            return BorderlessHitTest(hwnd_, lparam, 36 * scale_, CloseRect());
+        case WM_NCHITTEST: {
+            // The title bar drags, except over the close button and the mode switch.
+            const LRESULT hit = BorderlessHitTest(hwnd_, lparam, kTitleH * scale_, CloseRect());
+            if (hit == HTCAPTION) {
+                POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                ScreenToClient(hwnd_, &pt);
+                if (ContainsRect(seg_rect_, static_cast<float>(pt.x), static_cast<float>(pt.y))) return HTCLIENT;
+            }
+            return hit;
+        }
         case WM_CLOSE:
             Complete(false);
             return 0;
@@ -1180,7 +1483,10 @@ private:
             const float x = static_cast<float>(GET_X_LPARAM(lparam));
             const float y = static_cast<float>(GET_Y_LPARAM(lparam));
             HWND edit = nullptr;
-            if (ContainsRect(kw_rect_, x, y)) edit = edit_kw_;
+            const bool on_toggle = (Visible(ww_rect_) && ContainsRect(ww_rect_, x, y)) ||
+                                   (Visible(mc_rect_) && ContainsRect(mc_rect_, x, y));
+            if (on_toggle) edit = nullptr;
+            else if (ContainsRect(kw_rect_, x, y)) edit = edit_kw_;
             else if (Visible(ext_rect_) && ContainsRect(ext_rect_, x, y)) edit = edit_exts_;
             else if (Visible(exclude_rect_) && ContainsRect(exclude_rect_, x, y)) edit = edit_exclude_;
             else if (Visible(name_also_rect_) && ContainsRect(name_also_rect_, x, y)) edit = edit_name_also_;
@@ -1237,14 +1543,20 @@ private:
     std::wstring preview_;
     std::wstring counted_query_;
     std::wstring summary_;
-    std::wstring more_text_;
+    std::vector<std::wstring> summary_parts_;
+    std::wstring more_sum_;
     std::vector<Pill> pills_;
     std::vector<RowLabel> rows_;
-    D2D1_RECT_F kw_rect_{}, ext_rect_{}, exclude_rect_{}, name_also_rect_{};
-    D2D1_RECT_F mode_rect_[2]{};
+    std::vector<float> separators_;
+    D2D1_RECT_F kw_rect_{}, kw_edit_rect_{}, ext_rect_{}, exclude_rect_{}, name_also_rect_{};
+    D2D1_RECT_F seg_rect_{}, mode_rect_[2]{};
+    D2D1_RECT_F try_label_rect_{}, card_[2]{};
     D2D1_RECT_F more_rect_{}, ww_rect_{}, mc_rect_{};
     D2D1_RECT_F search_rect_{}, cancel_rect_{}, clear_rect_{}, count_rect_{};
-    D2D1_POINT_2F summary_origin_{};
+    IDWriteTextFormat* formats_[kFmtCount]{};
+    float fmt_scale_ = 0.0f;
+    ID2D1SolidColorBrush* brush_ = nullptr;
+    Pal pal_{};
     float footer_top_ = 0.0f;
     float height_px_ = 0.0f;
     size_t count_ = 0;

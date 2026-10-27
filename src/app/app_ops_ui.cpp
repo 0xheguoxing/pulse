@@ -773,7 +773,7 @@ static void ShowOperationWindow(AppState& s, const ops::OpStatus& status, bool a
         s.operationWindow->Update(status);
         s.operationWindow->SetTaskStart(s.operationUiTaskId, s.operationStartedAt);
     }
-    s.operationWindow->SetAutoClose(!s.operationPinnedByUser);
+    s.operationWindow->SetAutoClose(!s.operationPinnedByUser || status.active);
     s.operationWindow->Show(activate);
 }
 
@@ -793,7 +793,7 @@ void MoveOperationUi(AppState& from, AppState& to) {
     if (shown && EnsureOperationWindow(to)) {
         to.operationWindow->Update(to.ops.Status());
         to.operationWindow->SetTaskStart(to.operationUiTaskId, to.operationStartedAt);
-        to.operationWindow->SetAutoClose(!to.operationPinnedByUser);
+        to.operationWindow->SetAutoClose(!to.operationPinnedByUser || to.ops.Status().active);
         to.operationWindow->Show(false);
     }
 }
@@ -808,7 +808,10 @@ void PinAndShowOperationWindow(AppState& s) {
     s.operationAutoShown = true;
     s.operationWindow->Update(status);
     s.operationWindow->SetTaskStart(s.operationUiTaskId, s.operationStartedAt);
-    s.operationWindow->SetAutoClose(false);   // opened from the pill: the user closes it
+    // Opened from the pill while it runs: it closes itself after a success
+    // like any other card; opened afterwards to see the result: the user
+    // closes it.
+    s.operationWindow->SetAutoClose(status.active);
     s.operationWindow->Show(true);
 }
 

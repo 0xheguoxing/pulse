@@ -57,8 +57,8 @@ public:
     // app passes the start it recorded so 已用时间 counts from the real start.
     void SetTaskStart(uint64_t task_id, std::chrono::steady_clock::time_point started);
     // The close-button countdown after a successful finish runs only for a
-    // window the app opened itself; one the user opened from the status pill
-    // stays until they close it.
+    // window the app opened itself or one opened from the status pill while
+    // the task ran; a summary opened after the finish stays until closed.
     void SetAutoClose(bool on);
 
 private:
@@ -75,6 +75,7 @@ private:
     void TickAutoClose(ULONGLONG now);
     void BeginAutoClose();
     void FinishAutoClose();
+    void KeepOpen();
     void SampleGraph(ULONGLONG now);
     TransferFailureView FailureView() const;
 public:
@@ -100,13 +101,17 @@ private:
     void SyncGraph();
     ULONGLONG task_start_tick_ = 0;
     ULONGLONG task_end_tick_ = 0;
-    // Auto-close after a successful finish: counts down 2.5 s from the finish,
-    // held at full while the pointer is over the window.
-    static constexpr ULONGLONG kAutoCloseMs = 2500;
+    // Auto-close after a successful finish: counts down 3 s from the finish.
+    // Hovering does not hold it; a click, a key or a drag on the finished
+    // card keeps it open (kept_), and a minimized card waits.
+    static constexpr ULONGLONG kAutoCloseMs = 3000;
     static constexpr ULONGLONG kCloseAnimMs = 200;
     ULONGLONG countdown_base_ = 0;
     bool countdown_hover_ = false;
     bool auto_close_ = true;
+    bool kept_ = false;
+    // Finished while minimized: the countdown starts when it is restored.
+    bool finish_unseen_ = false;
     bool closing_ = false;
     ULONGLONG closing_tick_ = 0;
     ComPtr<IDWriteTextFormat> pct_format_;

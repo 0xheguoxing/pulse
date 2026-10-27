@@ -2400,7 +2400,6 @@ OpRemainingShort	IDS_OP_REMAINING_SHORT	3561	剩余	Remaining	剩餘
 OpAverageLead	IDS_OP_AVERAGE_LEAD	3562	平均 	Avg 	平均 
 OpTookLead	IDS_OP_TOOK_LEAD	3563	用时 	Took 	用時 
 OpPausing	IDS_OP_PAUSING	3564	正在暂停…	Pausing…	正在暫停…
-OpHoverKeepsOpen	IDS_OP_HOVER_KEEPS_OPEN	3565	鼠标停留时保持打开	Stays open while hovered	滑鼠停留時保持開啟
 OpProcessedItems	IDS_OP_PROCESSED_ITEMS	3566	已处理	Processed	已處理
 OpTransferredBytes	IDS_OP_TRANSFERRED_BYTES	3567	已传输	Transferred	已傳輸
 OpAverageSpeed	IDS_OP_AVERAGE_SPEED	3568	平均速度	Average speed	平均速度
@@ -4326,3 +4325,7 @@ SettingsTreeSticky	IDS_SETTINGS_TREE_STICKY	5525	滚动时固定上级文件夹	
 SettingsTreeStickyDesc	IDS_SETTINGS_TREE_STICKY_DESC	5526	展开的文件夹滚出顶部时停在列表上方	Expanded folders stay at the top of the list as you scroll past	展開的資料夾捲出頂端時停在清單上方
 FavoritesBarMoveToBar	IDS_FAVORITES_BAR_MOVE_TO_BAR	5527	改成横向收藏栏	Show favorites as a bar	改成橫向收藏列
 FavoritesBarMoveToSidebar	IDS_FAVORITES_BAR_MOVE_TO_SIDEBAR	5528	放回侧边栏	Back to the sidebar	放回側邊欄
+AdvScopeSubtitle	IDS_ADV_SCOPE_SUBTITLE	5529	在 %s 中查找	Looking in %s	在 %s 中尋找
+AdvTry	IDS_ADV_TRY	5530	试试	Try	試試
+AdvWholeWordShort	IDS_ADV_WHOLE_WORD_SHORT	5531	全字	Whole word	全字
+AdvLabelValueFormat	IDS_ADV_LABEL_VALUE_FORMAT	5532	%s：%s	%s: %s	%s：%s

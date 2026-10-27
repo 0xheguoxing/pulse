@@ -31,6 +31,8 @@ constexpr wchar_t kConflictClass[] = L"PulseFileConflictWindow";
 constexpr wchar_t kDeleteClass[] = L"PulsePermanentDeleteWindow";
 constexpr wchar_t kLockedClass[] = L"PulseLockedItemWindow";
 constexpr UINT_PTR kRenderTimer = 1;
+// Hides the card when its exit zoom ends, whatever the render timer does.
+constexpr UINT_PTR kCloseTimer = 6;
 // Progress card, pulse_ops_dialogs.html §1 (DIPs). The footer stays anchored
 // to the bottom edge; everything above it is laid out from the top.
 constexpr float kDlgW = 468.0f;
@@ -2556,6 +2558,8 @@ void FileOperationWindow::Update(const ops::OpStatus& incoming) {
         task_start_tick_ = now;
         task_end_tick_ = 0;
         countdown_base_ = 0;
+        kept_ = false;
+        finish_unseen_ = false;
     }
     const bool finished = !status_.active &&
         (status_.phase == ops::OpPhase::Completed || status_.phase == ops::OpPhase::Failed);
@@ -2566,10 +2570,14 @@ void FileOperationWindow::Update(const ops::OpStatus& incoming) {
     // The countdown starts only when the finish happens in front of the user
     // in a window the app opened (SetAutoClose); a summary opened from the
     // pill stays until closed.
-    if (!succeeded || !auto_close_) countdown_base_ = 0;
-    else if (countdown_base_ == 0 && !was_succeeded && !closing_ && hwnd_ &&
-             IsWindowVisible(hwnd_) && !IsIconic(hwnd_))
-        countdown_base_ = now;
+    if (!succeeded || !auto_close_ || kept_) {
+        countdown_base_ = 0;
+        finish_unseen_ = false;
+    } else if (countdown_base_ == 0 && !was_succeeded && !closing_ && hwnd_ &&
+               IsWindowVisible(hwnd_)) {
+        if (IsIconic(hwnd_)) finish_unseen_ = true;
+        else countdown_base_ = now;
+    }
     if (!hwnd_) return;
     if (status_.authorization != ops::AuthorizationState::None) {
         RECT rect{};
@@ -2698,13 +2706,9 @@ void FileOperationWindow::TickAutoClose(ULONGLONG now) {
         if (now - closing_tick_ >= kCloseAnimMs) FinishAutoClose();
         return;
     }
-    // Hovering (or holding a button) keeps the card: the countdown restarts
-    // from the full 2.5 s once the pointer leaves.
-    POINT cursor{};
-    RECT window{};
-    const bool inside = GetCursorPos(&cursor) && GetWindowRect(hwnd_, &window) &&
-                        PtInRect(&window, cursor);
-    countdown_hover_ = inside || pressed_ != 0 || IsIconic(hwnd_);
+    // Hovering does not hold the card (an untouched card closes itself); a
+    // button held down or a minimized card restarts the countdown.
+    countdown_hover_ = pressed_ != 0 || IsIconic(hwnd_);
     if (countdown_hover_) countdown_base_ = now;
     if (now - countdown_base_ >= kAutoCloseMs) {
         BeginAutoClose();
@@ -2721,8 +2725,14 @@ void FileOperationWindow::BeginAutoClose() {
     // card opaque first so it leaves as one piece.
     const DWORD none = DWMSBT_NONE;
     DwmSetWindowAttribute(hwnd_, DWMWA_SYSTEMBACKDROP_TYPE, &none, sizeof(none));
+    // Without the backdrop, the frame extended over the client area is an
+    // opaque DWM sheet that stayed behind the shrinking card as a blank
+    // window. Without it the window is clear where the card is not.
+    const MARGINS flat{ 0, 0, 0, 0 };
+    DwmExtendFrameIntoClientArea(hwnd_, &flat);
     backdrop_enabled_ = false;
     Render();
+    SetTimer(hwnd_, kCloseTimer, static_cast<UINT>(kCloseAnimMs), nullptr);
     // Toward the bottom-right, where the status pill sits.
     if (!compositor_.PlayZoom(static_cast<float>(compositor_.Width()),
                               static_cast<float>(compositor_.Height()), false,
@@ -2731,12 +2741,26 @@ void FileOperationWindow::BeginAutoClose() {
 }
 
 void FileOperationWindow::FinishAutoClose() {
+    if (hwnd_) KillTimer(hwnd_, kCloseTimer);
+    if (!closing_) return;
     closing_ = false;
     countdown_base_ = 0;
     if (callbacks_.dismiss) callbacks_.dismiss();
     if (hwnd_) ShowWindow(hwnd_, SW_HIDE);
     compositor_.ClearZoom();
     ApplyWindowTheme();
+}
+
+// A click, key or drag on the finished card: the user is looking at it, so
+// it stays until they close it.
+void FileOperationWindow::KeepOpen() {
+    if (closing_ || kept_ || status_.active) return;
+    if (status_.phase != ops::OpPhase::Completed && status_.phase != ops::OpPhase::Failed) return;
+    kept_ = true;
+    finish_unseen_ = false;
+    if (countdown_base_ == 0) return;
+    countdown_base_ = 0;
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void FileOperationWindow::SampleGraph(ULONGLONG now) {
@@ -2786,7 +2810,6 @@ void FileOperationWindow::Render() {
     const float width = static_cast<float>(compositor_.Width());
     const float height = static_cast<float>(compositor_.Height());
     const float dip_w = width / std::max(s, 0.001f);
-    const float dip_h = height / std::max(s, 0.001f);
     const float content_w = dip_w - kPadX * 2.0f;
     auto* factory = compositor_.DwriteFactory();
     const auto labels = MakeTransferLabels(status_, detailed_, FailureView());
@@ -3112,6 +3135,13 @@ void FileOperationWindow::Render() {
                 const float y = bottom - (bottom - top) * static_cast<float>(graph_.points[i].v / ceiling);
                 points.push_back(D2D1::Point2F(x, y));
             }
+            // The pointer follows the percent every frame, the samples only
+            // every 250 ms: carry the curve flat to the pointer so the live
+            // dot rides on it instead of trailing behind.
+            if (graph_.by_progress && !completed && status_.percent >= 0.0f) {
+                const float head = inner.left + plot_w * shown_fraction;
+                if (head > points.back().x + 0.5f) points.push_back(D2D1::Point2F(head, points.back().y));
+            }
             const float strength = (paused || waiting || failed) ? 0.55f : 1.0f;
             DrawSpeedArea(dc, inner, points, tone, strength, s);
             ComPtr<ID2D1SolidColorBrush> dot_brush;
@@ -3352,13 +3382,6 @@ void FileOperationWindow::Render() {
     detail_state.pressed = pressed_ == 5;
     if (labels.show_details) painter_.DrawButton({ chrome.details, labels.details,
         detailed_ ? L"\xE70E" : L"\xE70D", fluent::ButtonKind::Transparent, detail_state });
-    if (counting && countdown_hover_ && !closing_) {
-        const float hint_x = labels.show_details ? chrome.details.right / s + 6.0f : kPadX;
-        const float hint_right = chrome.cancel.left / s - 8.0f;
-        DrawEllipsizedText(compositor_, label_format_.get(),
-            Rect(s, hint_x, dip_h - kFooterH, hint_right - hint_x, kFooterH),
-            l10n::Get(l10n::StringId::OpHoverKeepsOpen), faint);
-    }
     if (labels.show_pause) {
         fluent::ControlState pause_state{};
         pause_state.enabled = status_.active && !failed && !cancelling && !waiting;
@@ -3451,8 +3474,20 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
     case WM_SIZE:
         if (compositor_.Dc() && wparam != SIZE_MINIMIZED)
             compositor_.Resize(LOWORD(lparam), HIWORD(lparam));
+        if (wparam == SIZE_RESTORED && finish_unseen_) {
+            // Finished while minimized: count down now that it is seen.
+            finish_unseen_ = false;
+            if (auto_close_ && !kept_ && !closing_ && !status_.active &&
+                status_.phase == ops::OpPhase::Completed && status_.last_error.empty()) {
+                countdown_base_ = GetTickCount64();
+                SetTimer(hwnd_, kRenderTimer, 33, nullptr);
+            }
+        }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+    case WM_ENTERSIZEMOVE:
+        KeepOpen();
+        break;
     case WM_MOVE:
         compositor_.UpdateTextRenderingParams(
             MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
@@ -3471,6 +3506,10 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
     case WM_TIMER:
         if (wparam == kRenderTimer && !IsWindowVisible(hwnd_)) {
             KillTimer(hwnd_, kRenderTimer);
+            return 0;
+        }
+        if (wparam == kCloseTimer) {
+            FinishAutoClose();
             return 0;
         }
         if (wparam == kRenderTimer && has_held_status_ && GetTickCount64() >= hold_until_) {
@@ -3516,9 +3555,14 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
         hover_ = 0;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
+    case WM_RBUTTONDOWN:
+        KeepOpen();
+        return 0;
     case WM_LBUTTONDOWN:
         pressed_ = HitTestControl(static_cast<float>(GET_X_LPARAM(lparam)),
                                   static_cast<float>(GET_Y_LPARAM(lparam)));
+        // Closing (1) and minimizing (2) are not a reason to keep the card.
+        if (pressed_ != 1 && pressed_ != 2) KeepOpen();
         SetCapture(hwnd_);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
@@ -3567,6 +3611,7 @@ LRESULT FileOperationWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM l
             RequestClose();
             return 0;
         }
+        KeepOpen();
         break;
     case WM_CLOSE:
         RequestClose();
