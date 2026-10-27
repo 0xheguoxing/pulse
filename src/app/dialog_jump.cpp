@@ -14,7 +14,6 @@
 #include <dwmapi.h>
 #include <dwrite_2.h>
 #include <objbase.h>
-#include <shellscalingapi.h>
 #include <uxtheme.h>
 #include <windowsx.h>
 #include <wrl/client.h>
@@ -899,7 +898,13 @@ void DialogJump::Impl::Place() {
         GetWindowRect(dlg.dialog, &frame);
     const HMONITOR monitor = MonitorFromRect(&frame, MONITOR_DEFAULTTONEAREST);
     UINT dpi_x = 96, dpi_y = 96;
-    GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y);
+    // shcore is loaded at run time: a static import breaks the Windows 8.1 startup guard.
+    using MonitorDpi = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+    if (const HMODULE shcore = LoadLibraryW(L"shcore.dll")) {
+        if (const auto dpi = reinterpret_cast<MonitorDpi>(GetProcAddress(shcore, "GetDpiForMonitor")))
+            if (FAILED(dpi(monitor, 0, &dpi_x, &dpi_y))) dpi_x = dpi_y = 96;
+        FreeLibrary(shcore);
+    }
     MONITORINFO mi{sizeof(mi)};
     GetMonitorInfoW(monitor, &mi);
     const float new_scale = static_cast<float>(dpi_x) / 96.0f;
