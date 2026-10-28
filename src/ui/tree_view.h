@@ -57,6 +57,10 @@ public:
     bool ClearCurrent();
     std::wstring CurrentValue() const;  // Ctrl+C: scalar text or the subtree
     std::wstring CurrentPath() const;   // Ctrl+Shift+C: $.a[3] / /root/item[2]
+    std::wstring CurrentType() const;   // object / array / string / number / boolean / null
+    // Footer chips: unfold every container, or fold all but the top level.
+    bool AnyCollapsed() const noexcept;
+    void ExpandAll(bool expand);
 
 private:
     struct Node {

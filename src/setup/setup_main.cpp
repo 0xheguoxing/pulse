@@ -19,6 +19,7 @@
 #include "setup_strings.h"
 #include "setup_ui.h"
 #include "setup_uninstall.h"
+#include "../common/os_version.h"
 
 using namespace pulse::setup;
 
@@ -144,12 +145,19 @@ int RunUninstaller(const Options& o, const std::wstring& self) {
     return code;
 }
 
-// GetVersionEx lies without a manifest entry; RtlGetVersion does not.
+// The kernel's build, not RtlGetVersion's: a compatibility layer on this file
+// (属性 > 兼容性, or one inherited through __COMPAT_LAYER) made Windows 11 24H2
+// report an old build and the Windows 10 gate refuse it. Unknown = no gate.
 DWORD WindowsBuild() {
-    using Fn = LONG(WINAPI*)(OSVERSIONINFOW*);
-    OSVERSIONINFOW vi{sizeof(vi)};
-    const auto fn = reinterpret_cast<Fn>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
-    return fn && fn(&vi) == 0 ? vi.dwBuildNumber : 0xFFFFFFFF;
+    const uint32_t reported = pulse::os::ReportedWindowsBuild();
+    const uint32_t build = pulse::os::TrueWindowsBuild();
+    if (reported != build) {
+        wchar_t layer[512]{};
+        const DWORD n = GetEnvironmentVariableW(L"__COMPAT_LAYER", layer, ARRAYSIZE(layer));
+        Log(L"Compatibility layer: reported build " + std::to_wstring(reported) + L", real build " +
+            std::to_wstring(build) + L", __COMPAT_LAYER=" + (n > 0 && n < ARRAYSIZE(layer) ? layer : L"(none)"));
+    }
+    return build ? build : 0xFFFFFFFF;
 }
 
 }  // namespace

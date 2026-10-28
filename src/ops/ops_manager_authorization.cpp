@@ -27,7 +27,7 @@ AuthorizationChoice OpsManager::WaitForAuthorization(uint64_t task_id,
         status.phase = OpPhase::Running;
         status.last_error = error;
         status.current_item = source;
-        status.summary = l10n::Pick(L"需要管理员权限", L"Administrator permission required");
+        status.summary = l10n::Get(l10n::StringId::AdministratorPermissionRequired).c_str();
         status.bytes_per_second = 0;
         status.eta_seconds = 0;
     });

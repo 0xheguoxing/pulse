@@ -7,9 +7,9 @@
 #pragma once
 #include "../ui/fluent_menu.h"
 #include "../ui/view_layout.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "context_menu_prefs.h"
-#include "../index/index_engine.h"
+#include "../index/index_types.h"
 #include <string>
 
 namespace pulse::app {
@@ -63,8 +63,9 @@ enum MenuCmd : int {
     CmdSettings,            // palette / title-bar gear → settings tab
     CmdSettingsContextMenu, // 管理右键项… → 右键菜单 page
     CmdTags,
-    CmdTagBase = 70,        // +0..6  Ctrl+Alt+Shift+1..7
+    CmdTagBase = 70,        // + favorite slot - 1 (Alt+1..9)
     CmdViewBase = 80,       // + ViewModeIndex (8 stable view choices)
+    CmdViewWall = 88,       // view menu: photo wall (the icon view arranged as a wall)
     CmdTabColorBase = 90,   // +0..7  tab-group color swatches
     CmdTabGroupNewTab = 98,
     CmdTabGroupUngroup,
@@ -122,8 +123,21 @@ enum MenuCmd : int {
     CmdUnlockDrive = 3902,      // BitLocker-locked drive: 解锁
     CmdMapNetworkDrive = 3903,  // a share, or This PC background: 映射网络驱动器
     CmdUnpinNetwork = 3904,     // Network view: remove the selected pins
+    CmdCompressZip = 3905,      // toolbar 压缩: the selection into a .zip beside it
+    CmdToggleFolderSizes = 3906, // toolbar 文件夹大小: size folders on their own (AppPrefs::folder_size_auto)
+    CmdStageToTray = 3907,      // 加入暂存区 (Ctrl+Shift+S): the selection onto the staging tray
+    CmdCloudKeep = 3908,        // Cloud Files selection: 始终保留在此设备上 (fs/cloud_pin.h)
+    CmdCloudFree = 3909,        // Cloud Files selection: 释放空间
     CmdGroupIntoFolder = 3910,  // 2+ items: 合并到文件夹 (macOS New Folder with Selection)
     CmdDissolveFolder = 3911,   // folders only: 解散文件夹 (contents up one level, folder removed)
+    CmdSetAlias = 3912,         // one item: 设置别名… (Shift+F2)
+    CmdAliasDisplayBase = 3913, // 查看 menu: +AliasDisplay (别名 + 原名 / 只显示别名 / 显示原名)
+    CmdManageAliases = 3916,    // 查看 menu: 管理别名… (list, remove, export, import)
+    CmdExportAliases = 3917,
+    CmdImportAliases = 3918,
+    CmdAliasBase = 3920,        // omnibar: +0..15 aliased folders matching the query
+    CmdAliasOpenBase = 3940,    // 管理别名: +0..29 open the item
+    CmdAliasRemoveBase = 3970,  // 管理别名: +0..29 remove the alias (row's trailing ×)
     CmdIndexBase = 1000,
     // Explorer integration (优化.md §7): registry static verbs bound to the
     // current selection (+index into the StaticVerb list) and pulse_shell
@@ -137,6 +151,20 @@ enum MenuCmd : int {
     // and 固定到工具栏 ▸ <suggested app> (+ index into the suggestions listed).
     CmdToolbarAppBase = 5100,
     CmdToolbarPinAppBase = 5120,
+    // Toolbar toggle tools (toolbar_tools.h): + index into kToolbarToolIds.
+    CmdToolbarToolBase = 5160,
+    // New menu ▸ 「新建」按钮的主操作: + AppPrefs::toolbar_new_primary (0..2).
+    CmdNewPrimaryBase = 5180,
+    // Network page (app_network_page.h): 连接服务器 and its ▾ menu, 最近访问.
+    CmdConnectServer = 5190,
+    CmdForgetNetworkRecent = 5191,
+    CmdAddNetworkPlace = 5192,
+    CmdLanRescan = 5193,
+    CmdNetworkSharingSettings = 5194,
+    CmdRenameNetwork = 5195,             // a pinned network location's display name
+    CmdNetworkClearRecent = 5196,        // ⋯ 清除最近访问
+    CmdNetworkHiddenShares = 5197,       // ⋯ 显示隐藏共享 (toggle)
+    CmdNetworkDiscoverySettings = 5198,  // ⋯ 局域网发现设置… (Settings → 文件操作)
     CmdShellStaticBase = 6000,
     CmdShellComBase = 8000,
 };
@@ -237,6 +265,7 @@ struct BackgroundViewOptions {
     ui::SortColumn sort_column = ui::SortColumn::Name;
     ui::SortDirection sort_direction = ui::SortDirection::Asc;
     int folder_sort = 0; // 0 folders first, 1 follow direction, 2 mixed
+    bool wall = false;   // the icon view is a photo wall
     bool details_panel = false;
     bool can_sort = true;
     bool indexed_search = false;
@@ -268,9 +297,11 @@ std::vector<ui::FluentMenuItem> BuildBreadcrumbMenu(bool filesystem);
 // Split-button layout presets.
 std::vector<ui::FluentMenuItem> BuildSplitMenu(int current_preset);
 // can_apply_all: real folder, offer "apply view and sort to all folders".
+// wall: the icon view is a photo wall (its row is the checked one).
 std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode,
                                               bool details_panel = false,
-                                              bool can_apply_all = false);
+                                              bool can_apply_all = false,
+                                              bool wall = false);
 
 // Ctrl+K / address omnibar: verbs + index hits + recent folders at the end.
 struct OmnibarQuery {
@@ -283,8 +314,11 @@ struct OmnibarQuery {
 OmnibarQuery ParseOmnibarQuery(const std::wstring& query, bool project_only = false);
 bool LooksLikeFilesystemPath(const std::wstring& text);
 
-std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::vector<std::wstring>& recent_paths);
+// `commands` are the action registry's rows for the query
+// (actions::PaletteRows); they lead, then index hits and recent folders.
+// Command mode ("> ...") lists the commands only.
 std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
+                                                    std::vector<ui::FluentMenuItem> commands,
                                                     const std::vector<std::wstring>& recent_paths,
                                                     const std::vector<index::Hit>& hits,
                                                     bool project_only,

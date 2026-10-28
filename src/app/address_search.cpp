@@ -4,8 +4,16 @@
 #include "search_query.h"
 #include "../common/localization.h"
 #include "../ui/address_search_layout.h"
+#include "../index/content_config_storage.h"
+#include "../common/text_format.h"
+#include "app_prompts.h"
+#include "content_scope_mode.h"
+#include "content_pack_ui.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <thread>
 
 namespace pulse {
 
@@ -13,6 +21,60 @@ bool IsAddressSearchResults(const app::Tab* tab) {
     std::wstring kind;
     return tab && app::ParsePulsePath(tab->current_path, &kind, nullptr) && kind == L"search";
 }
+
+namespace {
+// Code-side Chinese, converted for the zh-TW UI phrase by phrase.
+std::wstring Zh(const wchar_t* chinese, const wchar_t* english) {
+    return l10n::IsChinese() ? l10n::HantText(chinese) : std::wstring(english);
+}
+
+// Removes the pre-Instant content-v1.sqlite once per process
+// (app::DeleteLegacyContentDatabase). The delete runs on a worker so a
+// multi-GB file never stalls the window; the next tick reports it. A database
+// still open elsewhere is left for the next launch.
+struct LegacyContentCleanupState {
+    enum Stage : int { Idle, Running, Finished, Done };
+    std::atomic<int> stage{Idle};
+    app::LegacyContentCleanup result;
+};
+LegacyContentCleanupState& LegacyContentCleanup() {
+    static LegacyContentCleanupState state;
+    return state;
+}
+void TickLegacyContentCleanup(AppState& s) {
+    auto& state = LegacyContentCleanup();
+    const int stage = state.stage.load(std::memory_order_acquire);
+    if (stage == LegacyContentCleanupState::Idle) {
+        if (!s.contentSearch.ConfigurationReady()) return;
+        int expected = LegacyContentCleanupState::Idle;
+        if (!state.stage.compare_exchange_strong(expected, LegacyContentCleanupState::Running)) return;
+        const auto database = index::config_storage::DatabasePath();
+        index::ContentIndexConfig stored;
+        // Instant mode keeps its folders in .config beside the database; only
+        // delete the database once that file is there.
+        if (database.empty() || GetFileAttributesW(database.c_str()) == INVALID_FILE_ATTRIBUTES ||
+            !index::config_storage::ReadConfigFile(database, stored)) {
+            state.stage.store(LegacyContentCleanupState::Done, std::memory_order_release);
+            return;
+        }
+        std::thread([database] {
+            auto& worker = LegacyContentCleanup();
+            worker.result = app::DeleteLegacyContentDatabase(database);
+            worker.stage.store(LegacyContentCleanupState::Finished, std::memory_order_release);
+        }).detach();
+        return;
+    }
+    if (stage != LegacyContentCleanupState::Finished) return;
+    state.stage.store(LegacyContentCleanupState::Done, std::memory_order_release);
+    if (!state.result.deleted) return;
+    const auto size = format::ByteSize(state.result.bytes);
+    std::wstring message = Zh(L"已删除旧版本留下的内容索引数据库，释放了 ", L"Deleted the content index database left by an older version and freed ");
+    message += size;
+    message += Zh(L"。内容搜索现在直接读取文件，不再需要它。", L". Content search now reads files directly and no longer needs it.");
+    s.notification_toast.SetKind(ui::fluent::InfoBarKind::Success);
+    s.notification_toast.Show(s.hwnd, Zh(L"已清理旧的内容索引", L"Old content index removed"), std::move(message));
+}
+} // namespace
 
 static std::wstring SearchOrigin(const app::Tab& tab) {
     if (tab.search_origin_valid) return tab.search_origin_path;
@@ -104,6 +166,7 @@ void ExitAddressSearch(AppState& s) {
 }
 
 void ShowAddressSearch(AppState& s) {
+    if (!s.appPrefs.search_enabled) return;   // search off: only the folder filter remains
     if (s.addressSearching && s.hwndAddressEdit) {
         SetForegroundWindow(GetAncestor(s.hwndAddressEdit, GA_ROOT));
         SetFocus(s.hwndAddressEdit);
@@ -187,6 +250,7 @@ void FocusSearchResults(AppState& s, bool select_first) {
 }
 
 void BeginSearchEditAt(AppState& s, int x, int y) {
+    if (!s.appPrefs.search_enabled) return;
     ShowAddressSearch(s);
     if (!s.addressSearching || !s.hwndAddressEdit) return;
     POINT point{x, y};
@@ -206,6 +270,19 @@ void SwitchAddressSearchMode(AppState& s, bool content) {
     if (!s.addressSearching) ShowAddressSearch(s);
     if (s.addressSearchContent == content) return;
     if (s.searchHistoryOpen && s.menu) s.menu->Dismiss();
+    // First switch to content search: where unscoped searches look. Closing
+    // the prompt keeps the default (user folders) and asks again next time.
+    if (content && !s.isolatedTest && s.appPrefs.content_scope == 0) {
+        const int scope = AskContentScope(s);
+        if (scope) {
+            s.appPrefs.content_scope = scope;
+            s.appPrefs.Save();
+            app::SetContentScopeMode(scope);
+        }
+        if (s.hwndAddressEdit) SetFocus(s.hwndAddressEdit);
+    }
+    // Content search comes in the enhancement pack; offer it once per run here.
+    if (content && !s.isolatedTest) OfferContentPack(s, true);
     s.addressSearchContent = content;
     const auto& cue = l10n::Get(content ? l10n::StringId::SearchContentHint : l10n::StringId::SearchNameHint);
     SendMessageW(s.hwndAddressEdit, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(cue.c_str()));
@@ -247,6 +324,8 @@ void SubmitAddressSearch(AppState& s, bool live) {
     const auto first = query.find_first_not_of(L" \t\r\n");
     s.addressLiveDue = 0;
     if (s.addressSearchComposing) return;
+    // Enter in content search without the pack: ask (again) for the download.
+    if (!live && s.addressSearchContent) OfferContentPack(s);
     if (first == std::wstring::npos) {
         if ((!live || !IsAddressSearchResults(tab)) && !s.addressSearchContent) return;
         query.clear();
@@ -383,7 +462,7 @@ void ShowAddressSearchScope(AppState& s) {
     const int command = s.menu->TrackPopup(anchor, std::move(items));
     if (command == 3) {
         std::wstring chosen;
-        if (PickFolder(s, chosen, l10n::Get(l10n::StringId::SearchChooseScope).c_str())) {
+        if (PickFolder(s, chosen, l10n::Get(l10n::StringId::SearchChooseScope).c_str(), L"search_scope")) {
             s.addressSearchRoot = chosen;
             s.addressSearchCurrent = true;
             QueueAddressSearch(s);
@@ -403,6 +482,7 @@ void ShowAddressSearchScope(AppState& s) {
 
 bool TickAddressSearch(AppState& s, ULONGLONG now) {
     bool searched = false;
+    app::SetContentScopeMode(s.appPrefs.content_scope);
     if (s.searchOptionsPending && !s.searchHistoryOpen && (!s.menu || !s.menu->IsOpen())) {
         s.searchOptionsPending = false;
         ShowSearchOptions(s);
@@ -420,6 +500,7 @@ bool TickAddressSearch(AppState& s, ULONGLONG now) {
             index::content::PutConfig(new_scope, shared);
             if (old_scope.data() != new_scope.data()) s.contentSearch.Configure(shared);
         }
+        if (!s.isolatedTest) TickLegacyContentCleanup(s);
         const auto status = ContentIndexStatusText(s);
         if (status != s.contentStatusText) {
             s.contentStatusText = status;
@@ -455,6 +536,21 @@ bool TickAddressSearch(AppState& s, ULONGLONG now) {
                     searched |= tab->banner_title != title || tab->banner_message != status;
                     tab->banner_title = title;
                     tab->banner_message = status;
+                }
+            }
+            // Instant mode has no index revision to trigger a retry when a
+            // disabled drive becomes part of the shared scope again.
+            if (!tab->search_content_stopped && !tab->search_content_active &&
+                !s.addressLiveDue && s.renameIndex < 0 &&
+                (tab->banner_title == l10n::Get(l10n::StringId::ContentIndexNotCovered) ||
+                 tab->banner_title == l10n::Get(l10n::StringId::ContentIndexEmpty))) {
+                index::ContentSearchRequest scope_request;
+                scope_request.root = app::SplitSearchQueryText(rest).path_prefix;
+                if (!index::ContentTaskRoots(s.contentSearch.GetConfig(), scope_request).empty()) {
+                    RequestSearchPage(s, *tab, rest, true);
+                    content_busy = tab->search_content_active;
+                    searched = true;
+                    return;
                 }
             }
             if (tab->search_content_stopped || tab->content_subscription_error || s.contentSearch.InstantMode() || !progress.revision || tab->search_index_revision == progress.revision ||

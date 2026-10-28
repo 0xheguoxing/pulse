@@ -3,6 +3,8 @@
 #include <shlobj.h>
 #include <wrl/client.h>
 #include "../common/path_utils.h"
+#include "../common/current_user_security.h"
+#include "../common/recycle_index.h"
 #include <shellapi.h>
 #include <sherrors.h>
 #include <filesystem>
@@ -59,6 +61,27 @@ HRESULT FindRecycledFixture(const std::filesystem::path& original, ComPtr<IShell
     }
     return found ? S_OK : HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
 }
+// The Shell's restore leaves the item's $I record behind (still there seconds
+// later), so every run added one to the user's Recycle Bin folder. Remove only
+// this fixture's record, and only once its payload is gone.
+void RemoveOrphanFixtureIndex(const std::filesystem::path& original) {
+    const std::wstring text = original.wstring();
+    const std::wstring sid = pulse::CurrentUserSidString();
+    if (sid.empty() || text.size() < 3 || text[1] != L':') return;
+    const std::wstring bin = text.substr(0, 2) + L"\\$Recycle.Bin\\" + sid;
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileW((bin + L"\\$I*").c_str(), &data);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring index = bin + L"\\" + data.cFileName;
+        pulse::recycle::IndexRecord record;
+        if (!pulse::recycle::ReadIndex(index, record) || !pulse::path::EqualInsensitive(record.original_path, text)) continue;
+        std::wstring payload = index;
+        payload[bin.size() + 2] = L'R';
+        if (GetFileAttributesW(payload.c_str()) == INVALID_FILE_ATTRIBUTES) DeleteFileW(index.c_str());
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
 int RestoreExistingFixture(const std::filesystem::path& original) {
     if (!original.parent_path().filename().wstring().starts_with(L"pulse_recycle_fixture_{") ||
         original.filename() != L"unique_roundtrip_item" || std::filesystem::exists(original)) return 2;
@@ -77,6 +100,7 @@ int RestoreExistingFixture(const std::filesystem::path& original) {
     }
     std::wcerr << L"restore exact fixture hr=0x" << std::hex << static_cast<unsigned long>(hr) << std::dec << L" exists=" << std::filesystem::exists(original) << L"\n";
     if (SUCCEEDED(hr) && std::filesystem::exists(original)) {
+        RemoveOrphanFixtureIndex(original);
         std::filesystem::remove_all(original.parent_path());
         return 0;
     }
@@ -126,6 +150,7 @@ int RecycleRoundTrip(bool directory = false) {
     }
     // Never clear the bin. Only remove this unique directory after the fixture
     // was restored or never left it; an unsuccessful restore stays recoverable.
+    if (restored) RemoveOrphanFixtureIndex(original);
     if (restored || std::filesystem::exists(original)) std::filesystem::remove_all(root);
     return deleted && restored ? 0 : 1;
 }
@@ -164,6 +189,93 @@ int wmain(int argc, wchar_t** argv) {
         const bool folder_deleted = SUCCEEDED(result.hr) && result.sources.size() == 1 && result.destinations.empty() && !std::filesystem::exists(root / L"folder");
         if (!folder_deleted) std::cerr << "folder delete hr=0x" << std::hex << static_cast<unsigned long>(result.hr) << std::dec << " successes=" << result.sources.size() << " mutated=" << result.mutated << " cancelled=" << result.cancelled << " folder_exists=" << std::filesystem::exists(root / L"folder") << '\n';
         check(folder_deleted, "permanent folder deletion reports completed root");
+        // A recycle asks the cached folder for each name instead of parsing
+        // the full path; both must name the very same Shell item, including
+        // files the Shell treats specially (links, archives, Internet
+        // shortcuts). Nothing here is deleted.
+        {
+            const auto names_root = root / L"names";
+            std::filesystem::create_directories(names_root / L"sub folder");
+            const wchar_t* names[] = {L"plain.txt", L"with space.txt", L".hidden", L"noext", L"archive.zip",
+                                      L"shortcut.lnk", L"site.url", L"照片 2026.jpg", L"sub folder",
+                                      L"a.b.c.d.txt", L"UPPER.TXT"};
+            for (const wchar_t* name : names) {
+                if (std::wstring(name) == L"sub folder") continue;
+                std::ofstream file(names_root / name, std::ios::binary);
+                if (std::wstring(name) == L"site.url") file << "[InternetShortcut]\r\nURL=https://example.com/\r\n";
+                else file << "name fixture";
+            }
+            ComPtr<IShellItem> folder;
+            HRESULT hr = pulse::ops::CreateItemForPath(names_root.wstring(), nullptr, &folder);
+            bool same = SUCCEEDED(hr) && folder;
+            for (const wchar_t* name : names) {
+                if (!same) break;
+                const std::wstring path = (names_root / name).wstring();
+                ComPtr<IShellItem> relative, parsed;
+                const HRESULT relative_hr = pulse::ops::CreateItemForPath(path, folder.Get(), &relative);
+                const HRESULT parsed_hr = SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&parsed));
+                int order = 1;
+                PWSTR relative_path = nullptr, parsed_path = nullptr;
+                const bool ok = SUCCEEDED(relative_hr) && SUCCEEDED(parsed_hr) &&
+                    SUCCEEDED(relative->Compare(parsed.Get(), SICHINT_CANONICAL, &order)) && order == 0 &&
+                    SUCCEEDED(relative->GetDisplayName(SIGDN_FILESYSPATH, &relative_path)) &&
+                    SUCCEEDED(parsed->GetDisplayName(SIGDN_FILESYSPATH, &parsed_path)) &&
+                    std::wstring(relative_path) == std::wstring(parsed_path) && std::wstring(relative_path) == path;
+                if (!ok) std::wcerr << L"item mismatch: " << path << L" relative_hr=0x" << std::hex
+                                    << static_cast<unsigned long>(relative_hr) << std::dec << L" order=" << order << L'\n';
+                CoTaskMemFree(relative_path); CoTaskMemFree(parsed_path);
+                same = ok;
+            }
+            check(same, "an item asked from its folder by name is the item parsed from its full path");
+            ComPtr<IShellItem> missing;
+            check(FAILED(pulse::ops::CreateItemForPath((names_root / L"absent.txt").wstring(), folder.Get(), &missing)) && !missing,
+                  "a name the folder does not have yields no item");
+            // Names the folder is not asked for still resolve, by full path.
+            ComPtr<IShellItem> extended, root_item;
+            check(SUCCEEDED(pulse::ops::CreateItemForPath(L"\\\\?\\" + (names_root / L"plain.txt").wstring(), folder.Get(), &extended)) &&
+                  SUCCEEDED(pulse::ops::CreateItemForPath(names_root.root_path().wstring(), folder.Get(), &root_item)),
+                  "an extended path and a drive root are parsed whole");
+            bool every_file_kept = true;
+            for (const wchar_t* name : names) every_file_kept = every_file_kept && std::filesystem::exists(names_root / name);
+            check(every_file_kept, "creating items touches no file");
+        }
+        // The bin's limits are judged before anything is touched.
+        {
+            using pulse::ops::RecycleBinLimits;
+            using pulse::ops::CheckRecycleFits;
+            std::filesystem::create_directories(root / L"big" / L"sub");
+            { std::ofstream file(root / L"large.bin", std::ios::binary); file << std::string(2u << 20, 'x'); }
+            { std::ofstream file(root / L"small.bin", std::ios::binary); file << std::string(100u << 10, 'x'); }
+            for (int i = 0; i < 3; ++i) {
+                std::ofstream file(root / L"big" / L"sub" / (L"part" + std::to_wstring(i)), std::ios::binary);
+                file << std::string(512u << 10, 'x');
+            }
+            RecycleBinLimits tiny;
+            tiny.max_bytes = 1u << 20;
+            tiny.used_bytes = 100ull << 30;
+            check(CheckRecycleFits((root / L"large.bin").wstring(), tiny, cancel) == pulse::ops::kRecycleBinTooSmall,
+                  "a file larger than the bin is refused");
+            check(CheckRecycleFits((root / L"small.bin").wstring(), tiny, cancel) == S_OK, "a file that fits passes");
+            check(CheckRecycleFits((root / L"big").wstring(), tiny, cancel) == pulse::ops::kRecycleBinTooSmall,
+                  "a folder larger than the bin is refused (measured through subfolders)");
+            check(CheckRecycleFits((root / L"big").wstring(), tiny, cancel, false) == S_OK,
+                  "folders are not measured on the cheap check");
+            RecycleBinLimits roomy = tiny;
+            roomy.max_bytes = roomy.used_bytes;
+            check(CheckRecycleFits((root / L"large.bin").wstring(), roomy, cancel) == S_OK,
+                  "a bin as large as the used space takes anything");
+            RecycleBinLimits off;
+            off.disabled = true;
+            check(CheckRecycleFits((root / L"small.bin").wstring(), off, cancel) == COPYENGINE_E_RECYCLE_BIN_NOT_FOUND,
+                  "a bin that is turned off refuses");
+            check(std::filesystem::exists(root / L"large.bin") && std::filesystem::exists(root / L"big" / L"sub" / L"part2"),
+                  "the checks touch nothing");
+            DWORD volume_error = 0;
+            const RecycleBinLimits real = pulse::ops::ReadRecycleBinLimits(root.wstring(), &volume_error);
+            std::cout << "temp volume bin: disabled=" << real.disabled << " max_mb=" << (real.max_bytes >> 20)
+                      << " used_mb=" << (real.used_bytes >> 20) << " error=" << volume_error << '\n';
+            check(volume_error == 0 && (real.disabled || real.max_bytes > 0), "the temp volume's bin limits are read");
+        }
         std::filesystem::remove_all(root);
     } catch (const std::exception& error) {
         std::cerr << "[FAIL] " << error.what() << '\n'; ++failed;

@@ -15,6 +15,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace pulse::ui {
 // Archive: `text` carries the archive tree payload for ArchivePreview.
@@ -23,6 +24,30 @@ enum class PreviewDrawResult { Pending, Bitmap, Text, Hex, Failed, Archive, Mark
 struct PreviewProperty {
     std::wstring label;
     std::wstring value;
+};
+
+// A finished grid thumbnail as the persistent store keeps it.
+struct StoredThumbnail {
+    std::vector<uint8_t> pixels;  // premultiplied BGRA, top-down, width * 4 per row
+    uint32_t width = 0, height = 0;
+    uint32_t source_width = 0, source_height = 0;
+    uint32_t duration_ms = 0;
+};
+struct ThumbnailStoreKey {
+    const std::wstring& path;
+    DWORD attrs;
+    uint32_t pixels;
+    uint64_t modified, size;
+    bool keep_always = false;  // folder composites: kept however quick
+};
+// Second level under the in-memory LRU for thumbnails that were expensive to
+// make (thumbnail_disk_cache.h). Called on the grid cache's worker threads.
+class ThumbnailStore {
+public:
+    virtual ~ThumbnailStore() = default;
+    virtual bool Load(const ThumbnailStoreKey& key, StoredThumbnail& out) = 0;
+    // decode_ms: how long the host took; quick results are not worth keeping.
+    virtual void Save(const ThumbnailStoreKey& key, uint32_t decode_ms, const StoredThumbnail& thumb) = 0;
 };
 
 struct DocumentImageSession {
@@ -56,6 +81,27 @@ public:
     // soon as a request for another file is waiting - the host is restarted
     // rather than finishing a decode nobody is looking at any more.
     void SetAbandonStaleMs(uint32_t ms) { abandon_stale_ms_ = ms; }
+    // Grid caches: decode on up to `lanes` host processes at once (0 picks
+    // from the processor count, at most kMaxLanes) and take the visible
+    // requests in the order the last frame drew them. Slow formats (video,
+    // shell providers) never hold every lane. Call before the first request.
+    void SetParallelism(uint32_t lanes);
+    static uint32_t DefaultParallelism();
+    // Once per painted frame of a SetParallelism cache: what this frame draws
+    // goes ahead of requests only earlier frames asked for.
+    void AdvanceFrame();
+    static constexpr uint32_t kMaxLanes = 4;
+    // The store SetParallelism caches read before asking a host and write
+    // after a slow decode; null (tests, tools) keeps memory only.
+    static void SetGridStore(ThumbnailStore* store);
+    // Grid caches: queue the thumbnail of an item just past the visible ones,
+    // behind everything drawn. Quick formats only. False when the queue is
+    // too busy to take it now (try again on a later frame).
+    bool Prefetch(const std::wstring& path, DWORD attrs, uint32_t pixel_size,
+                  uint64_t generation, uint64_t modified, uint64_t size);
+    // Grid caches: start the hosts before the first request (a folder shown
+    // as thumbnails is still being listed).
+    void Warm();
     void Reset();
     void Evict();
     void BeginFrame();
@@ -91,6 +137,13 @@ public:
         const std::wstring& path, DWORD attrs, uint32_t pixel_size, uint64_t generation,
         uint64_t modified, uint64_t size, float opacity, bool align_bottom,
         D2D1_RECT_F* artwork, uint32_t* media_duration_ms = nullptr);
+    // Photo wall tiles: the picture fills dest, cropping the overflow (a decode
+    // of another size meanwhile is stretched). aspect receives the decoded
+    // width / height, 0 until there is a bitmap.
+    PreviewDrawResult DrawWallThumbnail(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
+        const std::wstring& path, DWORD attrs, uint32_t pixel_size, uint64_t generation,
+        uint64_t modified, uint64_t size, float opacity, float* aspect,
+        uint32_t* media_duration_ms = nullptr);
     bool Properties(const std::wstring& path, DWORD attrs, uint64_t generation,
                     uint64_t modified, uint64_t size,
                     std::vector<PreviewProperty>& properties);
@@ -101,6 +154,9 @@ public:
     // until decoded, and for covers without a usable colour.
     bool Palette(const std::wstring& path, uint32_t pixel_size, uint64_t modified,
                  uint64_t size, CoverPalette& palette);
+    // Quick Look only: histogram and transparency of the same bitmap.
+    bool Stats(const std::wstring& path, uint32_t pixel_size, uint64_t modified,
+               uint64_t size, ImageStats& stats);
 private:
 #ifdef PULSE_WITH_SELFTEST
     friend struct QuickPreviewAuditTest;
@@ -114,6 +170,7 @@ private:
         std::vector<uint8_t> pixels;
         IconArtworkBounds artwork_bounds;
         CoverPalette palette;   // Quick Look content only (see Palette)
+        ImageStats stats;       // Quick Look content only (see Stats)
         std::wstring text;
         std::wstring error;
         std::vector<PreviewProperty> properties;
@@ -149,8 +206,11 @@ private:
         uint32_t frame_index = 0;
         uint32_t epoch = 0;
         bool details = false;
+        // Set when taken: on screen and quick, so its host runs a step higher.
+        bool urgent = false;
         uint32_t timeout_ms = 0;
         uint32_t flags = 0;
+        uint64_t modified = 0, size = 0;
         std::wstring path, key, identity;
         std::shared_ptr<DocumentImageSession> document;
     };
@@ -159,16 +219,35 @@ private:
     // back to the file-type icon once it has been shown.
     Item* StaleBitmap(const std::wstring& identity, const std::wstring& except_key);
     static uint32_t ResponseTimeoutMs(const std::wstring& path, ipc::PreviewRequestKind kind);
-    void Worker();
+    void Worker() { Worker(0); }
+    void Worker(uint32_t lane);
+    // Lane 0 is pipe_ / child_ / pipe_token_ / worker_; the rest live in extra_lanes_.
+    struct ExtraLane {
+        HANDLE pipe = INVALID_HANDLE_VALUE;
+        PROCESS_INFORMATION child{};
+        uint32_t token = 0;
+        std::thread worker;
+    };
+    struct LaneRef {
+        HANDLE& pipe;
+        PROCESS_INFORMATION& child;
+        uint32_t token;
+    };
+    LaneRef LaneAt(uint32_t lane);
+    void StartWorkersLocked();
+    bool TakeRequestLocked(Request& out, bool& slow);
+    void DropOverflowLocked();
+    static bool IsSlowRequest(const Request& request) noexcept;
     bool FolderRequestCurrent(const Request& request);
     static bool IsTransientResponse(bool transport_ok, const Request& request, uint32_t status);
     void SelectDetailsLocked(const std::wstring& identity);
     bool StoreResult(const Request& request, Item result);
     void Touch(Item& item);
-    bool Connect(const Request& request, uint64_t started);
-    void LogFailure(const Request& request, uint64_t started, uint32_t stage,
+    bool Connect(uint32_t lane, const Request& request, uint64_t started);
+    void LogFailure(uint32_t lane, const Request& request, uint64_t started, uint32_t stage,
                     DWORD error, bool cancelled = false);
-    void StopChild();
+    void StopChild(uint32_t lane);
+    void StopChildren();
     std::wstring Key(const std::wstring& path, uint32_t pixels, uint64_t modified,
                      uint64_t size, uint32_t frame_index = 0) const;
     D2DDeviceBinding device_binding_;
@@ -201,5 +280,15 @@ private:
     std::wstring latest_details_identity_;
     std::atomic<uint32_t> epoch_{1};
     std::thread worker_;
+    ExtraLane extra_lanes_[kMaxLanes - 1];
+    uint32_t lane_count_ = 1;
+    bool visible_order_ = false;
+    bool boost_hosts_ = false;
+    uint32_t slow_in_flight_ = 0;
+    std::atomic<bool> warm_{false};
+    uint64_t frame_ = 1;
+    uint64_t draw_sequence_ = 0;
+    // Visible order: queued key -> (frame, paint sequence) of its latest draw.
+    std::unordered_map<std::wstring, std::pair<uint64_t, uint64_t>> wanted_;
 };
 } // namespace pulse::ui

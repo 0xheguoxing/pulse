@@ -18,6 +18,9 @@ constexpr UINT_PTR kTimerHoverPrefetch = 0x4852;      // the pointer settled: st
 void NoteHoverPreviewRow(AppState& s);
 // Hides the card and cancels a pending dwell.
 void HideHoverPreview(AppState& s);
+// The pointer (client px) is on a folder's card, or in the gap between it
+// and its row: the card keeps it, the rows under it get no hover.
+bool HoverPreviewHoldsPointer(AppState& s, POINT point);
 // Dwell timer, and dismissal on clicks, wheel, keys and focus loss. Returns
 // true only for messages it consumes (its own timer).
 bool HoverPreviewMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -27,7 +30,8 @@ bool OpenHoverPreviewInQuickLook(AppState& s);
 // This frame's card for the renderer; a card whose row is gone or scrolled
 // away is dropped.
 // GUI verification (--shot-hover-preview N): shows the card over the Nth file
-// (0-based, folders skipped) of the focused pane, pointer at the name.
+// (0-based, folders skipped) of the focused pane, pointer at the name; with
+// PULSE_TEST_HOVER_FOLDER=1 over the Nth folder instead.
 bool StageHoverPreviewShot(AppState& s, int nth_file);
 // --shot-hover-dwell N: the dwell line on that row, 60% through.
 bool StageHoverDwellShot(AppState& s, int nth_file);

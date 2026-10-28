@@ -58,7 +58,9 @@ void FramePump::Stop() {
     running_ = false;
 }
 
-void FramePump::Arm() noexcept {
+void FramePump::ArmPaced(double min_frame_ms) noexcept {
+    min_frame_us_.store(min_frame_ms > 0.0 ? static_cast<uint32_t>(min_frame_ms * 1000.0) : 0u,
+                        std::memory_order_relaxed);
     if (!running_ || armed_.exchange(true, std::memory_order_relaxed)) return;
     SetEvent(wake_);
 }
@@ -97,22 +99,35 @@ void FramePump::Run() {
 }
 
 void FramePump::WaitForFrame() {
-    bool paced = false;
-    if (clock_ == Clock::Compositor) {
-        // STATUS_SUCCESS (0) on a clock tick; anything else (display off,
-        // timeout) falls back to plain pacing below.
-        paced = wait_compositor_clock_(0, nullptr, 100) == 0;
-    } else if (clock_ == Clock::Dwm) {
-        paced = SUCCEEDED(DwmFlush());
-    }
     LARGE_INTEGER now{};
-    QueryPerformanceCounter(&now);
-    double elapsed = static_cast<double>(now.QuadPart - last_frame_) * 1000.0 /
-                     static_cast<double>(qpc_frequency_);
-    const double floor_ms = paced ? kMinFrameMs : kFallbackFrameMs;
-    if (last_frame_ != 0 && elapsed < floor_ms) {
-        SleepMs(floor_ms - elapsed);
+    for (;;) {
+        bool paced = false;
+        if (clock_ == Clock::Compositor) {
+            // STATUS_SUCCESS (0) on a clock tick; anything else (display off,
+            // timeout) falls back to plain pacing below.
+            paced = wait_compositor_clock_(0, nullptr, 100) == 0;
+        } else if (clock_ == Clock::Dwm) {
+            paced = SUCCEEDED(DwmFlush());
+        }
         QueryPerformanceCounter(&now);
+        double elapsed = static_cast<double>(now.QuadPart - last_frame_) * 1000.0 /
+                         static_cast<double>(qpc_frequency_);
+        const double floor_ms = paced ? kMinFrameMs : kFallbackFrameMs;
+        if (last_frame_ != 0 && elapsed < floor_ms) {
+            SleepMs(floor_ms - elapsed);
+            QueryPerformanceCounter(&now);
+            elapsed = static_cast<double>(now.QuadPart - last_frame_) * 1000.0 /
+                      static_cast<double>(qpc_frequency_);
+        }
+        // ArmPaced: skip ticks until the interval is (nearly) up, re-read each
+        // time so an Arm in between takes effect on the next tick. Half a
+        // millisecond of slack keeps a 30 fps request on every other 60 Hz tick.
+        const double min_ms = min_frame_us_.load(std::memory_order_relaxed) / 1000.0;
+        if (last_frame_ == 0 || min_ms <= 0.0 || elapsed + 0.5 >= min_ms ||
+            stop_.load() || !armed_.load(std::memory_order_relaxed)) {
+            break;
+        }
+        if (!paced) SleepMs(min_ms - elapsed);
     }
     last_frame_ = now.QuadPart;
 }

@@ -2,6 +2,7 @@
 #include "app_internal.h"
 #include "../fs/fs_enum.h"
 #include "../common/localization.h"
+#include "content_pack_ui.h"
 
 #include <thread>
 
@@ -45,7 +46,7 @@ void StartDuplicateScan(AppState& s) {
     const auto& volumes = s.dup_volume_cache;
     if (session.scope == app::DuplicateScanScope::Folder && session.folder_path.empty()) {
         std::wstring path;
-        if (!PickFolder(s, path, l10n::Get(l10n::StringId::DupFolderPlaceholder).c_str()))
+        if (!PickFolder(s, path, l10n::Get(l10n::StringId::DupFolderPlaceholder).c_str(), L"duplicates"))
             return;
         session.folder_path = std::move(path);
     }
@@ -59,6 +60,8 @@ void StartDuplicateScan(AppState& s) {
     auto roots = app::DuplicateScanSession::ResolveRoots(
         session.scope, session.folder_path, session.drive_root, volumes);
     if (roots.empty()) return;
+    // Duplicate finding runs in Pulse.Content.exe (content enhancement pack).
+    if (!OfferContentPack(s)) return;
     PersistDuplicateScanPrefs(s);
     session.ResetResults();
     session.generation += 1;

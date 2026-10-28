@@ -2,6 +2,7 @@
 #include "confirm_dialog.h"
 
 #include "confirm_dialog_view.h"
+#include "ui_motion.h"
 #include "window_helpers.h"
 
 #include <windowsx.h>
@@ -13,6 +14,22 @@ namespace pulse::ui {
 namespace {
 
 constexpr wchar_t kConfirmClass[] = L"PulseConfirmWindow";
+
+// Motion (animation phase 9b, pulse_motion_v2): the icon pops in (and a
+// warning glyph wobbles once), the text, item rows and buttons rise in one
+// after another, and the keyboard focus ring springs between the buttons.
+// Frames come from a timer armed only while something moves.
+constexpr UINT_PTR kConfirmFrameTimer = 0x43464D54;  // 'CFMT'
+constexpr float kBodyDelayMs = 30.0f;
+constexpr float kRowsDelayMs = 50.0f;
+constexpr float kFooterDelayMs = 80.0f;
+constexpr float kWobbleDelayMs = 90.0f;
+constexpr float kWobbleMs = 460.0f;
+constexpr motion::SpringSpec kFocusSpring{700.0f, 44.0f};
+
+float After(float t_ms, float delay_ms, motion::SpringSpec spec) {
+    return t_ms <= delay_ms ? 0.0f : motion::SpringProgress(spec, t_ms - delay_ms);
+}
 
 bool CopyTextToClipboard(HWND hwnd, const std::wstring& text) {
     if (!OpenClipboard(hwnd)) return false;
@@ -44,6 +61,8 @@ public:
         visual_.focus = ConfirmControlFor(spec_.default_choice, HasSecondary());
         // Any other default is not what the colours suggest, so show it at once.
         visual_.show_focus = visual_.focus != kConfirmPrimary;
+        animations_ = motion::SystemAnimationsEnabled() && !IsHighContrast();
+        focus_motion_.SetAnimationsEnabled(animations_);
         scale_ = static_cast<float>(pulse::compat::WindowDpi(owner ? owner : GetDesktopWindow()))
                / 96.0f;
 
@@ -67,6 +86,7 @@ public:
         if (owner_) EnableWindow(owner_, FALSE);
         ShowWindow(hwnd_, SW_SHOW);
         SetForegroundWindow(hwnd_);
+        if (spec_.on_open) spec_.on_open(hwnd_);
 
         MSG message{};
         while (!done_ && GetMessageW(&message, nullptr, 0, 0) > 0) {
@@ -74,6 +94,7 @@ public:
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+        if (spec_.on_open) spec_.on_open(nullptr);
         if (IsWindow(hwnd_)) { HideComposedDialog(hwnd_, owner_); DestroyWindow(hwnd_); }
         hwnd_ = nullptr;
         if (owner_) EnableWindow(owner_, TRUE);
@@ -116,9 +137,46 @@ private:
     }
 
     void Activate(int id) {
+        if (id >= kConfirmRowBase) {
+            ToggleRow(static_cast<size_t>(id - kConfirmRowBase));
+            return;
+        }
+        if ((id == kConfirmPrimary || id == kConfirmSecondary) && !ConfirmAnyChecked(spec_)) {
+            MessageBeep(MB_OK);
+            return;
+        }
+        if (id == kConfirmPrimary && !spec_.confirm_again_text.empty() && !armed_) {
+            // The first of two presses: the button and the note say so.
+            armed_ = true;
+            spec_.confirm_text = spec_.confirm_again_text;
+            if (!spec_.confirm_again_note.empty()) spec_.note = spec_.confirm_again_note;
+            SizeToContent();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         if (id == kConfirmPrimary) Complete(ConfirmChoice::Confirm);
         else if (id == kConfirmSecondary) Complete(ConfirmChoice::Secondary);
         else if (id == kConfirmCancel || id == kConfirmClose) Complete(ConfirmChoice::Cancel);
+    }
+
+    void ToggleRow(size_t row) {
+        if (!layout_.checkable || !spec_.item_checks || row >= spec_.item_checks->size()) return;
+        (*spec_.item_checks)[row] = !(*spec_.item_checks)[row];
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+
+    // Up / Down walk the check box rows; Up from the buttons reaches the last row.
+    void MoveRowFocus(int direction) {
+        const int rows = static_cast<int>(layout_.rows.size());
+        if (!layout_.checkable || rows == 0) return;
+        const int current = visual_.focus >= kConfirmRowBase ? visual_.focus - kConfirmRowBase : -1;
+        int next = current;
+        if (current < 0) next = direction < 0 ? rows - 1 : current;
+        else next = current + direction;
+        if (next >= rows) visual_.focus = kConfirmPrimary;
+        else if (next >= 0) visual_.focus = kConfirmRowBase + next;
+        visual_.show_focus = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
     void MoveFocus(int direction) {
@@ -132,6 +190,56 @@ private:
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
+    D2D1_RECT_F ButtonRect(int id) const {
+        if (id >= kConfirmRowBase) {
+            const size_t row = static_cast<size_t>(id - kConfirmRowBase);
+            return row < layout_.rows.size() ? layout_.rows[row] : layout_.primary;
+        }
+        switch (id) {
+        case kConfirmPrimary: return layout_.primary;
+        case kConfirmSecondary: return layout_.secondary;
+        default: return layout_.cancel;
+        }
+    }
+
+    // Fills the motion fields of visual_ for this frame; true while moving.
+    bool StepMotion() {
+        const uint64_t now = motion::NowMs();
+        if (!opened_at_) opened_at_ = now;  // the first frame starts it
+        ++frame_;
+        bool moving = false;
+        if (animations_) {
+            const float t = static_cast<float>(now - opened_at_);
+            const motion::SpringSpec rise = motion::spring::Snappy;
+            visual_.icon_scale = 0.6f + 0.4f * motion::SpringProgress(motion::spring::Pop, t);
+            visual_.body_in = After(t, kBodyDelayMs, rise);
+            for (size_t i = 0; i < kConfirmMaxItemRows; ++i)
+                visual_.rows_in[i] = After(t, kRowsDelayMs + 9.0f * static_cast<float>(i), rise);
+            visual_.footer_in = After(t, kFooterDelayMs, rise);
+            const ConfirmTone tone = ResolveConfirmTone(spec_);
+            const bool wobble = tone == ConfirmTone::Danger || tone == ConfirmTone::Warning;
+            const float w = t - kWobbleDelayMs;
+            visual_.icon_turn = wobble && w > 0.0f && w < kWobbleMs
+                ? 10.0f * std::sin(w * 0.0345f) * std::exp(-w / 120.0f) : 0.0f;
+            const float settle = kFooterDelayMs + static_cast<float>(motion::SpringSettleMs(rise));
+            if (t < std::max(settle, kWobbleDelayMs + kWobbleMs)) moving = true;
+            else {
+                visual_.icon_scale = visual_.body_in = visual_.footer_in = 1.0f;
+                for (float& k : visual_.rows_in) k = 1.0f;
+                visual_.icon_turn = 0.0f;
+            }
+        }
+        visual_.focus_glide = animations_;
+        if (visual_.show_focus) {
+            visual_.focus_rect = focus_motion_.Update(1, visual_.focus, ButtonRect(visual_.focus),
+                                                      frame_, now, kFocusSpring);
+            if (focus_motion_.Active(now)) moving = true;
+        } else {
+            focus_motion_.Hide();
+        }
+        return moving;
+    }
+
     void Render() {
         if (compositor_.NeedsRecovery()) {
             if (!compositor_.Recover()) return;
@@ -141,12 +249,15 @@ private:
         }
         if (!compositor_.Dc()) return;
         const bool high_contrast = IsHighContrast();
-        const Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
+        Theme theme = high_contrast ? MakeHighContrastTheme() : MakeTheme(dark_, accent_);
+        if (!high_contrast && backdrop_enabled_ && IsAcrylicBackdrop(hwnd_)) ApplyGlass(theme, dark_);
+        const bool moving = StepMotion();
         BeginSurface(compositor_, painter_, theme, dark_, high_contrast, backdrop_enabled_,
                      scale_);
         DrawConfirmDialog(compositor_, painter_, theme, spec_, layout_, formats_, visual_,
                           dark_, high_contrast);
         EndSurface(compositor_);
+        if (moving) SetTimer(hwnd_, kConfirmFrameTimer, 15, nullptr);
     }
 
     int Hit(LPARAM lparam) const {
@@ -227,7 +338,17 @@ private:
             case VK_TAB: MoveFocus((GetKeyState(VK_SHIFT) & 0x8000) ? -1 : 1); return 0;
             case VK_LEFT: MoveFocus(-1); return 0;
             case VK_RIGHT: MoveFocus(1); return 0;
+            case VK_UP:
+            case VK_DOWN:
+                if (layout_.checkable) {
+                    MoveRowFocus(wparam == VK_DOWN ? 1 : -1);
+                    return 0;
+                }
+                break;
             case VK_RETURN:
+                // Enter on a check box row confirms; Space ticks it.
+                Activate(visual_.focus >= kConfirmRowBase ? kConfirmPrimary : visual_.focus);
+                return 0;
             case VK_SPACE: Activate(visual_.focus); return 0;
             case 'C':
                 if (GetKeyState(VK_CONTROL) & 0x8000) {
@@ -249,6 +370,13 @@ private:
         }
         case WM_ERASEBKGND:
             return 1;
+        case WM_TIMER:
+            if (wparam == kConfirmFrameTimer) {
+                KillTimer(hwnd_, kConfirmFrameTimer);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+            break;
         case WM_DESTROY:
             compositor_.Shutdown();
             done_ = true;
@@ -272,6 +400,11 @@ private:
     bool backdrop_enabled_ = false;
     bool done_ = false;
     bool sizing_ = false;
+    bool armed_ = false;   // confirm_again_text: the first press is in
+    bool animations_ = true;
+    uint64_t opened_at_ = 0;
+    uint64_t frame_ = 0;
+    motion::SpringRectMotion focus_motion_;
 };
 
 } // namespace

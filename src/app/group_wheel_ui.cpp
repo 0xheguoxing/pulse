@@ -9,6 +9,7 @@
 #include "../ui/command_icons.h"
 #include "../ui/group_wheel.h"
 #include "../ui/ui_motion.h"
+#include "../ui/ui_renderer.h"
 
 #include <windowsx.h>
 #include <algorithm>
@@ -250,7 +251,9 @@ std::vector<fs::DirEntry> SampleEntries(bool with_path) {
 
 void ApplySort(AppState& s, int value, bool desc, int folder) {
     SetSort(s, static_cast<ui::SortColumn>(value), desc ? ui::SortDirection::Desc : ui::SortDirection::Asc);
-    if (folder != static_cast<int>(s.appPrefs.folder_sort_mode)) s.settings.FolderSort(folder);
+    // This folder only, like the sort column (Settings keeps the default).
+    if (const app::Tab* tab = ActiveTab(s); tab && folder != static_cast<int>(tab->EffectiveFolderSort()))
+        SetFolderSort(s, folder);
 }
 
 void Kick(AppState& s, HWND hwnd) {
@@ -276,7 +279,8 @@ void OpenGroupWheel(AppState& s) {
     std::wstring kind;
     app::ParsePulsePath(tab->current_path, &kind, nullptr);
     const bool recent = kind == L"recent";
-    const bool multi = kind == L"search" || kind == L"saved-search" || kind == L"tag" || kind == L"recycle";
+    const bool multi = kind == L"search" || kind == L"saved-search" || kind == L"tag" ||
+                       kind == L"tags" || kind == L"recycle";
     // Preview only: counting stops at 20k entries so opening stays instant.
     const size_t count = std::min<size_t>(tab->EntryCount(), 20000);
     std::vector<fs::DirEntry> entries;
@@ -323,7 +327,7 @@ void OpenSortWheel(AppState& s) {
     ui::GroupWheelData data;
     data.sort_controls = true;
     data.desc = tab->sort_direction == ui::SortDirection::Desc;
-    data.folder = std::clamp(static_cast<int>(s.appPrefs.folder_sort_mode), 0, 2);
+    data.folder = std::clamp(static_cast<int>(tab->EffectiveFolderSort()), 0, 2);
     const std::wstring az = L"A\x2192" L"Z", za = L"Z\x2192" L"A";  // split: \x is greedy
     for (const auto& col : kSortColumns) {
         if (col.column == ui::SortColumn::Path && !show_path) continue;

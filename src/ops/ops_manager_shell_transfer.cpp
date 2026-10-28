@@ -12,7 +12,7 @@ void OpsManager::RunAuthorizedTransfer(const OpRequest& req, uint64_t task_id) {
         status.can_pause = true;
         status.phase = OpPhase::Running;
         status.total_items = req.sources.size();
-        status.summary = l10n::Pick(L"正在获取文件操作权限…", L"Authorizing file operations…");
+        status.summary = l10n::Get(l10n::StringId::AuthorizingFileOperations).c_str();
     });
     const auto policy = req.collision_policy == CollisionPolicy::Replace ? ShellCollisionPolicy::Replace
         : req.collision_policy == CollisionPolicy::KeepBoth ? ShellCollisionPolicy::KeepBoth
@@ -29,7 +29,7 @@ void OpsManager::RunAuthorizedTransfer(const OpRequest& req, uint64_t task_id) {
             status.can_pause = !awaiting;
             if (awaiting) {
                 status.percent = -1;
-                status.summary = l10n::Pick(L"正在请求管理员授权…", L"Requesting administrator permission…");
+                status.summary = l10n::Get(l10n::StringId::RequestingAdministratorPermission).c_str();
             }
         });
     };
@@ -62,7 +62,7 @@ void OpsManager::RunAuthorizedTransfer(const OpRequest& req, uint64_t task_id) {
         SetStatus([&](OpStatus& status) {
             status.phase = OpPhase::WaitingForConflict;
             status.current_item = info.source;
-            status.summary = l10n::Pick(L"正在等待处理文件冲突", L"Waiting for file conflicts to be resolved");
+            status.summary = l10n::Get(l10n::StringId::WaitingForFileConflictsToBeResolved).c_str();
             status.bytes_per_second = 0;
             status.eta_seconds = 0;
         });
@@ -91,8 +91,7 @@ void OpsManager::RunAuthorizedTransfer(const OpRequest& req, uint64_t task_id) {
         // A denied UAC dialog has changed no files. Keep the task in its own
         // window; only an explicit retry can launch another authorization.
         const std::wstring reason = result.error.empty()
-            ? l10n::Pick(L"未获得管理员权限。可以重试授权，或跳过当前项。",
-                         L"Administrator permission was not granted. Retry or skip this item.")
+            ? l10n::Get(l10n::StringId::AdministratorPermissionWasNotGrantedRetryOrSkipThisItem).c_str()
             : result.error;
         bool retry = false;
         while (!pending.empty() && !transfer_cancel_.load()) {
@@ -143,7 +142,7 @@ void OpsManager::RunAuthorizedTransfer(const OpRequest& req, uint64_t task_id) {
                 reinterpret_cast<LPWSTR>(&message), 0, nullptr) && message) {
             error = message;
             LocalFree(message);
-        } else if (error.empty()) error = l10n::Pick(L"文件操作失败", L"File operation failed");
+        } else if (error.empty()) error = l10n::Get(l10n::StringId::FileOperationFailed).c_str();
     }
     SetStatus([&](OpStatus& status) {
         status.active = false;
@@ -156,19 +155,19 @@ void OpsManager::RunAuthorizedTransfer(const OpRequest& req, uint64_t task_id) {
         status.eta_seconds = 0;
         if (result.cancelled) {
             status.phase = OpPhase::Failed;
-            status.last_error = l10n::Pick(L"已取消", L"Canceled");
+            status.last_error = l10n::Get(l10n::StringId::Canceled).c_str();
             status.summary = status.last_error;
         } else if (FAILED(result.hr)) {
             status.phase = OpPhase::Failed;
             status.last_error = error;
-            status.summary = l10n::Pick(L"文件操作失败", L"File operation failed");
+            status.summary = l10n::Get(l10n::StringId::FileOperationFailed).c_str();
         } else {
             status.phase = OpPhase::Completed;
             status.percent = 100;
             status.last_error.clear();
             status.summary = skipped == req.sources.size()
-                ? l10n::Pick(L"已跳过所选项目", L"Selected items skipped")
-                : l10n::Pick(L"文件操作完成", L"File operation completed");
+                ? l10n::Get(l10n::StringId::SelectedItemsSkipped).c_str()
+                : l10n::Get(l10n::StringId::FileOperationCompleted).c_str();
         }
     });
     transfer_active_.store(false);

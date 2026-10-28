@@ -2,6 +2,7 @@
 #include "gif_decoder.h"
 #include "../ipc/preview_protocol.h"
 #include "../common/preview_extensions.h"
+#include "../common/shell_id.h"
 #include "archive_listing.h"
 #include "content_sniff.h"
 #include "docx_document.h"
@@ -11,9 +12,14 @@
 #include "markdown_document.h"
 #include "notebook_document.h"
 #include "font_raster.h"
+#include "icc_profile.h"
 #include "image_frames.h"
 #include "gif_frames.h"
 #include "image_pack.h"
+#include "../common/image_pack_protocol.h"
+#include "jpeg_dc_preview.h"
+#include "jpeg_embedded_preview.h"
+#include "tiff_reduce.h"
 #include "raw_pack.h"
 #include "archive_pack.h"
 #include "media_pack.h"
@@ -22,7 +28,9 @@
 #include "office_sketch.h"
 #include "pdf_raster.h"
 #include "preview_file_utils.h"
+#include "shared_image_file.h"
 #include "psd_raster.h"
+#include "shell_bitmap.h"
 #include "svg_raster.h"
 #include "table_document.h"
 #include "tree_document.h"
@@ -259,12 +267,113 @@ bool MakeTextOrHex(const std::wstring& path, DWORD attrs, ipc::PreviewContentKin
 
 } // namespace
 
+// Matrix/TRC RGB profiles (nearly all RGB ones) are converted to sRGB in
+// place by icc::MatrixToSrgb, several times faster than the colour
+// transform ToSrgb uses for the others.
+static bool ConvertMatrixProfile(IWICImagingFactory* factory, IWICBitmapSource* source,
+                                 const preview::icc::MatrixToSrgb& matrix, ComPtr<IWICBitmapSource>& out) {
+    ComPtr<IWICFormatConverter> converter;
+    ComPtr<IWICBitmap> bitmap;
+    ComPtr<IWICBitmapLock> lock;
+    UINT width = 0, height = 0, stride = 0, size = 0;
+    BYTE* pixels = nullptr;
+    if (FAILED(source->GetSize(&width, &height)) || !width || !height ||
+        FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                     WICBitmapPaletteTypeCustom)) ||
+        FAILED(factory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, &bitmap)))
+        return false;
+    const WICRect all{0, 0, static_cast<INT>(width), static_cast<INT>(height)};
+    if (FAILED(bitmap->Lock(&all, WICBitmapLockRead | WICBitmapLockWrite, &lock)) ||
+        FAILED(lock->GetStride(&stride)) || FAILED(lock->GetDataPointer(&size, &pixels)) || !pixels ||
+        stride < width * 4 || size < static_cast<size_t>(stride) * (height - 1) + width * 4)
+        return false;
+    for (UINT y = 0; y < height; ++y) matrix.Apply(pixels + static_cast<size_t>(stride) * y, width);
+    lock.Reset();
+    out = bitmap;
+    return true;
+}
+
+// Embedded ICC profiles: a picture tagged with a profile other than sRGB
+// (Adobe RGB, Display P3, ProPhoto, a press CMYK, a gray dot gain) is
+// converted to sRGB, the space previews are shown in; plain values showed
+// Adobe RGB and P3 photos washed out and ProPhoto ones far off. Untagged and
+// sRGB-tagged pictures skip this and come out byte-identical. It runs on the
+// already scaled picture, held in memory first, so the JPEG decoder keeps
+// decoding at reduced size and the transform reads each pixel once.
+static bool ToSrgb(IWICImagingFactory* factory, IWICBitmapFrameDecode* frame, IWICBitmapSource* source,
+                   ComPtr<IWICBitmapSource>& out) {
+    namespace icc = preview::icc;
+    UINT count = 0;
+    if (FAILED(frame->GetColorContexts(0, nullptr, &count)) || count == 0 || count > 8) return false;
+    ComPtr<IWICColorContext> contexts[8];
+    IWICColorContext* raw[8]{};
+    for (UINT i = 0; i < count; ++i) {
+        if (FAILED(factory->CreateColorContext(&contexts[i]))) return false;
+        raw[i] = contexts[i].Get();
+    }
+    if (FAILED(frame->GetColorContexts(count, raw, &count))) return false;
+    IWICColorContext* profile = nullptr;
+    icc::Space space = icc::Space::Other;
+    std::vector<unsigned char> bytes;
+    for (UINT i = 0; i < count && !profile; ++i) {
+        WICColorContextType type{};
+        UINT size = 0;
+        if (FAILED(raw[i]->GetType(&type)) || type != WICColorContextProfile ||
+            FAILED(raw[i]->GetProfileBytes(0, nullptr, &size)) || size < 132 || size > icc::kProfileLimit) continue;
+        bytes.resize(size);
+        if (FAILED(raw[i]->GetProfileBytes(size, bytes.data(), &size))) continue;
+        space = icc::ColourSpace(bytes.data(), bytes.size());
+        if (space == icc::Space::Other || icc::IsSrgb(bytes.data(), bytes.size())) return false;
+        profile = raw[i];
+    }
+    if (!profile) return false;
+    // Gray and CMYK profiles need the matching channels, which carry no
+    // alpha: anything else (a CMYK frame the scaler already turned into RGB,
+    // gray with transparency) keeps its plain values.
+    WICPixelFormatGUID format{};
+    if (FAILED(source->GetPixelFormat(&format))) return false;
+    if (space == icc::Space::Cmyk && !IsEqualGUID(format, GUID_WICPixelFormat32bppCMYK) &&
+        !IsEqualGUID(format, GUID_WICPixelFormat64bppCMYK)) return false;
+    if (space == icc::Space::Gray) {
+        ComPtr<IWICComponentInfo> info;
+        ComPtr<IWICPixelFormatInfo2> format_info;
+        UINT channels = 0;
+        BOOL transparent = TRUE;
+        if (FAILED(factory->CreateComponentInfo(format, &info)) || FAILED(info.As(&format_info)) ||
+            FAILED(format_info->GetChannelCount(&channels)) ||
+            FAILED(format_info->SupportsTransparency(&transparent)) || channels != 1 || transparent) return false;
+    }
+    if (space == icc::Space::Rgb) {
+        icc::MatrixToSrgb matrix;
+        if (matrix.Init(bytes.data(), bytes.size()) && ConvertMatrixProfile(factory, source, matrix, out)) return true;
+    }
+    const WICPixelFormatGUID device = space == icc::Space::Cmyk ? GUID_WICPixelFormat32bppCMYK
+        : space == icc::Space::Gray ? GUID_WICPixelFormat8bppGray : GUID_WICPixelFormat32bppBGRA;
+    ComPtr<IWICColorContext> srgb;
+    ComPtr<IWICFormatConverter> converter;
+    ComPtr<IWICBitmap> held;
+    ComPtr<IWICColorTransform> transform;
+    if (FAILED(factory->CreateColorContext(&srgb)) || FAILED(srgb->InitializeFromExifColorSpace(1)) ||
+        FAILED(factory->CreateFormatConverter(&converter)) ||
+        FAILED(converter->Initialize(source, device, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                     WICBitmapPaletteTypeCustom)) ||
+        FAILED(factory->CreateBitmapFromSource(converter.Get(), WICBitmapCacheOnLoad, &held)) ||
+        FAILED(factory->CreateColorTransformer(&transform)) ||
+        FAILED(transform->Initialize(held.Get(), profile, srgb.Get(), GUID_WICPixelFormat32bppBGRA)))
+        return false;
+    out = transform;
+    return true;
+}
+
 static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
                         std::vector<uint8_t>& out, UINT& width, UINT& height, UINT& stride,
                         UINT& source_width, UINT& source_height,
                         const std::vector<unsigned char>* embedded = nullptr,
-                        uint32_t frame_index = 0, uint32_t* frame_count = nullptr) {
+                        uint32_t frame_index = 0, uint32_t* frame_count = nullptr,
+                        unsigned orientation_override = 0) {
     if (IsOfflinePlaceholder(attrs)) return false;
+    preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
@@ -278,8 +387,8 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
         if (embedded->empty() || embedded->size() > MAXDWORD || FAILED(factory->CreateStream(&stream)) ||
             FAILED(stream->InitializeFromMemory(const_cast<BYTE*>(embedded->data()), static_cast<DWORD>(embedded->size()))) ||
             FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder))) return false;
-    } else if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                         WICDecodeMetadataCacheOnDemand, &decoder))) return false;
+    } else if (FAILED(preview::CreateSharedDecoder(factory.Get(), path, WICDecodeMetadataCacheOnDemand,
+                                                   file, &decoder))) return false;
     if (frame_count) {
         UINT count = 0;
         if (FAILED(decoder->GetFrameCount(&count)) || !count) return false;
@@ -294,8 +403,11 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
     IWICBitmapSource* source = frame.Get();
     unsigned orientation = 1;
     GUID container{};
+    // DNG is TIFF-structured: Orientation sits in IFD0 just like a TIFF's
+    // (an iPhone ProRAW portrait otherwise shows lying on its side).
     if (SUCCEEDED(decoder->GetContainerFormat(&container)) &&
-        (IsEqualGUID(container, GUID_ContainerFormatJpeg) || IsEqualGUID(container, GUID_ContainerFormatTiff))) {
+        (IsEqualGUID(container, GUID_ContainerFormatJpeg) || IsEqualGUID(container, GUID_ContainerFormatTiff) ||
+         IsEqualGUID(container, GUID_ContainerFormatAdng))) {
         ComPtr<IWICMetadataQueryReader> metadata;
         if (SUCCEEDED(frame->GetMetadataQueryReader(&metadata))) {
             PROPVARIANT value{};
@@ -306,11 +418,47 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
             PropVariantClear(&value);
         }
     }
+    // A camera's embedded preview carries no orientation of its own.
+    if (orientation_override >= 1 && orientation_override <= 8) orientation = orientation_override;
     // Scale first, straight off the frame: the JPEG decoder then decodes at
     // 1/2, 1/4 or 1/8 (IWICBitmapSourceTransform) instead of full size. A
     // flip-rotator in front of the scaler made every scaler pass re-decode
     // the whole frame, so a 12 MP portrait phone photo (Exif orientation 6)
     // took over 30 s and held up every preview queued behind it.
+    // Progressive JPEG: WIC cannot scale it in the DCT domain and decodes
+    // every scan at full size (about 4 s for 100 MP). When the 1/8 picture is
+    // still at least as large as asked for, the DC scan alone is enough.
+    ComPtr<IWICBitmap> dc_bitmap;
+    pulse::preview::JpegDcPicture dc;
+    const bool jpeg = IsEqualGUID(container, GUID_ContainerFormatJpeg);
+    if (jpeg && frame_index == 0 && (std::max)(sourceWidth, sourceHeight) / 8 >= pixels) {
+        const bool made = embedded
+            ? pulse::preview::DecodeProgressiveJpegDc(embedded->data(), embedded->size(), pixels, dc) ==
+                  pulse::preview::JpegDcStatus::Made
+            : pulse::preview::DecodeProgressiveJpegDcFile(path, pixels, dc);
+        if (made && dc.source_width == sourceWidth && dc.source_height == sourceHeight &&
+            dc.pixels.size() <= MAXUINT &&
+            SUCCEEDED(factory->CreateBitmapFromMemory(dc.width, dc.height,
+                dc.channels == 1 ? GUID_WICPixelFormat8bppGray : GUID_WICPixelFormat24bppBGR,
+                dc.stride, static_cast<UINT>(dc.pixels.size()), dc.pixels.data(), &dc_bitmap)))
+            source = dc_bitmap.Get();
+    }
+    // Large TIFF: WIC decodes it on one thread at full size (about 2 s for
+    // 100 MP). Strips and tiles decode in parallel straight into a picture
+    // shrunk by an integer factor; the scaler below makes the exact size.
+    ComPtr<IWICBitmap> reduced_bitmap;
+    pulse::preview::TiffReduced reduced;
+    if (!embedded && frame_index == 0 && IsEqualGUID(container, GUID_ContainerFormatTiff) &&
+        (std::max)(sourceWidth, sourceHeight) / 2 >= pixels &&
+        pulse::preview::ReduceTiffFile(path, pixels, reduced) &&
+        reduced.source_width == sourceWidth && reduced.source_height == sourceHeight &&
+        reduced.pixels.size() <= MAXUINT) {
+        const GUID& format = reduced.channels == 1 ? GUID_WICPixelFormat8bppGray
+            : reduced.channels == 3 ? GUID_WICPixelFormat24bppBGR : GUID_WICPixelFormat32bppPBGRA;
+        if (SUCCEEDED(factory->CreateBitmapFromMemory(reduced.width, reduced.height, format, reduced.stride,
+                static_cast<UINT>(reduced.pixels.size()), reduced.pixels.data(), &reduced_bitmap)))
+            source = reduced_bitmap.Get();
+    }
     const bool quarter_turn = orientation >= 5;
     source_width = quarter_turn ? sourceHeight : sourceWidth;
     source_height = quarter_turn ? sourceWidth : sourceHeight;
@@ -348,6 +496,8 @@ static bool DecodeImage(const std::wstring& path, DWORD attrs, UINT pixels,
             source = reflection.Get();
         }
     }
+    ComPtr<IWICBitmapSource> managed;
+    if (ToSrgb(factory.Get(), frame.Get(), source, managed)) source = managed.Get();
     if (FAILED(factory->CreateFormatConverter(&converter)) ||
         FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
                                      WICBitmapDitherTypeNone, nullptr, 0.0,
@@ -391,51 +541,27 @@ static void AlphaBlendPbgra(uint8_t* dst, const uint8_t* src) {
     dst[3] = static_cast<uint8_t>(sa + (dst[3] * inv + 127u) / 255u);
 }
 
+// alpha_type: the provider's label; see shell_bitmap.h for how it is read.
 static bool HbitmapToBgra(HBITMAP bitmap, bool own, std::vector<uint8_t>& out,
-                          UINT& width, UINT& height, UINT& stride) {
-    ComPtr<IWICImagingFactory> wicFactory;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                IID_PPV_ARGS(&wicFactory)))) {
-        if (own) DeleteObject(bitmap);
-        return false;
-    }
-    const WICBitmapAlphaChannelOption options[] = {
-        WICBitmapUsePremultipliedAlpha, WICBitmapIgnoreAlpha
-    };
-    bool ok = false;
-    for (const auto option : options) {
-        ComPtr<IWICBitmap> source;
-        ComPtr<IWICFormatConverter> converter;
-        if (FAILED(wicFactory->CreateBitmapFromHBITMAP(bitmap, nullptr, option, &source)))
-            continue;
-        if (FAILED(wicFactory->CreateFormatConverter(&converter)) ||
-            FAILED(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppPBGRA,
-                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom)) ||
-            FAILED(converter->GetSize(&width, &height)) || width == 0 || height == 0)
-            continue;
-        stride = width * 4;
-        out.resize(static_cast<size_t>(stride) * height);
-        if (SUCCEEDED(converter->CopyPixels(nullptr, stride,
-                static_cast<UINT>(out.size()), out.data()))) {
-            ok = true;
-            break;
-        }
-        out.clear();
-    }
+                          UINT& width, UINT& height, UINT& stride,
+                          WTS_ALPHATYPE alpha_type = WTSAT_UNKNOWN) {
+    const bool ok = preview::ShellBitmapToPbgra(bitmap, alpha_type, out, width, height, stride);
     if (own) DeleteObject(bitmap);
-    if (!ok) out.clear();
     return ok;
 }
 
-static bool FromThumbnailProvider(IShellItem* item, UINT pixels, HBITMAP& bitmap) {
+static bool FromThumbnailProvider(IShellItem* item, UINT pixels, HBITMAP& bitmap,
+                                  WTS_ALPHATYPE& alpha) {
+    alpha = WTSAT_UNKNOWN;
     ComPtr<IThumbnailProvider> provider;
     if (FAILED(item->BindToHandler(nullptr, BHID_ThumbnailHandler, IID_PPV_ARGS(&provider))))
         return false;
-    WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
     return SUCCEEDED(provider->GetThumbnail(pixels, &bitmap, &alpha)) && bitmap;
 }
 
-static bool FromThumbnailCache(IShellItem* item, UINT pixels, bool cache_only, HBITMAP& bitmap) {
+static bool FromThumbnailCache(IShellItem* item, UINT pixels, bool cache_only, HBITMAP& bitmap,
+                               WTS_ALPHATYPE& alpha) {
+    alpha = WTSAT_UNKNOWN;
     ComPtr<IThumbnailCache> cache;
     if (FAILED(CoCreateInstance(CLSID_LocalThumbnailCache, nullptr, CLSCTX_INPROC_SERVER,
                                 IID_PPV_ARGS(&cache))))
@@ -449,6 +575,7 @@ static bool FromThumbnailCache(IShellItem* item, UINT pixels, bool cache_only, H
         return false;
     HBITMAP shared_bitmap = nullptr;
     if (FAILED(shared->GetSharedBitmap(&shared_bitmap)) || !shared_bitmap) return false;
+    if (FAILED(shared->GetFormat(&alpha))) alpha = WTSAT_UNKNOWN;
     bitmap = static_cast<HBITMAP>(CopyImage(shared_bitmap, IMAGE_BITMAP, 0, 0, 0));
     return bitmap != nullptr;
 }
@@ -458,13 +585,18 @@ static bool FromThumbnailCache(IShellItem* item, UINT pixels, bool cache_only, H
 static bool MakeShellThumbnail(const std::wstring& path, DWORD attrs, UINT pixels,
                                std::vector<uint8_t>& out, UINT& width, UINT& height,
                                UINT& stride, bool cache_only = false) {
-    if (IsOfflinePlaceholder(attrs)) return false;
+    // A cloud placeholder may still have a picture in Explorer's thumbnail
+    // cache (made before it was freed, or put there by the sync engine).
+    // Asking the cache reads no content; any provider would make the sync
+    // engine download the file, so placeholders only ever get the cache.
+    if (IsOfflinePlaceholder(attrs) && (!cache_only || (attrs & FILE_ATTRIBUTE_DIRECTORY))) return false;
     const std::wstring shell_path = ShellPath(path);
     ComPtr<IShellItem> item;
     if (FAILED(SHCreateItemFromParsingName(shell_path.c_str(), nullptr, IID_PPV_ARGS(&item))))
         return false;
     const bool isDirectory = (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
     HBITMAP bitmap = nullptr;
+    WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
 
     if (isDirectory) {
         ComPtr<IShellItemImageFactory> factory;
@@ -476,17 +608,18 @@ static bool MakeShellThumbnail(const std::wstring& path, DWORD attrs, UINT pixel
         return HbitmapToBgra(bitmap, true, out, width, height, stride);
     }
 
-    if (!FromThumbnailCache(item.Get(), pixels, true, bitmap) || !bitmap)
+    if (!FromThumbnailCache(item.Get(), pixels, true, bitmap, alpha) || !bitmap)
         bitmap = nullptr;
     if (cache_only) {
         if (!bitmap) return false;
-        return HbitmapToBgra(bitmap, true, out, width, height, stride);
+        return HbitmapToBgra(bitmap, true, out, width, height, stride, alpha);
     }
-    if (!bitmap && !FromThumbnailProvider(item.Get(), pixels, bitmap))
+    if (!bitmap && !FromThumbnailProvider(item.Get(), pixels, bitmap, alpha))
         bitmap = nullptr;
-    if (!bitmap && (!FromThumbnailCache(item.Get(), pixels, false, bitmap) || !bitmap))
+    if (!bitmap && (!FromThumbnailCache(item.Get(), pixels, false, bitmap, alpha) || !bitmap))
         bitmap = nullptr;
     if (!bitmap) {
+        alpha = WTSAT_UNKNOWN;
         ComPtr<IShellItemImageFactory> factory;
         if (SUCCEEDED(item.As(&factory))) {
             const SIZE size{static_cast<LONG>(pixels), static_cast<LONG>(pixels)};
@@ -496,7 +629,7 @@ static bool MakeShellThumbnail(const std::wstring& path, DWORD attrs, UINT pixel
         }
     }
     if (!bitmap) return false;
-    return HbitmapToBgra(bitmap, true, out, width, height, stride);
+    return HbitmapToBgra(bitmap, true, out, width, height, stride, alpha);
 }
 
 // ---- Content decoders -------------------------------------------------------
@@ -604,11 +737,11 @@ static bool FramePixels(IWICImagingFactory* factory, IWICBitmapSource* frame, st
 // composed frames with their duration. false for still pictures.
 static bool DecodeWebpFrame(const std::wstring& path, UINT pixels, uint32_t frame_index, DecodeResult& r,
                             uint32_t& frame_count, uint32_t& delay_ms, uint32_t& loop_count) {
+    preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                   WICDecodeMetadataCacheOnDemand, &decoder)))
+        FAILED(preview::CreateSharedDecoder(factory.Get(), path, WICDecodeMetadataCacheOnDemand, file, &decoder)))
         return false;
     UINT count = 0;
     if (FAILED(decoder->GetFrameCount(&count)) || count < 2) return false;
@@ -836,12 +969,13 @@ static std::wstring MissingImageCodec(const std::wstring& path, const std::wstri
     const bool heif = extension == L".heic" || extension == L".heif" || extension == L".hif";
     const bool avif = extension == L".avif";
     if (!heif && !avif) return {};
+    preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
         return {};
-    const HRESULT hr = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                          WICDecodeMetadataCacheOnDemand, &decoder);
+    const HRESULT hr = preview::CreateSharedDecoder(factory.Get(), path, WICDecodeMetadataCacheOnDemand,
+                                                    file, &decoder);
     if (hr == WINCODEC_ERR_COMPONENTNOTFOUND) return avif ? L"av1" : L"heif";
     // The HEIF container opened but its pictures did not decode: HEVC is the
     // separate extension HEIC photos need.
@@ -905,13 +1039,14 @@ static bool HeifHasThumbnail(const std::wstring& path) {
 
 static bool HeifThumbnailInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
     if (!HeifHasThumbnail(q.path)) return false;
+    preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory;
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
     ComPtr<IWICBitmapSource> thumbnail;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->CreateDecoderFromFilename(q.path.c_str(), nullptr, GENERIC_READ,
-                                                   WICDecodeMetadataCacheOnDemand, &decoder)) ||
+        FAILED(preview::CreateSharedDecoder(factory.Get(), q.path, WICDecodeMetadataCacheOnDemand, file,
+                                            &decoder)) ||
         FAILED(decoder->GetFrame(0, &frame)) || FAILED(frame->GetThumbnail(&thumbnail)))
         return false;
     std::vector<uint8_t> canvas;
@@ -925,6 +1060,17 @@ static bool HeifThumbnailInto(const DecodeRequest& q, UINT cap, DecodeResult& r)
     }
     // The photo's own size (already turned upright by the decoder) for the facts.
     if (SUCCEEDED(frame->GetSize(&full_w, &full_h))) { r.source_width = full_w; r.source_height = full_h; }
+    return true;
+}
+
+// Big still PNG / WebP through the image pack, several times faster than WIC
+// at 100 MP; false (WIC goes on) whenever the pack does not take it.
+static bool ImagePackAccelerateInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
+    preview::ImagePackFrame frame;
+    if (!preview::ImagePackAccelerate(q.path, cap, q.grid, frame)) return false;
+    r.pixels = std::move(frame.pixels);
+    r.width = frame.width; r.height = frame.height; r.stride = frame.stride;
+    r.source_width = frame.source_width; r.source_height = frame.source_height;
     return true;
 }
 
@@ -943,6 +1089,63 @@ static bool ImagePackInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
 
 // WIC images (animated GIF frames included).
 static bool AcceptsImage(const DecodeRequest& q) { return IsDirectImage(q.extension); }
+// Grid pictures: Explorer's thumbnail cache, read only. A folder Explorer has
+// shown at this size answers in a millisecond or two instead of a full decode
+// (63 photos: 0.2-0.45 s against 1.25-1.45 s). A probe that misses costs about
+// as much as a small decode, so a folder whose first probe misses is not
+// probed again; one with hits stops after three misses in a row.
+namespace {
+struct ExplorerCacheFolder { bool hit = false; int misses = 0; };
+std::mutex g_explorer_cache_mutex;
+std::unordered_map<std::wstring, ExplorerCacheFolder> g_explorer_cache_folders;
+
+std::wstring FolderKey(const std::wstring& path) {
+    const size_t slash = path.find_last_of(L"\\/");
+    std::wstring folder = slash == std::wstring::npos ? std::wstring() : path.substr(0, slash);
+    if (!folder.empty()) CharLowerBuffW(folder.data(), static_cast<DWORD>(folder.size()));
+    return folder;
+}
+} // namespace
+
+static bool ExplorerCachedInto(const DecodeRequest& q, UINT cap, DecodeResult& r) {
+    const std::wstring folder = FolderKey(q.path);
+    {
+        std::lock_guard lock(g_explorer_cache_mutex);
+        const auto it = g_explorer_cache_folders.find(folder);
+        if (it != g_explorer_cache_folders.end() && (!it->second.hit || it->second.misses >= 3)) return false;
+    }
+    bool made = false;
+    ComPtr<IShellItem> item;
+    ComPtr<IThumbnailCache> cache;
+    ComPtr<ISharedBitmap> shared;
+    WTS_CACHEFLAGS cache_flags{};
+    HBITMAP shared_bitmap = nullptr;
+    // No WTS_SCALETOREQUESTEDSIZE: a smaller cached size comes back as it is
+    // and is refused below rather than blown up.
+    if (SUCCEEDED(SHCreateItemFromParsingName(ShellPath(q.path).c_str(), nullptr, IID_PPV_ARGS(&item))) &&
+        SUCCEEDED(CoCreateInstance(CLSID_LocalThumbnailCache, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&cache))) &&
+        SUCCEEDED(cache->GetThumbnail(item.Get(), cap, WTS_INCACHEONLY, &shared, &cache_flags, nullptr)) && shared &&
+        SUCCEEDED(shared->GetSharedBitmap(&shared_bitmap)) && shared_bitmap) {
+        WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
+        if (FAILED(shared->GetFormat(&alpha))) alpha = WTSAT_UNKNOWN;
+        HBITMAP copy = static_cast<HBITMAP>(CopyImage(shared_bitmap, IMAGE_BITMAP, 0, 0, 0));
+        std::vector<uint8_t> canvas;
+        UINT width = 0, height = 0, stride = 0;
+        ComPtr<IWICImagingFactory> factory;
+        made = copy && HbitmapToBgra(copy, true, canvas, width, height, stride, alpha) &&
+            stride == width * 4 && (std::max)(width, height) >= cap &&
+            SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+            FitCanvas(factory.Get(), canvas, width, height, cap, r.pixels, r.width, r.height, r.stride);
+    }
+    if (!made) ClearBitmap(r);
+    std::lock_guard lock(g_explorer_cache_mutex);
+    if (g_explorer_cache_folders.size() > 256) g_explorer_cache_folders.clear();
+    ExplorerCacheFolder& state = g_explorer_cache_folders[folder];
+    if (made) { state.hit = true; state.misses = 0; }
+    else ++state.misses;
+    return made;
+}
+
 static DecodeStep RunImage(const DecodeRequest& q, DecodeResult& r) {
     uint32_t frame_count = 1, frame_delay = 0, loop_count = 0;
     const bool gif = q.extension == L".gif";
@@ -984,6 +1187,9 @@ static DecodeStep RunImage(const DecodeRequest& q, DecodeResult& r) {
                                r.stride, r.source_width, r.source_height);
             if (!made) { r.error = frame.error; return DecodeStep::Failed; }
         }
+    } else if (!q.offline && q.request.frame_index == 0 && imgpack::IsAcceleratedExtension(q.extension) &&
+               ImagePackAccelerateInto(q, cap, r)) {
+        made = true;
     } else if (!q.offline && !q.grid && q.extension == L".webp" &&
                DecodeWebpFrame(q.path, ipc::ClampPreviewPixelSize(q.request.pixel_size, true),
                                q.request.frame_index, r, frame_count, frame_delay, loop_count)) {
@@ -997,8 +1203,32 @@ static DecodeStep RunImage(const DecodeRequest& q, DecodeResult& r) {
         made = true;
     } else {
         ClearBitmap(r);
-        made = DecodeImage(q.path, q.request.attrs, cap, r.pixels, r.width, r.height,
-                           r.stride, r.source_width, r.source_height);
+        if (!q.offline && q.grid && q.request.frame_index == 0) {
+            // Camera JPEGs: the preview stored inside the file, when it is
+            // big enough (a few hundred KB read instead of the whole file).
+            preview::JpegEmbeddedPreview embedded;
+            // PULSE_THUMBNAIL_EMBEDDED=0 turns it off for measurements.
+            static const bool embedded_off = [] {
+                wchar_t value[4]{};
+                return GetEnvironmentVariableW(L"PULSE_THUMBNAIL_EMBEDDED", value, 4) > 0 && value[0] == L'0';
+            }();
+            if (!embedded_off && IsOneOf(q.extension, {L".jpg", L".jpeg", L".jpe", L".jfif"}) &&
+                preview::ReadJpegEmbeddedPreview(q.path, cap, embedded)) {
+                made = DecodeImage(q.path, q.request.attrs, cap, r.pixels, r.width, r.height, r.stride,
+                                   r.source_width, r.source_height, &embedded.jpeg, 0, nullptr, embedded.orientation);
+                if (made) {
+                    const bool quarter_turn = embedded.orientation >= 5;
+                    r.source_width = quarter_turn ? embedded.source_height : embedded.source_width;
+                    r.source_height = quarter_turn ? embedded.source_width : embedded.source_height;
+                } else ClearBitmap(r);
+            }
+            if (!made) made = ExplorerCachedInto(q, cap, r);
+        }
+        if (!made) {
+            ClearBitmap(r);
+            made = DecodeImage(q.path, q.request.attrs, cap, r.pixels, r.width, r.height,
+                               r.stride, r.source_width, r.source_height);
+        }
     }
     r.frame_count = frame_count;
     r.frame_delay_ms = frame_delay;
@@ -1156,11 +1386,14 @@ static DecodeStep RunArchive(const DecodeRequest& q, DecodeResult& r) {
     return DecodeStep::Made;
 }
 
-// PSD/PSB: large previews show the merged composite; grid thumbnails keep an
-// installed shell provider, else the embedded JPEG thumbnail.
+// PSD/PSB: the merged composite with its transparency; grid thumbnails of
+// large opaque documents use the embedded JPEG when it covers the requested
+// size (RasterizePsdFile). Installed shell providers are not
+// preferred any more - common ones return the white-matted image labelled
+// opaque (white or washed-out thumbnails). Files the reader cannot decode
+// still reach the shell thumbnail (Next).
 static bool AcceptsPsd(const DecodeRequest& q) {
-    return !q.is_directory && !q.offline && preview::IsPsdExtension(q.extension) &&
-        (!q.grid || !HasShellThumbnailHandler(q.extension));
+    return !q.is_directory && !q.offline && preview::IsPsdExtension(q.extension);
 }
 static DecodeStep RunPsd(const DecodeRequest& q, DecodeResult& r) {
     if (!preview::RasterizePsdFile(q.path, q.cap, q.grid, r.pixels, r.width, r.height,
@@ -2096,7 +2329,46 @@ static DecodeStep RunShortcut(const DecodeRequest& q, DecodeResult& r) {
 // Order is behaviour: it is the order the formats were tested in before the
 // table existed. New families go before "shell-preview" unless the shell
 // provider must win.
+// Cloud placeholders (content not on this device): a grid tile shows the
+// thumbnail Explorer already cached and nothing else; every later decoder
+// declines offline files, so a miss ends with the type icon.
+static bool AcceptsCloudCached(const DecodeRequest& q) {
+    return q.offline && !q.is_directory && q.grid;
+}
+static DecodeStep RunCloudCached(const DecodeRequest& q, DecodeResult& r) {
+    if (CachedShellThumbnailInto(q, r)) return MadeBitmap(r);
+    ClearBitmap(r);
+    return DecodeStep::Next;
+}
+
+// A phone's file (MTP / PTP), named by its shell parsing name: only the
+// picture the device or Explorer's cache already has (SIIGBF_THUMBNAILONLY),
+// never the file itself - reading it would copy the whole photo or video off
+// the phone for one tile. A miss leaves the type icon; no other decoder can
+// open such a name.
+static bool AcceptsDeviceItem(const DecodeRequest& q) {
+    return q.path.size() > 2 && q.path[0] == L':' && q.path[1] == L':';
+}
+static DecodeStep RunDeviceItem(const DecodeRequest& q, DecodeResult& r) {
+    r.error = L"device-no-thumbnail";
+    if (q.is_directory) return DecodeStep::Failed;
+    ComPtr<IShellItem> item;
+    if (FAILED(pulse::shell_id::CreateItem(q.path, IID_PPV_ARGS(&item)))) return DecodeStep::Failed;
+    ComPtr<IShellItemImageFactory> factory;
+    if (FAILED(item.As(&factory))) return DecodeStep::Failed;
+    const SIZE size{static_cast<LONG>(q.cap), static_cast<LONG>(q.cap)};
+    HBITMAP bitmap = nullptr;
+    if (FAILED(factory->GetImage(size, static_cast<SIIGBF>(SIIGBF_BIGGERSIZEOK | SIIGBF_RESIZETOFIT |
+            SIIGBF_THUMBNAILONLY), &bitmap)) || !bitmap)
+        return DecodeStep::Failed;
+    if (!HbitmapToBgra(bitmap, true, r.pixels, r.width, r.height, r.stride)) return DecodeStep::Failed;
+    r.error.clear();
+    return MadeBitmap(r);
+}
+
 static const preview::DecoderEntry kDecoders[] = {
+    { "device",          AcceptsDeviceItem,   RunDeviceItem },
+    { "cloud-cached",    AcceptsCloudCached,  RunCloudCached },
     { "folder",          AcceptsFolder,       RunFolder },
     { "shortcut",        AcceptsShortcut,     RunShortcut },
     { "image",           AcceptsImage,        RunImage },

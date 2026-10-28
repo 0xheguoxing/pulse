@@ -17,7 +17,7 @@ New-Item -ItemType Directory -Path $destination -Force | Out-Null
 
 . "$PSScriptRoot/release_payload.ps1"
 $artifacts = @()
-foreach ($executable in $PulseReleaseExecutables) {
+foreach ($executable in $PulseSignedExecutables) {
     $pdb = [IO.Path]::ChangeExtension($executable, '.pdb')
     & python "$PSScriptRoot/verify_symbol_identity.py" (Join-Path $buildPath $executable) (Join-Path $buildPath $pdb)
     if ($LASTEXITCODE -ne 0) { throw "Missing or mismatched symbols for $executable; build_release.bat /symbols is required" }

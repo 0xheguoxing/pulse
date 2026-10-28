@@ -21,6 +21,7 @@ std::wstring Trim(std::wstring value) {
 const wchar_t* ModeName(SavedSearchMode mode) {
     if (mode == SavedSearchMode::Content) return L"content";
     if (mode == SavedSearchMode::Duplicates) return L"duplicates";
+    if (mode == SavedSearchMode::Tags) return L"tags";
     return L"name";
 }
 
@@ -28,6 +29,7 @@ bool ParseMode(const std::wstring& value, SavedSearchMode& mode) {
     if (value == L"name") mode = SavedSearchMode::Name;
     else if (value == L"content") mode = SavedSearchMode::Content;
     else if (value == L"duplicates") mode = SavedSearchMode::Duplicates;
+    else if (value == L"tags") mode = SavedSearchMode::Tags;
     else return false;
     return true;
 }
@@ -38,6 +40,7 @@ bool Normalize(SavedSearch& search) {
     if (search.name.empty() || search.name.size() > 128 || search.root.empty() ||
         search.root.size() > 32768 || search.query.size() > 4096) return false;
     if (search.mode != SavedSearchMode::Duplicates && search.query.empty()) return false;
+    if (search.mode == SavedSearchMode::Tags && !search.query.starts_with(L"pulse:tags:")) return false;
     return true;
 }
 

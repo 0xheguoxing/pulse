@@ -1,8 +1,8 @@
 ﻿# Run from an x64 Visual Studio developer prompt. Reuse the application objects
 # so the test exercises the real timer/navigation path without a second UI build.
 param(
-    [ValidateSet('content_refresh', 'rename_overlay', 'shared_settings', 'realtime_search', 'content_interaction', 'content_progress_ui', 'address_edit_stability', 'content_lifecycle', 'global_search_settings_ui')][string]$Fixture = 'content_refresh',
-    [ValidateSet('all', 'content', 'filename', 'dedup', 'automatic-refresh')][string]$Filter = 'all',
+    [ValidateSet('content_refresh', 'rename_overlay', 'shared_settings', 'realtime_search', 'content_interaction', 'content_progress_ui', 'address_edit_stability', 'content_lifecycle', 'global_search_settings_ui', 'win_e_window', 'details_tree_refresh')][string]$Fixture = 'content_refresh',
+    [ValidateSet('all', 'content', 'filename', 'dedup', 'automatic-refresh', 'scope-recovery', 'shift-double-click')][string]$Filter = 'all',
     [string]$BuildDir = 'build',
     [switch]$SkipBuild
 )
@@ -10,8 +10,10 @@ $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $taskRoot
 try {
-    if ($Filter -eq 'automatic-refresh') {
-        if ($Fixture -ne 'content_refresh') { throw 'Automatic refresh filter requires content_refresh.' }
+    if ($Filter -eq 'shift-double-click') {
+        if ($Fixture -ne 'win_e_window') { throw 'Shift double-click filter requires win_e_window.' }
+    } elseif ($Filter -in @('automatic-refresh', 'scope-recovery')) {
+        if ($Fixture -ne 'content_refresh') { throw 'Content refresh filter requires content_refresh.' }
     } elseif ($Fixture -ne 'realtime_search' -and $Filter -ne 'all') { throw 'Filter applies only to realtime_search.' }
     $taskBuild = (Resolve-Path -LiteralPath $BuildDir).Path
     if (!$SkipBuild) {
@@ -36,7 +38,7 @@ try {
     try {
         & link.exe /nologo '@content_refresh_link.rsp'
         if ($LASTEXITCODE) { throw 'Content refresh test linking failed.' }
-        if ($Filter -eq 'automatic-refresh') { & ".\pulse_${Fixture}_test.exe" '--automatic-refresh' }
+        if ($Filter -in @('automatic-refresh', 'scope-recovery', 'shift-double-click')) { & ".\pulse_${Fixture}_test.exe" "--$Filter" }
         elseif ($Fixture -eq 'realtime_search') { & ".\pulse_${Fixture}_test.exe" $Filter }
         else { & ".\pulse_${Fixture}_test.exe" }
         if ($LASTEXITCODE) { throw 'Content refresh test failed.' }

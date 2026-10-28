@@ -40,6 +40,9 @@ void AcceptLiveNetworkProgress(AppState& s, const std::shared_ptr<LiveNetworkSea
 void DropLiveNetworkSearch(AppState& s, uint64_t session_id);
 void AddLiveNetworkRoot(AppState& s, app::Tab& tab);
 void MaybePrefetchSearchPage(AppState& s);
+// A name search's results scrolling has not loaded yet, in one request (P4d).
+// True while a page is on its way; false when nothing more can come.
+bool RequestAllSearchResults(AppState& s, app::Tab& tab);
 void CancelActiveContentSearch(AppState& s, app::Tab& tab);
 enum class PathLoadReason { Navigate, RestoreSession, History };
 void MarkContentSearchStopped(app::Tab& tab);
@@ -71,7 +74,9 @@ bool ApplyNotifyToVisible(AppState& s, const std::wstring& path,
 void DropSizePatches(AppState& s, const std::wstring& path);
 void QueueSizePatch(AppState& s, const std::wstring& path, const std::wstring& name,
                            ULONGLONG due);
-void DrainDirNotifies(AppState& s);
+// True while batches are held for a later tick (DirNotifyPacer): keep the
+// tick fast until they land.
+bool DrainDirNotifies(AppState& s);
 void RestoreNavigationReturnSelection(AppState& s, app::Tab& tab,
                                              const std::wstring& childName);
 void NavigateTo(AppState& s, const std::wstring& path);
@@ -98,12 +103,17 @@ void CycleFocus(AppState& s);
 void MarkTargetPane(AppState& s);
 void SortBy(AppState& s, ui::SortColumn col);
 void SetSort(AppState& s, ui::SortColumn col, ui::SortDirection direction);
+// Where folders sit next to files (app::FolderSortMode 0..2) in the active
+// tab; a real folder remembers it, the way it remembers its sort column.
+void SetFolderSort(AppState& s, int mode);
 // "Group by" for the active folder (remembered per folder); 0 turns it off.
 void SetGroupBy(AppState& s, int group_by);
-void OpenSelected(AppState& s);
+void OpenSelected(AppState& s, bool folder_in_new_window = false);
 // Opens one path as if chosen in the list: folders navigate, files launch.
 void OpenPath(AppState& s, const std::wstring& path);
 void GoUp(AppState& s);
+// The phone list changed: reload phone views whose device came, went or unlocked.
+void RefreshDeviceViews(AppState& s);
 // A press on a pane banner button (retry, go up, reconnect, unlock, refresh,
 // dismiss); false when the hit is not one. The pane is already focused.
 bool HandlePaneBannerPress(AppState& s, const ui::HitTestResult& hit);
@@ -119,6 +129,8 @@ void OpenTabAt(AppState& s, const std::wstring& path);
 void NewTab(AppState& s, const std::wstring& path);
 void NewBackgroundTab(AppState& s, const std::wstring& path);
 void OpenSettingsTab(AppState& s, int page);
+// The settings button again: back to the tab settings was opened from.
+void CloseSettings(AppState& s);
 void CloseLayoutTab(AppState& s, size_t idx);
 void CloseActiveTab(AppState& s);
 void SwitchTab(AppState& s, size_t idx);

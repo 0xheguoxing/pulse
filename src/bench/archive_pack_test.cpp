@@ -32,6 +32,10 @@ int wmain(int argc, wchar_t** argv) {
     Check(!ParseArchivePackListing(prefix + "Path = bad\nSize = -1\n\n", 0, text, &error), "negative size rejected");
     Check(!ParseArchivePackListing(prefix + "Path = bad\nSize = 18446744073709551616\n\n", 0, text, &error), "size overflow rejected");
     Check(!ParseArchivePackListing(prefix + "Path = bad\n", 0, text, &error), "missing size rejected");
+    Check(ParseArchivePackListing("Type = wim\nComment = \n----------\nPath = data\nFolder = +\nSize = \nPacked Size = \n\n" + file,
+        0, text, &error) && text.find(L"hello.txt") != std::wstring::npos, "empty WIM directory values ignored");
+    Check(ParseArchivePackListing("Type = Xar\n----------\nPath = data\nSize =\nMode = drwxr-xr-x\nType = directory\n\n" + file,
+        0, text, &error), "XAR directory mode accepted");
     Check(!ParseArchivePackListing(prefix + "Path = bad\nSize = 1", 0, text, &error), "truncated output rejected");
     Check(!ParseArchivePackListing(prefix + "Path = bad\nPath = other\nSize = 1\n\n", 0, text, &error), "duplicate path rejected");
     Check(!ParseArchivePackListing(prefix + "Path = bad\xff\nSize = 1\n\n", 0, text, &error), "invalid UTF8 rejected");

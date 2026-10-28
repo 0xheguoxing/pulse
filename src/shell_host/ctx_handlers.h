@@ -58,6 +58,9 @@ struct CtxHandlerSlot {
     // Destinations in the SendTo folder. Explorer's 发送到 lists them from
     // posted messages, so collection pumps until the flyout holds them all.
     int send_to_expected = 0;
+    // A phone item's menu (the shell's own). Pulse has no 固定到快速访问 row
+    // for it (its pins need a real path), so the native row stays.
+    bool shell_namespace = false;
 };
 
 struct CtxBind {
@@ -153,5 +156,11 @@ std::vector<CtxItemOut> MergeNativeSendTo(const std::vector<CtxItemOut>& native,
                                           const std::vector<CtxItemOut>& slot_rows,
                                           std::vector<std::wstring>* slot_only = nullptr,
                                           std::vector<std::wstring>* native_only = nullptr);
+
+// Pins the given paths to the Windows taskbar via twinui's TaskbarPinManager
+// and stores the first failure (or S_OK) in `result`. Returns false, leaving
+// `result` untouched, when that manager is unavailable on this Windows build;
+// the caller then falls back to the verb's own InvokeCommand.
+bool InvokeTaskbandPin(const std::vector<std::wstring>& paths, HRESULT& result);
 
 } // namespace pulse::shell

@@ -1,6 +1,7 @@
 #include "app_internal.h"
 #include "context_menu.h"
 #include "../fs/fs_enum.h"
+#include "../fs/device_path.h"
 #include "../ops/clipboard.h"
 #include "../common/localization.h"
 
@@ -21,7 +22,8 @@ void RunPathCommand(AppState& s, const std::wstring& path, bool filesystem, int 
         NavigateTo(s, path);
         break;
     case app::CmdCopyPath:
-        ops::WriteClipboardText(shell_path);
+        // A phone folder: the path Explorer's address bar shows, not Pulse's.
+        ops::WriteClipboardText(fs::IsDevicePath(path) ? DeviceFriendlyPath(path) : shell_path);
         break;
     case app::CmdCopy:
         if (filesystem) ops::WriteClipboard({shell_path}, false);
@@ -50,8 +52,9 @@ void ShowBreadcrumbMenu(AppState& s, std::wstring path, POINT screen_pt) {
     RunPathCommand(s, path, filesystem, command);
 }
 
-// #80: OneDrive rows form a header-less section, so the row carries what a
-// header menu would: the usual folder commands, then hiding OneDrive. The toast
+// #80: cloud rows (OneDrive, WPS网盘, ...) form a header-less section, so the
+// row carries what a header menu would: the usual folder commands, then hiding
+// the section. The toast
 // says where to bring it back.
 void ShowCloudPlaceMenu(AppState& s, const std::wstring& path, POINT screen_pt) {
     if (!EnsureMenu(s)) return;
@@ -67,7 +70,7 @@ void ShowCloudPlaceMenu(AppState& s, const std::wstring& path, POINT screen_pt) 
     const int command = s.menu->TrackPopup(screen_pt, std::move(items));
     if (command == kHideCloud) {
         s.sidebarHiddenMask |= 1u << static_cast<int>(app::SidebarSectionId::Cloud);
-        s.notification_toast.Show(s.hwnd, L"OneDrive",
+        s.notification_toast.Show(s.hwnd, l10n::Get(l10n::StringId::SidebarCloudDrives),
             l10n::Get(l10n::StringId::SidebarCloudHiddenHint), false);
         InvalidateRect(s.hwnd, nullptr, FALSE);
         return;

@@ -16,7 +16,7 @@ bool ExportAppDiagnostics(const std::wstring& destination, bool include_service,
     try {
         if (!fs::is_directory(destination) || !fs::is_empty(destination) ||
             (GetFileAttributesW(destination.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT)) {
-            error = l10n::Pick(L"请选择空文件夹保存诊断包。", L"Choose an empty folder for the diagnostics package.");
+            error = l10n::Get(l10n::StringId::ChooseAnEmptyFolderForTheDiagnosticsPackage).c_str();
             return false;
         }
         diagnostics::ExportOptions options;
@@ -49,7 +49,7 @@ bool ExportAppDiagnostics(const std::wstring& destination, bool include_service,
         if (archived) error.clear();
         return archived;
     } catch (...) {
-        error = l10n::Pick(L"诊断包未完整生成，已导出的文件仍保留在所选文件夹。", L"The diagnostic package is incomplete. Exported files remain in the selected folder.");
+        error = l10n::Get(l10n::StringId::TheDiagnosticPackageIsIncompleteExportedFilesRemainInTheSele).c_str();
         return false;
     }
 }

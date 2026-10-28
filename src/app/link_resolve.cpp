@@ -2,6 +2,7 @@
 // session, so COM is initialized once per thread via a thread_local guard.
 #include "link_resolve.h"
 #include <shobjidl.h>
+#include <shlobj.h>
 #include <wrl/client.h>
 #include <cwctype>
 #include <winioctl.h>
@@ -74,13 +75,84 @@ std::wstring UrlDestination(const std::wstring& path) {
     return target;
 }
 
+// Windows Installer, loaded on first use (only advertised shortcuts need it).
+using MsiGetShortcutTargetFn = UINT(WINAPI*)(LPCWSTR, LPWSTR, LPWSTR, LPWSTR);
+using MsiGetComponentPathFn = int(WINAPI*)(LPCWSTR, LPCWSTR, LPWSTR, DWORD*);
+struct MsiApi {
+    MsiGetShortcutTargetFn shortcut_target = nullptr;
+    MsiGetComponentPathFn component_path = nullptr;
+};
+
+const MsiApi& Msi() {
+    static const MsiApi api = [] {
+        MsiApi loaded;
+        if (const HMODULE msi = LoadLibraryExW(L"msi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {
+            loaded.shortcut_target = reinterpret_cast<MsiGetShortcutTargetFn>(
+                reinterpret_cast<void*>(GetProcAddress(msi, "MsiGetShortcutTargetW")));
+            loaded.component_path = reinterpret_cast<MsiGetComponentPathFn>(
+                reinterpret_cast<void*>(GetProcAddress(msi, "MsiGetComponentPathW")));
+        }
+        return loaded;
+    }();
+    return api;
+}
+
+bool IsAdvertised(IShellLinkW* link) {
+    ComPtr<IShellLinkDataList> data;
+    DWORD flags = 0;
+    return SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&data))) &&
+           SUCCEEDED(data->GetFlags(&flags)) && (flags & SLDF_HAS_DARWINID) != 0;
+}
+
+// The installed program behind an advertised shortcut: product and component
+// from the shortcut, the component's key path from Windows Installer. A query
+// only (never installs or repairs); empty when the product is not installed
+// locally or the key path is not a file (registry components).
+std::wstring AdvertisedTarget(const std::wstring& lnk_path) {
+    const MsiApi& msi = Msi();
+    if (!msi.shortcut_target || !msi.component_path) return {};
+    wchar_t product[40]{}, feature[64]{}, component[40]{};
+    if (msi.shortcut_target(lnk_path.c_str(), product, feature, component) != ERROR_SUCCESS ||
+        !product[0] || !component[0]) return {};
+    constexpr int kInstallStateMoreData = -3, kInstallStateLocal = 3;
+    std::wstring path(MAX_PATH, L'\0');
+    DWORD size = static_cast<DWORD>(path.size());
+    int state = msi.component_path(product, component, path.data(), &size);
+    if (state == kInstallStateMoreData && size < 32767) {
+        path.assign(static_cast<size_t>(size) + 1, L'\0');
+        size = static_cast<DWORD>(path.size());
+        state = msi.component_path(product, component, path.data(), &size);
+    }
+    if (state != kInstallStateLocal || size == 0 || size >= path.size()) return {};
+    path.resize(size);
+    const bool drive = path.size() > 2 && path[1] == L':' && path[2] == L'\\';
+    const bool unc = path.starts_with(L"\\\\");
+    return drive || unc ? path : std::wstring();
+}
+
+std::wstring WindowsDirectory() {
+    wchar_t dir[MAX_PATH]{};
+    const UINT length = GetSystemWindowsDirectoryW(dir, MAX_PATH);
+    return length && length < MAX_PATH ? std::wstring(dir, length) : std::wstring();
+}
+
 } // namespace
 
+bool IsInstallerCachePath(const std::wstring& path, const std::wstring& windows_dir) {
+    if (windows_dir.empty()) return false;
+    std::wstring_view p(path);
+    if (p.starts_with(L"\\\\?\\")) p.remove_prefix(4);
+    std::wstring prefix = windows_dir;
+    if (prefix.back() != L'\\') prefix += L'\\';
+    prefix += L"Installer\\";
+    return p.size() > prefix.size() && _wcsnicmp(p.data(), prefix.c_str(), prefix.size()) == 0;
+}
+
 bool ResolveLink(const std::wstring& lnk_path, fs::DirEntry& e) {
-    e.link_destination.clear();
-    e.link_target.clear();
+    e.link_destination = std::wstring();
+    e.link_target = std::wstring();
     e.link_target_size = 0;
-    e.link_target_mtime = {};
+    e.link_target_mtime = FILETIME{};
     e.link_target_is_dir = false;
     thread_local ThreadCom com;
     if (FAILED(com.hr)) return false;
@@ -92,10 +164,23 @@ bool ResolveLink(const std::wstring& lnk_path, fs::DirEntry& e) {
     if (FAILED(link.As(&file))) return false;
     // STGM_READ: IPersistFile::Load parses the shortcut; no target tracking.
     if (FAILED(file->Load(lnk_path.c_str(), STGM_READ))) return false;
-    wchar_t raw[32768]{};
-    WIN32_FIND_DATAW fd{};
-    if (FAILED(link->GetPath(raw, static_cast<int>(std::size(raw)), &fd,
-                             SLGP_RAWPATH)) || raw[0] == L'\0') return false;
+    std::wstring raw;
+    if (IsAdvertised(link.Get())) {
+        // GetPath names the product icon here; ask Windows Installer instead.
+        raw = AdvertisedTarget(lnk_path);
+        if (raw.empty()) return false;
+    } else {
+        std::vector<wchar_t> buffer(32768);
+        WIN32_FIND_DATAW fd{};
+        if (FAILED(link->GetPath(buffer.data(), static_cast<int>(buffer.size()), &fd,
+                                 SLGP_RAWPATH)) || buffer[0] == L'\0') return false;
+        raw = buffer.data();
+        static const std::wstring windows_dir = WindowsDirectory();
+        if (IsInstallerCachePath(raw, windows_dir)) {
+            e.link_destination = raw;  // shown, never opened in place of the shortcut
+            return false;
+        }
+    }
 
     const std::wstring target = fs::NormalizePath(raw);
     e.link_destination = raw;
@@ -125,7 +210,7 @@ void ResolveLinksInPlace(const std::wstring& parent_path,
         fs::DirEntry& e = entries[i];
         const bool reparse = fs::ClassifyLink(e.attrs, e.reparse_tag) != fs::LinkKind::None;
         if (!reparse && (e.is_dir || (!HasLnkSuffix(e.name) && !HasUrlSuffix(e.name)))) continue;
-        e.link_destination.clear();
+        e.link_destination = std::wstring();
         if (e.cloud_recall || e.change_record_only) continue;
         std::wstring full = e.full_path;
         if (full.empty()) {

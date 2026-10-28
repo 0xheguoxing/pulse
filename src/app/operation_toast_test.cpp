@@ -1,6 +1,7 @@
 #ifdef PULSE_WITH_SELFTEST
 #include "operation_toast_test.h"
 #include "app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "../common/localization.h"
 #include <cmath>
 #include <cstdio>
@@ -127,7 +128,7 @@ bool RunOperationToastTest() {
                 state->notification_toast.ShowSnack(hwnd, ui::SnackIcon::Undo, l10n::Get(l10n::StringId::WindowClosedTitle),
                                                     L"files", {{l10n::Get(l10n::StringId::SnackRestore), kSnackAction}},
                                                     L"Ctrl+Shift+T");
-                if (settled) Sleep(240);  // past the 180 ms slide-in
+                if (settled) Sleep(420);  // past the rise (Pop spring, ~350 ms)
                 dc->BeginDraw();
                 dc->Clear(D2D1::ColorF(0, 0.0f));
                 state->renderer.Render(BuildVm(*state, false),

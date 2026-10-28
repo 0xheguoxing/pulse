@@ -122,6 +122,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
             painter_.DrawSegmentedItem(item);
         }
     };
+    if (vm.settings_page != 8) {
     text(pack_text::TriggerSection(), lay.trigger_section);
     const int trigger = vm.settings_preview_trigger == 1 ? 1 : 0;
     choice_row(lay.trigger_row, lay.trigger_choice, 2, trigger, PackAction::TriggerHover, L"\xE890",
@@ -193,8 +194,8 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         painter_.DrawWrappedCaption(info.description, D2D1::Point2F(bounds.left, bounds.top + title_h),
             bounds.right - bounds.left, theme.text_secondary);
         const bool has = (vm.settings_preview_codecs & (1u << i)) != 0;
-        const auto status = !detected ? l10n::Pick(L"检测中", L"Checking") : has
-            ? l10n::Pick(L"已安装", L"Installed") : l10n::Pick(L"未安装", L"Not installed");
+        const auto status = !detected ? l10n::Get(l10n::StringId::Checking).c_str() : has
+            ? l10n::Get(l10n::StringId::Installed).c_str() : l10n::Get(l10n::StringId::NotInstalled).c_str();
         fluent::BadgeSpec badge;
         badge.bounds = lay.preview_codec_badge[i]; badge.text = status;
         badge.kind = !detected ? fluent::BadgeKind::Neutral : has ? fluent::BadgeKind::Success : fluent::BadgeKind::Warning;
@@ -203,7 +204,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         if (get.right > get.left) {
             fluent::ControlState state{};
             state.hovered = IsHovered(vm, H::SettingsPreviewStore, i);
-            painter_.DrawButton({get, l10n::Pick(L"获取", L"Get"), {}, fluent::ButtonKind::Standard, state});
+            painter_.DrawButton({get, l10n::Get(l10n::StringId::Get).c_str(), {}, fluent::ButtonKind::Standard, state});
         }
         divider_below(r);
     }
@@ -211,6 +212,19 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         D2D1::Point2F(lay.preview_codec_hint.left, lay.preview_codec_hint.top),
         lay.preview_codec_hint.right - lay.preview_codec_hint.left, theme.text_secondary);
     text(pack_text::PacksSection(), lay.pack_section);
+    // The packs live on their own page now: count and size, and the way there.
+    {
+        const auto& r = lay.pack_summary;
+        card(r);
+        DrawIconText(r.left + 16*s, r.top + 24*s, 24*s, 24*s, L"\xE7B8", L"", theme.text_secondary, 0.85f);
+        const bool compact = r.right - r.left < 560*s*static_cast<float>(vm.settings_ui_font_scale)/100;
+        const float right = compact ? r.right - 16*s : lay.pack_manage.left - 12*s;
+        text(pack_text::Summary(vm), D2D1::RectF(r.left + 54*s, r.top + 14*s, right, r.top + 38*s));
+        text(vm.settings_pack_root, D2D1::RectF(r.left + 54*s, r.top + 38*s, right, r.top + 58*s), true);
+        button(lay.pack_manage, pack_text::ManagePacks(), PackAction::ManagePacks);
+    }
+    return;
+    }
 
     // Summary: count, disk use and location.
     {
@@ -218,10 +232,14 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
         card(r);
         DrawIconText(r.left + 16*s, r.top + 24*s, 24*s, 24*s, L"\xE7B8", L"", theme.text_secondary, 0.85f);
         const bool compact = r.right - r.left < 560*s*static_cast<float>(vm.settings_ui_font_scale)/100;
-        const float right = compact ? r.right - 16*s : lay.pack_open.left - 12*s;
+        const float right = compact ? r.right - 16*s
+            : (lay.pack_update_all.right > lay.pack_update_all.left ? lay.pack_update_all.left : lay.pack_open.left) - 12*s;
         text(pack_text::Summary(vm), D2D1::RectF(r.left + 54*s, r.top + 14*s, right, r.top + 38*s));
         text(vm.settings_pack_root, D2D1::RectF(r.left + 54*s, r.top + 38*s, right, r.top + 58*s), true);
         button(lay.pack_open, pack_text::OpenFolder(), PackAction::OpenFolder);
+        if (lay.pack_update_all.right > lay.pack_update_all.left)
+            button(lay.pack_update_all, pack_text::UpdateAll(vm.settings_pack_updates), PackAction::UpdateAll,
+                   fluent::ButtonKind::Primary);
     }
 
     // One pack card (geometry from LayoutSettingsPacks' card_layout).
@@ -270,9 +288,10 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
             text(c.meta, D2D1::RectF(text_left, c.primary.top + 6*s, meta_right, c.primary.bottom - 6*s), true);
         }
         const bool installed = c.installed && !c.installing;
-        button(c.primary, c.primary_label, installed ? c.remove_action : c.install_action,
-               installed || c.installing || !c.available ? fluent::ButtonKind::Standard : fluent::ButtonKind::Primary,
-               pack_text::PrimaryEnabled(c.available, c.installed, c.installing));
+        if (c.primary.right > c.primary.left)
+            button(c.primary, c.primary_label, installed ? c.remove_action : c.install_action,
+                   installed || c.installing || !c.available ? fluent::ButtonKind::Standard : fluent::ButtonKind::Primary,
+                   pack_text::PrimaryEnabled(c.available, c.installed, c.installing));
         if (updatable) button(c.update, c.update_label, c.update_action, fluent::ButtonKind::Primary);
         if (c.notice_box.bottom > c.notice_box.top) {
             const auto& n = c.notice_box;
@@ -291,7 +310,7 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                pack_text::MediaTitle(), pack_text::MediaDesc(), pack_text::MediaMeta(), pack_text::MediaBadge(vm),
                false, vm.settings_pack_ffmpeg_enabled, vm.settings_pack_media_installed,
                vm.settings_pack_installing, vm.settings_pack_media_available, vm.settings_pack_progress, pack_text::Primary(vm),
-               PackAction::Enable, PackAction::Install, PackAction::Remove, vm.settings_pack_notice,
+               PackAction::Enable, PackAction::Install, PackAction::Remove, pack_text::MediaNotice(vm),
                lay.pack_update, pack_text::MediaUpdate(vm), PackAction::Update});
 
     // Images: the image pack.
@@ -322,6 +341,38 @@ void MainRenderer::DrawSettingsPacks(const WindowViewModel& vm, const D2D1_RECT_
                vm.settings_pack_archive_installing, vm.settings_pack_archive_available, vm.settings_pack_archive_progress, pack_text::ArchivePrimary(vm),
                PackAction::ArchiveEnable, PackAction::ArchiveInstall, PackAction::ArchiveRemove,
                vm.settings_pack_archive_notice, lay.pack_archive_update, pack_text::ArchiveUpdate(vm), PackAction::ArchiveUpdate});
+
+    // 搜索: 内容搜索 (index status in the notice box once installed) and OCR.
+    text(pack_text::SearchSection(), lay.pack_search_section);
+    {
+        static const std::wstring kNone;
+        const bool ready = pack_text::ContentReady(vm);
+        draw_card({lay.pack_content_card, lay.pack_content_badge, lay.pack_content_enable, lay.pack_content_primary,
+                   lay.pack_content_notice, L"\xE721",
+                   pack_text::ContentTitle(), pack_text::ContentDesc(), pack_text::ContentMeta(), pack_text::ContentBadge(vm),
+                   false, false, ready, false, pack_text::ContentAvailable(vm), 0.0f, pack_text::ContentPrimary(vm),
+                   PackAction::ContentInstall, PackAction::ContentInstall, PackAction::ContentManage,
+                   ready ? vm.settings_content_status : kNone, lay.pack_content_update, std::wstring{}, PackAction::ContentInstall});
+        draw_card({lay.pack_ocr_card, lay.pack_ocr_badge, lay.pack_ocr_enable, lay.pack_ocr_primary,
+                   lay.pack_ocr_notice, L"\xE8B9",
+                   pack_text::OcrTitle(), pack_text::OcrDesc(), {}, pack_text::OcrBadge(),
+                   false, false, false, false, false, 0.0f, pack_text::ComingSoon(),
+                   PackAction::ContentInstall, PackAction::ContentInstall, PackAction::ContentInstall,
+                   kNone, lay.pack_ocr_update, std::wstring{}, PackAction::ContentInstall});
+    }
+
+    // AI: the AI pack; its download shows here (progress bar), not in a toast.
+    text(pack_text::AiSection(), lay.pack_ai_section);
+    {
+        static const std::wstring kNone;
+        const PackAction action = pack_text::AiAction(vm);
+        draw_card({lay.pack_ai_card, lay.pack_ai_badge, lay.pack_ai_enable, lay.pack_ai_primary,
+                   lay.pack_ai_notice, L"\xE99A",
+                   pack_text::AiTitle(), pack_text::AiDesc(), pack_text::AiMeta(), pack_text::AiBadge(vm),
+                   false, false, pack_text::AiUsable(vm), vm.settings_ai_pack_installing,
+                   pack_text::AiAvailable(vm), vm.settings_ai_pack_progress, pack_text::AiPrimary(vm),
+                   action, action, action, kNone, lay.pack_ai_update, std::wstring{}, action});
+    }
 
     card(lay.pack_source_group);
     const bool source_switch = pack_text::ShowsEnable(vm);

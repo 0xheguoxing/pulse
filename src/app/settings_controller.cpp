@@ -7,11 +7,14 @@
 #include "../index/index_client.h"
 #include "../index/index_config.h"
 #include "../index/network_agent_client.h"
+#include "../fs/wsl_path.h"
 #include "../common/preview_packs.h"
 #include "../common/runtime_log.h"
 #include "system_ctx_model.h"
+#include "shortcut_settings.h"
 #include "pack_catalog.h"
 #include "../ui/quick_preview_command.h"
+#include "../ui/settings_page_ids.h"
 
 #include <shellapi.h>
 #include <algorithm>
@@ -40,26 +43,26 @@ std::wstring IntegrationFailureText(const ShellIntegrationFailure& failure) {
     const std::wstring code = std::to_wstring(failure.status);
     switch (failure.kind) {
     case K::AccessDenied:
-        return l10n::Pick(L"系统拒绝写入，可能被安全软件拦截", L"the write was denied, possibly by security software");
+        return l10n::Get(l10n::StringId::TheWriteWasDeniedPossiblyBySecuritySoftware).c_str();
     case K::Reverted:
-        return l10n::Pick(L"写入后被改回，可能被安全软件拦截", L"it was undone right after writing, possibly by security software");
+        return l10n::Get(l10n::StringId::ItWasUndoneRightAfterWritingPossiblyBySecuritySoftware).c_str();
     case K::WriteError:
-        return std::wstring(l10n::Pick(L"写入注册表失败，错误 ", L"registry write failed, error ")) + code;
+        return std::wstring(l10n::Get(l10n::StringId::RegistryWriteFailedError).c_str()) + code;
     case K::ReadError:
-        return std::wstring(l10n::Pick(L"读取注册表失败，错误 ", L"registry read failed, error ")) + code;
+        return std::wstring(l10n::Get(l10n::StringId::RegistryReadFailedError).c_str()) + code;
     case K::LegacyResidue:
-        return l10n::Pick(L"发现旧版本留下的关联，点「重试」会先清理", L"old associations from an earlier version were found; Try again cleans them first");
+        return l10n::Get(l10n::StringId::OldAssociationsFromAnEarlierVersionWereFoundTryAgainCleansTh).c_str();
     case K::BadBackup:
-        return l10n::Pick(L"原设置的备份已损坏，为免丢失原设置已停止", L"the backup of the original setting is damaged, so nothing was changed");
+        return l10n::Get(l10n::StringId::TheBackupOfTheOriginalSettingIsDamagedSoNothingWasChanged).c_str();
     case K::PendingUpgrade:
-        return l10n::Pick(L"上次升级的关联迁移没有完成", L"the association update from the last upgrade did not finish");
+        return l10n::Get(l10n::StringId::TheAssociationUpdateFromTheLastUpgradeDidNotFinish).c_str();
     case K::ChangedByOther:
-        return l10n::Pick(L"已被其他程序修改，为免覆盖已停止", L"another program changed it, so it was not overwritten");
+        return l10n::Get(l10n::StringId::AnotherProgramChangedItSoItWasNotOverwritten).c_str();
     case K::None:
-        return l10n::Pick(L"写入后读取结果不一致", L"the setting did not read back as written");
+        return l10n::Get(l10n::StringId::TheSettingDidNotReadBackAsWritten).c_str();
     case K::Unknown: break;
     }
-    return l10n::Pick(L"原因未知", L"unknown reason");
+    return l10n::Get(l10n::StringId::UnknownReason).c_str();
 }
 
 std::wstring IntegrationLogPath() {
@@ -111,13 +114,25 @@ SystemCtxModel& SettingsController::SystemCtx() {
     return *sysctx_;
 }
 
+ShortcutSettings& SettingsController::Shortcuts() {
+    if (!shortcuts_) shortcuts_ = std::make_shared<ShortcutSettings>();
+    return *shortcuts_;
+}
+
 int SettingsController::PageFromName(std::wstring_view name) noexcept {
     if (name == L"index") return 1;
     if (name == L"context") return 2;
     if (name == L"about") return 3;
     if (name == L"duplicates") return 4;
-    if (name == L"packs") return 5;
+    if (name == L"preview") return 5;
+    if (name == L"packs") return 8;
+    if (name == L"ai") return ui::kSettingsPageAi;   // 增强包 > AI 与 MCP
     if (name == L"system-menu") return 6;
+    if (name == L"shortcuts") return 7;
+    if (name == L"files") return 9;
+    if (name == L"tabs") return 10;
+    if (name == L"system") return 11;
+    if (name == L"file-ops") return 12;
     return 0;
 }
 
@@ -126,14 +141,21 @@ const wchar_t* SettingsController::PageName(int page) noexcept {
     if (page == 2) return L"context";
     if (page == 3) return L"about";
     if (page == 4) return L"duplicates";
-    if (page == 5) return L"packs";
+    if (page == 5) return L"preview";
+    if (page == 8) return L"packs";
+    if (page == ui::kSettingsPageAi) return L"ai";
     if (page == 6) return L"system-menu";
+    if (page == 7) return L"shortcuts";
+    if (page == 9) return L"files";
+    if (page == 10) return L"tabs";
+    if (page == 11) return L"system";
+    if (page == 12) return L"file-ops";
     return L"general";
 }
 
 void SettingsController::SelectPage(int page) noexcept {
     CancelGlobalSearchHotkeyCapture();
-    page_ = std::clamp(page, 0, 6);
+    page_ = std::clamp(page, 0, ui::kSettingsPageAi);
     scroll_ = 0.0f;
     packs_checked_ = 0;  // re-read the packs when their page opens
 }
@@ -217,6 +239,9 @@ void SettingsController::RefreshPacks() {
     if (state.use_custom) {
         if (IsFfmpegExe(state.custom_path)) state.ffmpeg = 2;
     } else if (media.present) state.ffmpeg = 1;
+    // A working FFmpeg of the user's own replaces the media pack outright
+    // (no fallback to it), so the pack is neither offered nor updated.
+    if (state.ffmpeg == 2) state.update_version.clear();
     wchar_t found[MAX_PATH]{};
     if (SearchPathW(nullptr, L"ffmpeg.exe", nullptr, MAX_PATH, found, nullptr) && IsFfmpegExe(found))
         state.detected_path = found;
@@ -316,8 +341,7 @@ bool SettingsController::InstallPack(packs::PackId id, HWND notify, bool automat
     notice.clear();
     if (!release.file_count) {
         // No release is advertised until its downloadable files are published.
-        notice = l10n::Pick(L"此预览增强包尚未发布下载。",
-                            L"This preview pack has not been published for download.");
+        notice = l10n::Get(l10n::StringId::ThisPreviewPackHasNotBeenPublishedForDownload).c_str();
         return false;
     }
     // Replacing an installed pack is an update: TakePackResult keeps the switches.
@@ -335,6 +359,7 @@ int SettingsController::AutoUpdatePacks(HWND notify) {
     for (uint32_t index = 0; index < packs::kPackCount; ++index) {
         const auto id = static_cast<packs::PackId>(index);
         const PackRelease& release = ReleaseFor(id);
+        if (id == packs::PackId::Media && settings.use_custom_ffmpeg && IsFfmpegExe(settings.custom_ffmpeg)) continue;
         if (auto_declined_[index] || !release.file_count || InstallerFor(id).running() ||
             !packs::PackAutoUpdateWanted(id, settings, packs::ReadInstalledPack(id), release.version)) continue;
         automatic_[index] = false;
@@ -378,8 +403,7 @@ bool SettingsController::TakePackResult(packs::PackId id) {
             settings.use_custom_ffmpeg = false;
             settings.enabled[0] = true;
             if (!packs::SavePackSettings(settings)) {
-                notice = l10n::Pick(L"增强包已安装，但未能保存来源设置。请关闭“使用已有 FFmpeg”以切换到增强包。",
-                    L"Pack installed, but the source setting could not be saved. Turn off Use existing FFmpeg to select the pack.");
+                notice = l10n::Get(l10n::StringId::PackInstalledButTheSourceSettingCouldNotBeSavedTurnOffUseExi).c_str();
             }
             RefreshPacks();
         }
@@ -389,26 +413,21 @@ bool SettingsController::TakePackResult(packs::PackId id) {
         // Only the card's 取消 ends a job early: for an automatic update that
         // is the answer for this run.
         if (automatic) auto_declined_[index] = true;
-        notice = l10n::Pick(L"已取消下载。", L"Download cancelled.");
+        notice = l10n::Get(l10n::StringId::DownloadCancelled).c_str();
         break;
     default:
         // A background update fails quietly: 更新到 stays, the next check retries.
         if (automatic) break;
         if (error == ERROR_INVALID_DATA) {
-            notice = l10n::Pick(L"下载的文件校验失败，已丢弃。请稍后重试。",
-                                L"The download did not pass verification and was discarded. Try again later.");
+            notice = l10n::Get(l10n::StringId::TheDownloadDidNotPassVerificationAndWasDiscardedTryAgainLate).c_str();
         } else if (error == ERROR_SHARING_VIOLATION) {
             notice = id != packs::PackId::Media
-                ? l10n::Pick(L"旧版本的文件正在使用，请稍后再试一次。",
-                             L"Files of the old version are in use. Try again in a moment.")
-                : l10n::Pick(L"旧版本的文件正在使用。关闭正在播放的视频后再试一次。",
-                             L"Files of the old version are in use. Close playing videos and try again.");
+                ? l10n::Get(l10n::StringId::FilesOfTheOldVersionAreInUseTryAgainInAMoment).c_str()
+                : l10n::Get(l10n::StringId::FilesOfTheOldVersionAreInUseClosePlayingVideosAndTryAgain).c_str();
         } else if (error == ERROR_NOT_SUPPORTED) {
-            notice = l10n::Pick(L"这台电脑缺少解压所需的系统组件，无法安装。",
-                                L"This PC lacks the Windows component needed to unpack the download.");
+            notice = l10n::Get(l10n::StringId::ThisPCLacksTheWindowsComponentNeededToUnpackTheDownload).c_str();
         } else {
-            notice = l10n::Pick(L"下载失败，请检查网络后重试。",
-                                L"The download failed. Check the connection and try again.");
+            notice = l10n::Get(l10n::StringId::TheDownloadFailedCheckTheConnectionAndTryAgain).c_str();
         }
         break;
     }
@@ -426,10 +445,8 @@ bool SettingsController::RemovePack(packs::PackId id) {
     std::wstring message;
     if (!removed) {
         message = id != packs::PackId::Media
-            ? l10n::Pick(L"有文件正在使用，未能全部删除。请稍后再试一次。",
-                         L"Some files are in use and were not removed. Try again in a moment.")
-            : l10n::Pick(L"有文件正在使用，未能全部删除。关闭正在播放的视频后再试一次。",
-                         L"Some files are in use and were not removed. Close playing videos and try again.");
+            ? l10n::Get(l10n::StringId::SomeFilesAreInUseAndWereNotRemovedTryAgainInAMoment).c_str()
+            : l10n::Get(l10n::StringId::SomeFilesAreInUseAndWereNotRemovedClosePlayingVideosAndTryAg).c_str();
     }
     NoticeFor(id) = std::move(message);
     RefreshPacks();
@@ -492,15 +509,14 @@ bool SettingsController::ToggleCustomFfmpeg() {
         if (s.use_custom_ffmpeg && !packs::IsRegularFile(s.custom_ffmpeg) && !detected.empty())
             s.custom_ffmpeg = detected;
     });
-    packs_.notice = saved ? std::wstring{} : l10n::Pick(L"无法保存 FFmpeg 来源设置，请重试。",
-        L"Could not save the FFmpeg source setting. Try again.");
+    packs_.notice = saved ? std::wstring{} : l10n::Get(l10n::StringId::CouldNotSaveTheFFmpegSourceSettingTryAgain).c_str();
     RefreshPacks();
     return saved;
 }
 
 bool SettingsController::SetCustomFfmpeg(const std::wstring& path) {
     if (!IsFfmpegExe(path)) {
-        packs_.notice = l10n::Pick(L"请选择名为 ffmpeg.exe 的程序。", L"Choose the program named ffmpeg.exe.");
+        packs_.notice = l10n::Get(l10n::StringId::ChooseTheProgramNamedFfmpegExe).c_str();
         return false;
     }
     const bool saved = UpdatePackSettings([&](packs::PackSettings& s) {
@@ -508,8 +524,7 @@ bool SettingsController::SetCustomFfmpeg(const std::wstring& path) {
         s.use_custom_ffmpeg = true;
         s.enabled[0] = true;
     });
-    packs_.notice = saved ? std::wstring{} : l10n::Pick(L"无法保存 FFmpeg 来源设置，请重试。",
-        L"Could not save the FFmpeg source setting. Try again.");
+    packs_.notice = saved ? std::wstring{} : l10n::Get(l10n::StringId::CouldNotSaveTheFFmpegSourceSettingTryAgain).c_str();
     RefreshPacks();
     return saved;
 }
@@ -552,6 +567,16 @@ bool SettingsController::diagnostics_pending() const noexcept {
     return task_state_->diagnostics_pending;
 }
 
+bool SettingsController::settings_transfer_pending() const noexcept {
+    std::lock_guard<std::mutex> lock(task_state_->mutex);
+    return task_state_->transfer_pending;
+}
+
+bool SettingsController::StartSettingsTransfer(SettingsTask task) {
+    if (!IsSettingsTransferTask(task.kind)) return false;
+    return StartUiTask(std::move(task));
+}
+
 bool SettingsController::migration_pending() const noexcept {
     std::lock_guard<std::mutex> lock(task_state_->mutex);
     return task_state_->migration_pending;
@@ -578,6 +603,7 @@ bool SettingsController::StartTask(SettingsTask task, SettingsTaskOperation oper
             task_state_->migration_pending = task.kind == SettingsTaskKind::ConfigureIndexPath;
             task_state_->diagnostics_pending =
                 task.kind == SettingsTaskKind::DiagnosticsExport;
+            task_state_->transfer_pending = IsSettingsTransferTask(task.kind);
             if (task.kind == SettingsTaskKind::Volume)
                 task_state_->pending_volume = task.key;
         }
@@ -606,6 +632,7 @@ bool SettingsController::StartTask(SettingsTask task, SettingsTaskOperation oper
             state->local_pending = false;
             state->migration_pending = false;
             state->diagnostics_pending = false;
+            state->transfer_pending = false;
             if (task.kind == SettingsTaskKind::Volume)
                 state->pending_volume.clear();
         }
@@ -618,6 +645,7 @@ bool SettingsController::StartTask(SettingsTask task, SettingsTaskOperation oper
             state->local_pending = false;
             state->migration_pending = false;
             state->diagnostics_pending = false;
+            state->transfer_pending = false;
             state->pending_volume.clear();
         }
         return false;
@@ -629,9 +657,12 @@ bool SettingsController::StartUiTask(SettingsTask task) {
     if (!ui_.task_completion) return false;
     auto* network = network_;
     const auto diagnostics_export = ui_.export_diagnostics;
+    const auto settings_transfer = ui_.settings_transfer_task;
     if (IsNetworkTask(task.kind) && !network) return false;
-    return StartTask(std::move(task), [network, diagnostics_export](
+    if (IsSettingsTransferTask(task.kind) && !settings_transfer) return false;
+    return StartTask(std::move(task), [network, diagnostics_export, settings_transfer](
                                       const SettingsTask& value, std::wstring& error) {
+        if (IsSettingsTransferTask(value.kind)) return settings_transfer(value, error);
         // Local index settings run Pulse.Index.exe elevated. Report a missing
         // executable here (localized via ServiceText) instead of a shell dialog.
         if (!IsNetworkTask(value.kind) && value.kind != SettingsTaskKind::DiagnosticsExport &&
@@ -676,6 +707,9 @@ bool SettingsController::StartUiTask(SettingsTask task) {
         case SettingsTaskKind::DiagnosticsExport:
             return diagnostics_export &&
                 diagnostics_export(value.path, value.enabled, value.pin, error);
+        case SettingsTaskKind::SettingsExport:
+        case SettingsTaskKind::SettingsImport:
+            return false;  // handled above
         }
         return false;
     }, ui_.task_completion);
@@ -684,6 +718,8 @@ bool SettingsController::StartUiTask(SettingsTask task) {
 SettingsTaskEffect SettingsController::CompleteTask(const SettingsTaskResult& result,
                                                     bool service_installed) {
     SettingsTaskEffect effect;
+    // 备份与迁移 reports through its own toasts (settings_transfer_ui.cpp).
+    if (IsSettingsTransferTask(result.task.kind)) return effect;
     if (result.task.kind == SettingsTaskKind::ConfigureIndexPath) effect.refresh_index = true;
     if (result.ok) {
         error_.clear();
@@ -742,10 +778,8 @@ void SettingsController::Apply(SettingsEffect effect) const {
 void SettingsController::SaveAndApply(SettingsEffect effect) const {
     if (!prefs_->Save() && ui_.show_error)
         ui_.show_error(l10n::HantText(prefs_->load_failed ?
-            l10n::Pick(L"原设置未能读取，已阻止覆盖。请关闭后重试打开 Pulse。",
-                L"The original settings could not be read. Saving is blocked to protect them. Restart Pulse to retry.") :
-            l10n::Pick(L"设置未能保存，重启后可能恢复原值。",
-                L"Settings could not be saved and may revert after a restart.")));
+            l10n::Get(l10n::StringId::TheOriginalSettingsCouldNotBeReadSavingIsBlockedToProtectThe).c_str() :
+            l10n::Get(l10n::StringId::SettingsCouldNotBeSavedAndMayRevertAfterARestart).c_str()));
     Apply(effect);
 }
 
@@ -771,7 +805,43 @@ void SettingsController::AccentChoice(bool system_choice, uint32_t rgb) {
     if (prefs_->accent_rgb == next && prefs_->accent_follow_system == system_choice) return;
     prefs_->accent_rgb = std::move(next);
     prefs_->accent_follow_system = system_choice;
+    if (!system_choice) SyncCustomAccent(rgb);
     SaveAndApply(SettingsEffect::Accent);
+}
+
+namespace {
+uint32_t HslToRgb(int hue, int saturation, int lightness) noexcept {
+    const float h = static_cast<float>(hue % 360) / 60.0f;
+    const float s = static_cast<float>(std::clamp(saturation, 0, 100)) / 100.0f;
+    const float l = static_cast<float>(std::clamp(lightness, 0, 100)) / 100.0f;
+    const float c = (1.0f - std::fabs(2.0f * l - 1.0f)) * s;
+    const float x = c * (1.0f - std::fabs(std::fmod(h, 2.0f) - 1.0f));
+    float r = 0, g = 0, b = 0;
+    if (h < 1) { r = c; g = x; } else if (h < 2) { r = x; g = c; } else if (h < 3) { g = c; b = x; }
+    else if (h < 4) { g = x; b = c; } else if (h < 5) { r = x; b = c; } else { r = c; b = x; }
+    const float m = l - c / 2.0f;
+    auto channel = [&](float v) { return static_cast<uint32_t>(std::lround(std::clamp(v + m, 0.0f, 1.0f) * 255.0f)); };
+    return (channel(r) << 16) | (channel(g) << 8) | channel(b);
+}
+} // namespace
+
+void SettingsController::SyncCustomAccent(uint32_t rgb) noexcept {
+    if (slider_drag_ >= 2) return;  // the sliders drive the accent, not the other way round
+    const float r = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+    const float g = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+    const float b = static_cast<float>(rgb & 0xFF) / 255.0f;
+    const float hi = (std::max)({r, g, b}), lo = (std::min)({r, g, b}), d = hi - lo;
+    const float l = (hi + lo) / 2.0f;
+    float h = 0.0f, s = 0.0f;
+    if (d > 1e-4f) {
+        s = d / (1.0f - std::fabs(2.0f * l - 1.0f));
+        if (hi == r) h = 60.0f * std::fmod((g - b) / d + 6.0f, 6.0f);
+        else if (hi == g) h = 60.0f * ((b - r) / d + 2.0f);
+        else h = 60.0f * ((r - g) / d + 4.0f);
+        custom_hsl_[0] = static_cast<int>(std::lround(h)) % 360;  // grey keeps the last hue
+    }
+    custom_hsl_[1] = static_cast<int>(std::lround(std::clamp(s, 0.0f, 1.0f) * 100.0f));
+    custom_hsl_[2] = static_cast<int>(std::lround(l * 100.0f));
 }
 
 void SettingsController::RowHeight(int index) {
@@ -784,6 +854,37 @@ void SettingsController::FolderSort(int index) {
     static constexpr int values[] = {0, 1, 2};
     if (prefs_ && SelectValue(index, values, prefs_->folder_sort_mode))
         SaveAndApply(SettingsEffect::FolderSort);
+}
+
+void SettingsController::MtimeStyle(int index) {
+    static constexpr int values[] = {0, 1, 2, 3};
+    if (prefs_ && SelectValue(index, values, prefs_->list_mtime_hint))
+        SaveAndApply(SettingsEffect::ListStyle);
+}
+
+void SettingsController::MtimeRange(int index) {
+    static constexpr int values[] = {1, 3, 7, 30};
+    if (prefs_ && SelectValue(index, values, prefs_->list_mtime_range))
+        SaveAndApply(SettingsEffect::ListStyle);
+}
+
+void SettingsController::MtimePalette(int index) {
+    static constexpr int values[] = {0, 1, 2, 3, 4, 5};
+    if (prefs_ && SelectValue(index, values, prefs_->list_mtime_palette))
+        SaveAndApply(SettingsEffect::ListStyle);
+}
+
+void SettingsController::ClickMode(int index) {
+    if (!prefs_ || index < 0 || index > 3) return;
+    bool changed = false;
+    if (index < 2) {
+        changed = prefs_->single_click_open != (index == 1);
+        prefs_->single_click_open = index == 1;
+    } else {
+        changed = prefs_->name_highlight != index - 2;
+        prefs_->name_highlight = index - 2;
+    }
+    if (changed) SaveAndApply(SettingsEffect::ListStyle);
 }
 
 void SettingsController::DetailsColumns(uint32_t mask) {
@@ -876,9 +977,38 @@ void SettingsController::TrayIconSize(int index) {
         SaveAndApply(SettingsEffect::TrayDeckIcon);
 }
 
+void SettingsController::DoubleCtrlGap(int index) {
+    static constexpr int values[] = {200, 300, 400};
+    if (prefs_ && SelectValue(index, values, prefs_->global_search_double_ctrl_ms))
+        SaveAndApply(SettingsEffect::GlobalSearch);
+}
+
 // Both only change how the next frame is painted; the caller invalidates.
 // Values snap to the former preset levels unless Shift is held.
 bool SettingsController::SliderValue(int which, int value) {
+    if (prefs_ && which >= 2 && which <= 4) {
+        // 主题色 › 自定义: live while dragging; EndSlider saves.
+        int& target = custom_hsl_[which - 2];
+        value = std::clamp(value, 0, which == 2 ? 360 : 100);
+        if (target == value && !prefs_->accent_follow_system) return false;
+        target = value;
+        wchar_t hex[8]{};
+        swprintf_s(hex, L"%06X", HslToRgb(custom_hsl_[0], custom_hsl_[1], custom_hsl_[2]) & 0xFFFFFFu);
+        prefs_->accent_rgb = hex;
+        prefs_->accent_follow_system = false;
+        Apply(SettingsEffect::Accent);
+        return true;
+    }
+    if (which == 5) {
+        // 侧边栏与标题栏: snaps to the old look (10) and the ends unless Shift is held.
+        if (!prefs_) return false;
+        value = std::clamp(value, 0, 100);
+        if (GetKeyState(VK_SHIFT) >= 0)
+            for (int level : {0, 10, 50, 100}) if (std::abs(value - level) <= 2) value = level;
+        if (prefs_->frame_transparency == value) return false;
+        prefs_->frame_transparency = value;
+        return true;
+    }
     if (!prefs_ || which < 0 || which > 1) return false;
     const bool snap = GetKeyState(VK_SHIFT) >= 0;
     int& target = which == 0 ? prefs_->wallpaper_look : prefs_->wallpaper_blur;
@@ -941,8 +1071,7 @@ void SettingsController::Wallpaper(int action) {
     if (action == 0 && ui_.pick_image && ui_.pick_image(path)) {
         if (!path.empty()) {
             if (prefs_->StoreBackgroundImage(path)) Apply(SettingsEffect::WindowMaterial);
-            else if (ui_.show_error) ui_.show_error(l10n::HantText(l10n::Pick(
-                L"新壁纸未能保存，已保留原壁纸。", L"The new wallpaper could not be saved. The previous wallpaper was kept.")));
+            else if (ui_.show_error) ui_.show_error(l10n::HantText(l10n::Get(l10n::StringId::TheNewWallpaperCouldNotBeSavedThePreviousWallpaperWasKept).c_str()));
         }
     } else if (action == 1 && !prefs_->background_image.empty()) {
         prefs_->ClearBackgroundImage();
@@ -1017,11 +1146,12 @@ int SettingsController::IntegrationState() const noexcept {
     const bool active = p.open_folders_in_pulse || p.take_over_win_e || p.take_over_this_pc ||
         p.take_over_recycle_bin || p.integration_residual;
     if (!p.integration_enabled) return active ? 2 : 0;
-    if (p.open_folders_in_pulse != p.integration_folders ||
+    // In 兼容打开方式 the folder verb is meant to stay unregistered.
+    if (p.open_folders_in_pulse != (p.integration_folders && !p.integration_folders_compat) ||
         p.take_over_win_e != p.integration_win_e || p.take_over_this_pc != p.integration_this_pc ||
         p.take_over_recycle_bin != p.integration_recycle_bin)
         return 2;
-    return active || p.take_over_explorer_windows ? 1 : 0;
+    return active || p.take_over_explorer_windows || p.integration_folders_compat ? 1 : 0;
 }
 
 std::wstring SettingsController::IntegrationSummary() const {
@@ -1030,13 +1160,11 @@ std::wstring SettingsController::IntegrationSummary() const {
     if (IntegrationCanRetry()) {
         std::wstring message;
         if (!integration_error_.empty())
-            message = std::wstring(l10n::Pick(L"没能设置：", L"Could not apply: ")) + integration_error_ +
-                l10n::Pick(L"。详情见 %LOCALAPPDATA%\\Pulse\\logs\\integration.log。",
-                           L". Details: %LOCALAPPDATA%\\Pulse\\logs\\integration.log.");
+            message = std::wstring(l10n::Get(l10n::StringId::CouldNotApply).c_str()) + integration_error_ +
+                l10n::Get(l10n::StringId::DetailsLOCALAPPDATAPulseLogsIntegrationLog).c_str();
         if (integration_save_failed_) {
             if (!message.empty()) message += L" ";
-            message += l10n::Pick(L"你的选择没能保存，重启后可能变回原来的设置。",
-                L"Your choices could not be saved and may revert after a restart.");
+            message += l10n::Get(l10n::StringId::YourChoicesCouldNotBeSavedAndMayRevertAfterARestart).c_str();
         }
         return message;
     }
@@ -1050,7 +1178,7 @@ bool SettingsController::IntegrationJustEnabled() const noexcept {
 }
 
 void SettingsController::IntegrationAction(int index) {
-    if (!prefs_ || index < 0 || index > 8) return;
+    if (!prefs_ || index < 0 || index > 9) return;
     if (index == 8) {
         // Try it: open This PC the way the desktop icon does, through the shell.
         ShellExecuteW(nullptr, nullptr, L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", nullptr, nullptr, SW_SHOWNORMAL);
@@ -1072,32 +1200,33 @@ void SettingsController::IntegrationAction(int index) {
     else if (index == 4) p.take_over_explorer_windows = !p.take_over_explorer_windows;
     else if (index == 6) p.integration_enabled = false;
     else if (index == 7) p.integration_recycle_bin = !p.integration_recycle_bin;
+    else if (index == 9) p.integration_folders_compat = !p.integration_folders_compat;
     // Editing a disabled integration only changes the saved selection.
     if (p.integration_enabled || index == 0 || index == 5 || index == 6) {
         integration_error_.clear();
         auto failed = [&](const wchar_t* label, const wchar_t* item, bool on, bool explained) {
-            if (!integration_error_.empty()) integration_error_ += l10n::Pick(L"；", L"; ");
+            if (!integration_error_.empty()) integration_error_ += l10n::Get(l10n::StringId::Text2855).c_str();
             integration_error_ += label;
             if (!explained) return;
             const auto failure = LastShellIntegrationFailure();
-            integration_error_ += l10n::Pick(L"（", L" (") + IntegrationFailureText(failure) + l10n::Pick(L"）", L")");
+            integration_error_ += l10n::Get(l10n::StringId::Text2856).c_str() + IntegrationFailureText(failure) + l10n::Get(l10n::StringId::Text2857).c_str();
             LogIntegrationFailure(item, on, failure);
         };
         if ((index == 5 || index == 6) && HasLegacyShellIntegrationResidue() &&
             !RepairLegacyShellIntegrationResidue())
-            failed(l10n::Pick(L"旧版资源管理器关联", L"Legacy Explorer associations"), L"legacy", false, false);
-        const bool folders_on = p.integration_enabled && p.integration_folders;
+            failed(l10n::Get(l10n::StringId::LegacyExplorerAssociations).c_str(), L"legacy", false, false);
+        const bool folders_on = p.integration_enabled && p.integration_folders && !p.integration_folders_compat;
         if (!p.ApplyFolderOpen(folders_on))
-            failed(l10n::Pick(L"文件夹和磁盘", L"Folders and drives"), L"folders", folders_on, true);
+            failed(l10n::Get(l10n::StringId::FoldersAndDrives).c_str(), L"folders", folders_on, true);
         const bool win_e_on = p.integration_enabled && p.integration_win_e;
         if (!p.ApplyWinE(win_e_on))
             failed(L"Win + E", L"win-e", win_e_on, true);
         const bool this_pc_on = p.integration_enabled && p.integration_this_pc;
         if (!ApplyThisPcOpen(p, this_pc_on))
-            failed(l10n::Pick(L"桌面上的「此电脑」", L"This PC on the desktop"), L"this-pc", this_pc_on, true);
+            failed(l10n::Get(l10n::StringId::SettingsThisPc).c_str(), L"this-pc", this_pc_on, true);
         const bool recycle_bin_on = p.integration_enabled && p.integration_recycle_bin;
         if (!ApplyRecycleBinOpen(p, recycle_bin_on))
-            failed(l10n::Pick(L"桌面上的「回收站」", L"Recycle Bin on the desktop"), L"recycle-bin", recycle_bin_on, true);
+            failed(l10n::Get(l10n::StringId::SettingsRecycleBin).c_str(), L"recycle-bin", recycle_bin_on, true);
     }
     integration_save_failed_ = !p.Save();
     if (ui_.integration_changed) ui_.integration_changed();
@@ -1105,6 +1234,18 @@ void SettingsController::IntegrationAction(int index) {
 
 void SettingsController::ToggleUi(int index) {
     if (!prefs_ || !context_) return;
+    // 修改时间提示 switches and sync status, kept out of the chain below.
+    // 77, 78: 鼠标与选择 hover selection and item check boxes; 79: 滚动时固定上级.
+    if (index >= 70 && index <= 79) {
+        bool* const flags[] = {&prefs_->list_mtime_fade, &prefs_->list_mtime_bold, &prefs_->list_mtime_tree,
+                               &prefs_->list_mtime_other_views, &prefs_->list_mtime_flash,
+                               &prefs_->sync_onedrive, &prefs_->sync_svn, &prefs_->hover_select,
+                               &prefs_->item_checkboxes, &prefs_->list_tree_sticky};
+        bool& flag = *flags[index - 70];
+        flag = !flag;
+        SaveAndApply(SettingsEffect::ListStyle);
+        return;
+    }
     if (index == 1) {
         prefs_->ApplyLaunchOnStartup(!prefs_->launch_on_startup);
         SaveAndApply(SettingsEffect::None);
@@ -1172,6 +1313,9 @@ void SettingsController::ToggleUi(int index) {
     } else if (index == 23) {
         prefs_->vertical_tabs = !prefs_->vertical_tabs;
         SaveAndApply(SettingsEffect::None);
+    } else if (index == 37) {
+        prefs_->tray_hide_when_empty = !prefs_->tray_hide_when_empty;
+        SaveAndApply(SettingsEffect::None);
     } else if (index == 24) {
         prefs_->show_hints = !prefs_->show_hints;
         SaveAndApply(SettingsEffect::None);
@@ -1190,6 +1334,21 @@ void SettingsController::ToggleUi(int index) {
     } else if (index == 27) {
         prefs_->start_in_tray = !prefs_->start_in_tray;
         SaveAndApply(SettingsEffect::None);
+    } else if (index == 40) {
+        prefs_->global_search_double_ctrl = !prefs_->global_search_double_ctrl;
+        SaveAndApply(SettingsEffect::GlobalSearch);
+    } else if (index == 41) {
+        prefs_->dialog_jump_bar = !prefs_->dialog_jump_bar;
+        SaveAndApply(SettingsEffect::GlobalSearch);
+    } else if (index == 43) {
+        prefs_->global_search_apps = !prefs_->global_search_apps;
+        SaveAndApply(SettingsEffect::GlobalSearch);
+    } else if (index == 42) {
+        prefs_->dialog_jump_auto = !prefs_->dialog_jump_auto;
+        SaveAndApply(SettingsEffect::GlobalSearch);
+    } else if (index == 44) {
+        prefs_->jump_history = !prefs_->jump_history;
+        SaveAndApply(SettingsEffect::GlobalSearch);
     } else if (index == 15) {
         prefs_->global_search_enabled = !prefs_->global_search_enabled;
         if (!prefs_->Save()) {
@@ -1329,6 +1488,16 @@ void SettingsController::IndexAction(int action) {
     StartUiTask(std::move(task));
 }
 
+// The network agent indexes server shares only. This check makes no network
+// calls; it names the problem in the user's language before the agent's
+// generic refusal (#279). The agent still has the final say.
+static bool LooksLikeServerFolder(const std::wstring& path) {
+    if (path.rfind(L"\\\\", 0) == 0 || path.rfind(L"//", 0) == 0) return true;
+    if (path.size() < 2 || path[1] != L':') return false;
+    const wchar_t root[] = {path[0], L':', L'\\', L'\0'};
+    return GetDriveTypeW(root) == DRIVE_REMOTE;
+}
+
 void SettingsController::NetworkAction(int action, bool pin_after_add) {
     if (!network_ || !ui_.task_completion) return;
     if (action == 1) {
@@ -1337,8 +1506,20 @@ void SettingsController::NetworkAction(int action, bool pin_after_add) {
         return;
     }
     if (action != 0 || !ui_.pick_folder) return;
-    std::wstring path;
-    if (!ui_.pick_folder(path, l10n::Get(l10n::StringId::SettingsPickServer).c_str())) return;
+    // Start beside the last added share, not at the last folder picked here:
+    // after a refused local pick, the picker kept reopening there (#279).
+    const auto roots = network_->Roots();
+    std::wstring path = roots.empty() ? std::wstring{} : roots.back().path;
+    if (!ui_.pick_folder(path, l10n::Get(l10n::StringId::SettingsPickServer).c_str()) ||
+        path.empty()) return;
+    if (pulse::fs::IsWslPath(path)) {
+        SetError(l10n::Get(l10n::StringId::NetworkIndexNoWsl).c_str());
+        return;
+    }
+    if (!LooksLikeServerFolder(path)) {
+        SetError(l10n::Get(l10n::StringId::NetworkIndexNeedsShare).c_str());
+        return;
+    }
     ClearError();
     SettingsTask task{SettingsTaskKind::NetworkAdd};
     task.path = std::move(path);
@@ -1357,6 +1538,10 @@ void SettingsController::RemoveNetwork(int position) {
 }
 
 void SettingsController::DiagnosticsAction(int action) {
+    if (action >= 3 && action <= 5) {
+        if (ui_.settings_transfer) ui_.settings_transfer(action - 3);
+        return;
+    }
     if (action == 0) {
         if (ui_.open_diagnostics) ui_.open_diagnostics();
         return;
@@ -1383,16 +1568,111 @@ void SettingsController::DiagnosticsAction(int action) {
     StartUiTask(std::move(task));
 }
 
+// ---- 缩略图缓存 ---------------------------------------------------------------
+
+SettingsController::ThumbCacheState SettingsController::ThumbCache(void* notify) {
+    bool count = false;
+    ThumbCacheState state;
+    {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        ThumbCacheJob& job = *thumb_cache_;
+        job.notify = notify;
+        const uint64_t now = GetTickCount64();
+        // The count is kept up to date in process; a recount only catches
+        // what other Pulse processes wrote meanwhile.
+        count = !job.busy && job.state.phase != ThumbCacheState::Cleared &&
+                (!job.checked || now - job.checked >= 10000);
+        if (count) job.checked = now;
+        state = job.state;
+    }
+    if (count) StartThumbCacheJob(false);
+    return state;
+}
+
+void SettingsController::ClearThumbCache() {
+    {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        const ThumbCacheJob& job = *thumb_cache_;
+        if (job.busy || job.state.phase != ThumbCacheState::Ready || !job.state.bytes) return;
+    }
+    StartThumbCacheJob(true);
+}
+
+void SettingsController::StartThumbCacheJob(bool clear) {
+    if (!ui_.thumb_cache_bytes || !ui_.clear_thumb_cache) return;
+    std::lock_guard<std::mutex> workers_lock(workers_mutex_);
+    if (stopping_) return;
+    // busy is cleared as the job's last step, so this join returns at once.
+    if (thumb_cache_worker_.joinable()) thumb_cache_worker_.join();
+    {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        thumb_cache_->busy = true;
+        if (clear) thumb_cache_->state.phase = ThumbCacheState::Clearing;
+    }
+    try {
+        thumb_cache_worker_ = std::thread([job = thumb_cache_, clear, count_bytes = ui_.thumb_cache_bytes,
+                                           clear_cache = ui_.clear_thumb_cache] {
+            const auto repaint = [&job] {
+                void* notify = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(job->mutex);
+                    notify = job->notify;
+                }
+                if (notify) InvalidateRect(static_cast<HWND>(notify), nullptr, FALSE);
+            };
+            const uint64_t freed = clear ? clear_cache() : 0;
+            uint64_t bytes = 0;
+            const bool available = count_bytes(bytes);
+            {
+                std::lock_guard<std::mutex> lock(job->mutex);
+                job->state.bytes = bytes;
+                job->state.cleared = freed;
+                job->state.phase = !available ? ThumbCacheState::Unavailable
+                    : clear ? ThumbCacheState::Cleared : ThumbCacheState::Ready;
+                job->checked = GetTickCount64();
+                if (!clear) job->busy = false;
+            }
+            repaint();
+            if (!clear) return;
+            // 已清除 stays on the button for 3 s, then the row shows the count.
+            for (int waited = 0; waited < 3000; waited += 50) {
+                {
+                    std::lock_guard<std::mutex> lock(job->mutex);
+                    if (job->stopping) break;
+                }
+                Sleep(50);
+            }
+            {
+                std::lock_guard<std::mutex> lock(job->mutex);
+                if (job->state.phase == ThumbCacheState::Cleared) job->state.phase = ThumbCacheState::Ready;
+                job->busy = false;
+            }
+            repaint();
+        });
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        thumb_cache_->busy = false;
+        if (clear) thumb_cache_->state.phase = ThumbCacheState::Ready;
+    }
+}
+
 void SettingsController::Stop() {
     std::vector<std::thread> workers;
+    std::thread thumb_cache;
+    {
+        std::lock_guard<std::mutex> lock(thumb_cache_->mutex);
+        thumb_cache_->stopping = true;
+    }
     {
         std::lock_guard<std::mutex> lock(workers_mutex_);
         stopping_ = true;
         workers.swap(workers_);
+        thumb_cache.swap(thumb_cache_worker_);
     }
     for (auto& worker : workers) {
         if (worker.joinable()) worker.join();
     }
+    if (thumb_cache.joinable()) thumb_cache.join();
 }
 
 } // namespace pulse::app

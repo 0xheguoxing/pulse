@@ -84,11 +84,30 @@ private:
     DWORD preferred_;
 };
 
+// When set, the native loop drops on this target with these keys instead of
+// answering COPY, the way a Pulse window receives Pulse's own drag.
+IDropTarget* g_route_target = nullptr;
+DWORD g_route_keys = 0;
+
 HRESULT WINAPI AuditNativeDrag(IDataObject* data, IDropSource*, DWORD allowed, DWORD* effect) {
     ++native_calls;
     pulse::ui::ExtractHDropPaths(data, native_paths);
+    if (g_route_target) {
+        DWORD e = allowed;
+        g_route_target->DragEnter(data, g_route_keys, POINTL{}, &e);
+        e = allowed;
+        g_route_target->Drop(data, g_route_keys, POINTL{}, &e);
+        *effect = e;
+        return DRAGDROP_S_DROP;
+    }
     *effect = allowed & DROPEFFECT_COPY;
     return DRAGDROP_S_DROP;
+}
+
+// A shell drag source (Explorer) deletes the originals itself after an
+// unoptimized move: DoDragDrop or Performed DropEffect says MOVE.
+bool SourceWouldDelete(DWORD returned, DWORD performed) {
+    return returned == DROPEFFECT_MOVE || performed == DROPEFFECT_MOVE;
 }
 
 int wmain() {
@@ -138,9 +157,14 @@ int wmain() {
                 const bool callbacks_correct = allowed
                     ? observed == allowed && over_calls == 2 && drop_calls == 1 && preference_seen
                     : over_calls == 0 && drop_calls == 0;
-                Check(entered && hovered && effect == expected &&
-                      data->PerformedEffect() == expected && callbacks_correct,
+                // A move is Pulse's own (optimized): reported as NONE, logical MOVE.
+                const DWORD reported = expected == DROPEFFECT_MOVE ? DROPEFFECT_NONE : expected;
+                Check(entered && hovered && effect == reported &&
+                      data->PerformedEffect() == reported && data->LogicalEffect() == expected &&
+                      callbacks_correct,
                       "source effect mask survives enter/over/drop and modifiers");
+                Check(!SourceWouldDelete(effect, data->PerformedEffect()),
+                      "a drop never asks the source to delete its originals");
                 target->Release();
                 data->Release();
             }
@@ -210,7 +234,8 @@ int wmain() {
         const bool shown = effect == c.expected;
         effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
         target->Drop(data, c.keys, POINTL{}, &effect);
-        Check(shown && effect == c.expected && over_preferred == c.preferred &&
+        const DWORD reported = c.expected == DROPEFFECT_MOVE ? DROPEFFECT_NONE : c.expected;
+        Check(shown && effect == reported && over_preferred == c.preferred &&
               drop_preferred == c.preferred, c.label);
         target->Release();
         data->Release();
@@ -236,6 +261,40 @@ int wmain() {
     Check(ordinary == DROPEFFECT_COPY && native_calls == 1 &&
           native_paths == std::vector<std::wstring>{original.wstring()},
           "ordinary drag still reaches native boundary with selected path");
+    {
+        // Shift+drag onto a Pulse pane that queues the move (a share is slow,
+        // so the copy has not even started when Drop returns).
+        DropTargetCallbacks callbacks;
+        unsigned queued = 0;
+        callbacks.drop = [&](const auto& paths, POINT, DWORD state, DWORD mask, DWORD preferred) {
+            ++queued;
+            return ComputeDropEffect(state, paths.front(), L"\\\\server\\share", mask, preferred);
+        };
+        auto* target = new WindowDropTarget(nullptr, std::move(callbacks));
+        g_route_target = target;
+        g_route_keys = MK_SHIFT;
+        const DWORD moved = DoFileDragDrop({original.wstring()}, DROPEFFECT_COPY | DROPEFFECT_MOVE,
+                                           {}, root.wstring());
+        g_route_target = nullptr;
+        target->Release();
+        Check(queued == 1 && moved == DROPEFFECT_MOVE,
+              "Pulse source still learns that a queued Shift+drop moved its items");
+        Check(ReadBytes(original) == before_original,
+              "queued move to a share leaves the original for the move to read");
+
+        auto* data = FileDataObject::Create({L"C:\\fixture\\source.txt"});
+        DropTargetCallbacks explorer_cb;
+        explorer_cb.drop = [](const auto&, POINT, DWORD, DWORD, DWORD) { return DROPEFFECT_MOVE; };
+        auto* explorer_target = new WindowDropTarget(nullptr, std::move(explorer_cb));
+        DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE;
+        explorer_target->Drop(data, MK_SHIFT, POINTL{}, &effect);
+        Check(effect == DROPEFFECT_NONE && data->PerformedEffect() == DROPEFFECT_NONE &&
+              data->LogicalEffect() == DROPEFFECT_MOVE &&
+              !SourceWouldDelete(effect, data->PerformedEffect()),
+              "Explorer dragging into Pulse is told about an optimized move, so it keeps the originals");
+        explorer_target->Release();
+        data->Release();
+    }
     Check(DropIntoOwnFolder({L"E:\\work\\.minecraft"}, L"E:\\work\\.minecraft") &&
           DropIntoOwnFolder({L"E:\\work\\.minecraft"}, L"e:\\WORK\\.minecraft\\") &&
           DropIntoOwnFolder({L"E:\\work\\a.txt", L"E:\\work\\.minecraft"}, L"E:\\work\\.minecraft\\mods") &&

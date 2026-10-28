@@ -16,38 +16,79 @@ namespace {
 constexpr float kMinWidth = 420.0f;
 constexpr float kMaxWidth = 540.0f;
 constexpr float kPad = 24.0f;
-constexpr float kTitleBar = 36.0f;
-constexpr float kCloseW = 46.0f;
-constexpr float kIcon = 40.0f;
-constexpr float kIconGap = 16.0f;
-constexpr float kRowH = 36.0f;
-constexpr float kButtonMinW = 96.0f;
+// Pulse_文件操作对话框_重设计.html: the same modal as the file-operation
+// dialogs. Headline at 18, the message under it, items in a bordered list of
+// 34-DIP rows, then a 64-DIP footer band with the buttons on the right.
+constexpr float kTitleBar = 40.0f;
+constexpr float kRowH = 34.0f;
+constexpr float kButtonMinW = 80.0f;
 constexpr float kButtonGap = 8.0f;
-constexpr float kFooterPadY = 18.0f;
+constexpr float kFooterH = 64.0f;
 // Prefer a wider dialog over a message that wraps into a tall column.
 constexpr float kComfortableLines = 4.0f;
 
 float Dip(float scale, float value) { return value * scale; }
 
-D2D1_COLOR_F ToneColor(ConfirmTone tone, const Theme& theme, bool dark) {
-    switch (tone) {
-    case ConfirmTone::Danger: return theme.danger;
-    case ConfirmTone::Warning: return dark ? HexColor(0xFCE100) : HexColor(0x9D5D00);
-    default: return theme.accent;
-    }
-}
-
-const wchar_t* ToneGlyph(ConfirmTone tone) {
-    switch (tone) {
-    case ConfirmTone::Danger:
-    case ConfirmTone::Warning: return L"\xE7BA";   // Warning
-    case ConfirmTone::Info: return L"\xE946";      // Info
-    default: return L"\xE9CE";                     // Unknown (question)
-    }
-}
-
 float ButtonWidth(const fluent::Painter& painter, const std::wstring& text, float scale) {
     return std::max(painter.MeasureButtonWidth(text), Dip(scale, kButtonMinW));
+}
+
+// One group of the dialog rising in: drawn 6 DIP lower and faded until its
+// spring reaches 1. A settled group (k == 1) costs nothing.
+class RiseIn {
+public:
+    RiseIn(Compositor& compositor, float k, float rise) {
+        if (k == 1.0f) return;
+        dc_ = compositor.Dc();
+        if (!dc_) return;
+        dc_->GetTransform(&old_);
+        dc_->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, (1.0f - k) * rise) * old_);
+        const float opacity = std::clamp(k * 1.6f, 0.0f, 1.0f);
+        if (opacity < 1.0f) {
+            dc_->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                                                  D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                  D2D1::IdentityMatrix(), opacity, nullptr,
+                                                  D2D1_LAYER_OPTIONS1_NONE),
+                           nullptr);
+            layered_ = true;
+        }
+    }
+    ~RiseIn() {
+        if (!dc_) return;
+        if (layered_) dc_->PopLayer();
+        dc_->SetTransform(old_);
+    }
+    RiseIn(const RiseIn&) = delete;
+    RiseIn& operator=(const RiseIn&) = delete;
+
+private:
+    ID2D1DeviceContext* dc_ = nullptr;
+    D2D1_MATRIX_3X2_F old_{};
+    bool layered_ = false;
+};
+
+// Scales (and turns) what is drawn while alive around `centre`.
+class AroundCentre {
+public:
+    AroundCentre(Compositor& compositor, D2D1_POINT_2F centre, float scale, float degrees) {
+        if (scale == 1.0f && degrees == 0.0f) return;
+        dc_ = compositor.Dc();
+        if (!dc_) return;
+        dc_->GetTransform(&old_);
+        dc_->SetTransform(D2D1::Matrix3x2F::Rotation(degrees, centre) *
+                          D2D1::Matrix3x2F::Scale(scale, scale, centre) * old_);
+    }
+    ~AroundCentre() { if (dc_) dc_->SetTransform(old_); }
+    AroundCentre(const AroundCentre&) = delete;
+    AroundCentre& operator=(const AroundCentre&) = delete;
+
+private:
+    ID2D1DeviceContext* dc_ = nullptr;
+    D2D1_MATRIX_3X2_F old_{};
+};
+
+D2D1_POINT_2F Centre(const D2D1_RECT_F& r) {
+    return D2D1::Point2F((r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f);
 }
 
 float Wrapped(IDWriteFactory2* factory, IDWriteTextFormat* format, std::wstring_view text,
@@ -65,8 +106,8 @@ bool ConfirmDialogFormats::Create(IDWriteFactory2* factory, float scale) {
     if (!factory) return false;
     typography::CreateTextFormat(factory,
         {typography::FontRole::Display, 18.0f * scale, DWRITE_FONT_WEIGHT_SEMI_BOLD}, &title);
-    typography::CreateTextFormat(factory, {typography::FontRole::Text, 14.0f * scale}, &body);
-    typography::CreateTextFormat(factory, {typography::FontRole::Text, 12.5f * scale}, &note);
+    typography::CreateTextFormat(factory, {typography::FontRole::Text, 13.0f * scale}, &body);
+    typography::CreateTextFormat(factory, {typography::FontRole::Text, 12.0f * scale}, &note);
     for (IDWriteTextFormat* format : {title.get(), body.get(), note.get()}) {
         if (!format) return false;
         format->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
@@ -82,7 +123,7 @@ ConfirmDialogSpec NormalizeConfirmSpec(ConfirmDialogSpec spec) {
     for (std::wstring& item : spec.items) item = path::FriendlyPathText(item);
     if (spec.confirm_text.empty())
         spec.confirm_text = l10n::Get(l10n::StringId::ConfirmDefault);
-    if (spec.cancel_text.empty()) spec.cancel_text = l10n::Get(l10n::StringId::Cancel);
+    if (spec.cancel_text.empty() && !spec.single_button) spec.cancel_text = l10n::Get(l10n::StringId::Cancel);
     // Trailing blank lines from older prompt strings would pad the layout.
     while (!spec.message.empty() && (spec.message.back() == L'\n' || spec.message.back() == L' '))
         spec.message.pop_back();
@@ -94,13 +135,17 @@ ConfirmTone ResolveConfirmTone(const ConfirmDialogSpec& spec) {
     return spec.danger ? ConfirmTone::Danger : ConfirmTone::Question;
 }
 
+size_t ConfirmItemCount(const ConfirmDialogSpec& spec) {
+    return (std::max)(spec.items.size(), spec.items_total);
+}
+
 std::vector<std::wstring> ConfirmItemRows(const ConfirmDialogSpec& spec) {
-    if (spec.items.size() <= kConfirmMaxItemRows) return spec.items;
-    std::vector<std::wstring> rows(spec.items.begin(),
-                                   spec.items.begin() + (kConfirmMaxItemRows - 1));
+    const size_t count = ConfirmItemCount(spec);
+    if (count <= kConfirmMaxItemRows && count == spec.items.size()) return spec.items;
+    const size_t listed = (std::min)(spec.items.size(), kConfirmMaxItemRows - 1);
+    std::vector<std::wstring> rows(spec.items.begin(), spec.items.begin() + listed);
     wchar_t more[128]{};
-    swprintf_s(more, l10n::Get(l10n::StringId::ConfirmMoreItemsFormat).c_str(),
-               spec.items.size() - (kConfirmMaxItemRows - 1));
+    swprintf_s(more, l10n::Get(l10n::StringId::ConfirmMoreItemsFormat).c_str(), count - listed);
     rows.emplace_back(more);
     return rows;
 }
@@ -110,9 +155,33 @@ std::wstring FitConfirmItemText(const std::wstring& text, float width,
     return FitPathMiddle(text, width, measure);
 }
 
+bool ConfirmCheckable(const ConfirmDialogSpec& spec) {
+    return spec.item_checks && !spec.items.empty() &&
+           spec.item_checks->size() == spec.items.size() &&
+           spec.items.size() <= kConfirmMaxItemRows && spec.items_total <= spec.items.size();
+}
+
+bool ConfirmRowChecked(const ConfirmDialogSpec& spec, size_t row) {
+    return ConfirmCheckable(spec) && row < spec.item_checks->size() && (*spec.item_checks)[row];
+}
+
+bool ConfirmAnyChecked(const ConfirmDialogSpec& spec) {
+    if (!ConfirmCheckable(spec)) return true;
+    for (const bool checked : *spec.item_checks)
+        if (checked) return true;
+    return false;
+}
+
 std::vector<int> ConfirmFocusOrder(const ConfirmDialogSpec& spec) {
-    if (spec.secondary_text.empty()) return {kConfirmCancel, kConfirmPrimary};
-    return {kConfirmCancel, kConfirmSecondary, kConfirmPrimary};
+    std::vector<int> order;
+    if (ConfirmCheckable(spec)) {
+        for (size_t i = 0; i < spec.items.size(); ++i)
+            order.push_back(kConfirmRowBase + static_cast<int>(i));
+    }
+    if (spec.single_button) order.push_back(kConfirmPrimary);
+    else if (spec.secondary_text.empty()) order.insert(order.end(), {kConfirmCancel, kConfirmPrimary});
+    else order.insert(order.end(), {kConfirmCancel, kConfirmSecondary, kConfirmPrimary});
+    return order;
 }
 
 int ConfirmControlFor(ConfirmChoice choice, bool has_secondary) {
@@ -126,7 +195,18 @@ int ConfirmControlFor(ConfirmChoice choice, bool has_secondary) {
 std::wstring ConfirmClipboardText(const ConfirmDialogSpec& spec) {
     std::wstring text = spec.title;
     if (!spec.message.empty()) text += L"\r\n\r\n" + spec.message;
-    for (const std::wstring& item : spec.items) text += L"\r\n  " + item;
+    const bool checkable = ConfirmCheckable(spec);
+    for (size_t i = 0; i < spec.items.size(); ++i) {
+        text += L"\r\n  ";
+        if (checkable) text += ConfirmRowChecked(spec, i) ? L"[x] " : L"[ ] ";
+        text += spec.items[i];
+    }
+    if (ConfirmItemCount(spec) > spec.items.size()) {
+        wchar_t more[128]{};
+        swprintf_s(more, l10n::Get(l10n::StringId::ConfirmMoreItemsFormat).c_str(),
+                   ConfirmItemCount(spec) - spec.items.size());
+        text += L"\r\n  " + std::wstring(more);
+    }
     if (!spec.note.empty()) text += L"\r\n\r\n" + spec.note;
     return text;
 }
@@ -140,12 +220,12 @@ ConfirmDialogLayout LayoutConfirmDialog(const ConfirmDialogSpec& spec,
     const float gap = Dip(scale, kButtonGap);
     const float btn_h = painter.MeasureButtonHeight();
     const float primary_w = ButtonWidth(painter, spec.confirm_text, scale);
-    const float cancel_w = ButtonWidth(painter, spec.cancel_text, scale);
+    const float cancel_w = spec.single_button ? 0.0f : ButtonWidth(painter, spec.cancel_text, scale);
     const float secondary_w = spec.secondary_text.empty()
         ? 0.0f : ButtonWidth(painter, spec.secondary_text, scale);
     const float buttons_w = primary_w + cancel_w +
-        (secondary_w > 0.0f ? secondary_w + gap : 0.0f) + gap;
-    const float text_x = pad + Dip(scale, kIcon + kIconGap);
+        (secondary_w > 0.0f ? secondary_w + gap : 0.0f) + (cancel_w > 0.0f ? gap : 0.0f);
+    const float text_x = pad;
 
     // Widen until the message fits in a few lines or the cap is reached.
     float width = std::max(Dip(scale, kMinWidth), buttons_w + pad * 2.0f);
@@ -162,44 +242,49 @@ ConfirmDialogLayout LayoutConfirmDialog(const ConfirmDialogSpec& spec,
     const float text_w = width - text_x - pad;
 
     l.title_bar = Dip(scale, kTitleBar);
-    l.close = D2D1::RectF(width - Dip(scale, kCloseW), 0, width, l.title_bar);
-    float y = Dip(scale, 28.0f);
-    l.icon = D2D1::RectF(pad, y, pad + Dip(scale, kIcon), y + Dip(scale, kIcon));
-    const float title_h = std::max(Wrapped(factory, formats.title.get(), spec.title, text_w),
+    l.close = D2D1::RectF(width - Dip(scale, 44.0f), Dip(scale, 4.0f), width - Dip(scale, 4.0f),
+                          Dip(scale, 36.0f));
+    l.icon = D2D1::RectF(0, 0, 0, 0);
+    // The headline keeps clear of the close button.
+    float y = Dip(scale, 18.0f);
+    const float title_w = width - text_x - Dip(scale, 48.0f);
+    const float title_h = std::max(Wrapped(factory, formats.title.get(), spec.title, title_w),
                                    Dip(scale, 24.0f));
-    // A one-line title sits centred on the icon; a long one grows downwards.
-    const float title_top = title_h < Dip(scale, kIcon)
-        ? y + (Dip(scale, kIcon) - title_h) * 0.5f : y;
-    l.title = D2D1::RectF(text_x, title_top, width - pad, title_top + title_h);
-    y = std::max(l.icon.bottom, l.title.bottom) + Dip(scale, 10.0f);
+    l.title = D2D1::RectF(text_x, y, text_x + title_w, y + title_h);
+    y = l.title.bottom + Dip(scale, 4.0f);
 
     const float msg_h = Wrapped(factory, formats.body.get(), spec.message, text_w);
     l.message = D2D1::RectF(text_x, y, width - pad, y + msg_h);
     if (msg_h > 0.0f) y = l.message.bottom;
+    float after = 24.0f;
 
     const std::vector<std::wstring> rows = ConfirmItemRows(spec);
     if (!rows.empty()) {
-        y += Dip(scale, 14.0f);
+        y += Dip(scale, 16.0f);
         const float row_h = Dip(scale, kRowH);
+        const float border = 1.0f;
         l.card = D2D1::RectF(text_x, y, width - pad,
-                             y + row_h * static_cast<float>(rows.size()));
+                             y + row_h * static_cast<float>(rows.size()) + border * 2.0f);
         for (size_t i = 0; i < rows.size(); ++i) {
-            const float top = y + row_h * static_cast<float>(i);
+            const float top = y + border + row_h * static_cast<float>(i);
             l.rows.push_back(D2D1::RectF(l.card.left, top, l.card.right, top + row_h));
         }
         y = l.card.bottom;
+        l.checkable = ConfirmCheckable(spec);
+        after = 20.0f;
     }
     if (!spec.note.empty()) {
         y += Dip(scale, 12.0f);
         const float note_h = Wrapped(factory, formats.note.get(), spec.note, text_w);
         l.note = D2D1::RectF(text_x, y, width - pad, y + note_h);
         y = l.note.bottom;
+        after = 24.0f;
     }
 
-    y += Dip(scale, 24.0f);
-    const float footer_h = btn_h + Dip(scale, kFooterPadY) * 2.0f;
+    y = std::round(y + Dip(scale, after));
+    const float footer_h = Dip(scale, kFooterH);
     l.footer = D2D1::RectF(0, y, width, y + footer_h);
-    const float by = y + Dip(scale, kFooterPadY);
+    const float by = y + (footer_h - btn_h) * 0.5f;
     float right = width - pad;
     l.primary = D2D1::RectF(right - primary_w, by, right, by + btn_h);
     right = l.primary.left - gap;
@@ -207,7 +292,8 @@ ConfirmDialogLayout LayoutConfirmDialog(const ConfirmDialogSpec& spec,
         l.secondary = D2D1::RectF(right - secondary_w, by, right, by + btn_h);
         right = l.secondary.left - gap;
     }
-    l.cancel = D2D1::RectF(right - cancel_w, by, right, by + btn_h);
+    // Single button: an empty cancel rect, so nothing draws or hits there.
+    l.cancel = spec.single_button ? D2D1::RectF() : D2D1::RectF(right - cancel_w, by, right, by + btn_h);
     l.width = width;
     l.height = std::ceil(l.footer.bottom);
     return l;
@@ -219,6 +305,10 @@ int HitTestConfirmDialog(const ConfirmDialogLayout& layout, bool has_secondary,
     if (ContainsRect(layout.primary, x, y)) return kConfirmPrimary;
     if (has_secondary && ContainsRect(layout.secondary, x, y)) return kConfirmSecondary;
     if (ContainsRect(layout.cancel, x, y)) return kConfirmCancel;
+    if (layout.checkable) {
+        for (size_t i = 0; i < layout.rows.size(); ++i)
+            if (ContainsRect(layout.rows[i], x, y)) return kConfirmRowBase + static_cast<int>(i);
+    }
     return kConfirmNone;
 }
 
@@ -239,7 +329,7 @@ void DrawDialogParagraph(Compositor& compositor, IDWriteTextFormat* format,
     layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
     ComPtr<ID2D1SolidColorBrush> brush;
     if (FAILED(dc->CreateSolidColorBrush(color, &brush)) || !brush.get()) return;
-    dc->DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(), brush.get());
+    compositor.DrawTextLayout(D2D1::Point2F(bounds.left, bounds.top), layout.get(), brush.get());
 }
 
 void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const Theme& theme,
@@ -247,50 +337,69 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                        const ConfirmDialogFormats& formats, const ConfirmDialogVisual& visual,
                        bool dark, bool high_contrast) {
     const float scale = painter.Scale();
-    const ConfirmTone tone = ResolveConfirmTone(spec);
-    const D2D1_COLOR_F tone_color = high_contrast ? theme.text : ToneColor(tone, theme, dark);
 
     fluent::ControlState close_state{};
     close_state.hovered = visual.hover == kConfirmClose;
     close_state.pressed = visual.pressed == kConfirmClose;
     painter.DrawTitleBarButton(l.close, fluent::TitleBarButtonRole::Close, {}, close_state);
 
-    // Icon tile: the tone colour at low opacity behind its glyph.
-    D2D1_COLOR_F tile = tone_color;
-    tile.a = high_contrast ? 0.0f : (dark ? 0.18f : 0.12f);
-    painter.FillRoundedRect(l.icon, Dip(scale, 10.0f), tile);
-    if (high_contrast) painter.StrokeRoundedRect(l.icon, Dip(scale, 10.0f), theme.text);
-    painter.DrawGlyph(spec.glyph.empty() ? ToneGlyph(tone) : spec.glyph.c_str(), l.icon,
-                      tone_color);
-
-    DrawDialogParagraph(compositor, formats.title.get(), l.title, spec.title, theme.text);
-    DrawDialogParagraph(compositor, formats.body.get(), l.message, spec.message,
-                        high_contrast ? theme.text : theme.text_secondary);
+    const float rise = Dip(scale, 6.0f);
+    {
+        RiseIn in(compositor, visual.body_in, rise);
+        DrawDialogParagraph(compositor, formats.title.get(), l.title, spec.title, theme.text);
+        DrawDialogParagraph(compositor, formats.body.get(), l.message, spec.message,
+                            high_contrast ? theme.text : theme.text_secondary);
+    }
 
     const std::vector<std::wstring> rows = ConfirmItemRows(spec);
     if (!rows.empty()) {
-        const float radius = Dip(scale, theme.radius_control);
-        painter.FillRoundedRect(l.card, radius, theme.surface_card);
-        painter.StrokeRoundedRect(l.card, radius, theme.stroke_card);
+        const D2D1_COLOR_F stroke = high_contrast ? theme.text
+            : dark ? HexColor(0xFFFFFF, 0.0698f) : HexColor(0x000000, 0.0578f);
+        {
+            RiseIn in(compositor, visual.rows_in[0], rise);
+            painter.StrokeRoundedRect(D2D1::RectF(l.card.left + 0.5f, l.card.top + 0.5f,
+                                                  l.card.right - 0.5f, l.card.bottom - 0.5f),
+                                      Dip(scale, 6.0f), stroke, 1.0f);
+        }
         const std::wstring_view glyph = spec.item_glyph.empty()
             ? std::wstring_view(L"\xE8A5") : std::wstring_view(spec.item_glyph);
-        const bool truncated = spec.items.size() > rows.size();
+        const bool truncated = ConfirmItemCount(spec) > rows.size();
         for (size_t i = 0; i < rows.size() && i < l.rows.size(); ++i) {
             const D2D1_RECT_F& row = l.rows[i];
+            RiseIn in(compositor, visual.rows_in[std::min(i, kConfirmMaxItemRows - 1)], rise);
             if (i > 0) {
-                painter.FillRoundedRect(D2D1::RectF(row.left + Dip(scale, 12.0f), row.top,
-                                                    row.right - Dip(scale, 12.0f),
-                                                    row.top + 1.0f),
+                const float line = std::round(row.top);
+                painter.FillRoundedRect(D2D1::RectF(row.left + 1.0f, line, row.right - 1.0f,
+                                                    line + 1.0f),
                                         0, theme.stroke_divider);
             }
             const bool more_row = truncated && i + 1 == rows.size();
-            if (!more_row) {
-                painter.DrawGlyph(glyph, D2D1::RectF(row.left + Dip(scale, 10.0f), row.top,
+            const int row_id = kConfirmRowBase + static_cast<int>(i);
+            if (l.checkable) {
+                if (visual.hover == row_id && !high_contrast) {
+                    painter.FillRoundedRect(D2D1::RectF(row.left + Dip(scale, 4.0f), row.top + Dip(scale, 3.0f),
+                                                        row.right - Dip(scale, 4.0f), row.bottom - Dip(scale, 3.0f)),
+                                            Dip(scale, 4.0f), theme.fill_hover);
+                }
+                fluent::ControlState check{};
+                check.checked = ConfirmRowChecked(spec, i);
+                check.hovered = visual.hover == row_id;
+                check.pressed = visual.pressed == row_id && visual.hover == row_id;
+                painter.DrawCheckBox(D2D1::RectF(row.left + Dip(scale, 11.0f), row.top,
+                                                 row.left + Dip(scale, 31.0f), row.bottom),
+                                     L"", check);
+                if (visual.show_focus && !visual.focus_glide && visual.focus == row_id)
+                    painter.DrawFocusRing(row, Dip(scale, theme.radius_control));
+            } else if (!more_row) {
+                const std::wstring_view own = i < spec.item_glyphs.size() && !spec.item_glyphs[i].empty()
+                    ? std::wstring_view(spec.item_glyphs[i]) : glyph;
+                painter.DrawGlyph(own, D2D1::RectF(row.left + Dip(scale, 12.0f), row.top,
                                                      row.left + Dip(scale, 30.0f), row.bottom),
                                   theme.text_secondary);
             }
-            const D2D1_RECT_F text_rect = D2D1::RectF(row.left + Dip(scale, 40.0f), row.top,
-                                                      row.right - Dip(scale, 12.0f), row.bottom);
+            const D2D1_RECT_F text_rect = D2D1::RectF(
+                row.left + Dip(scale, more_row ? 13.0f : 39.0f), row.top,
+                row.right - Dip(scale, 13.0f), row.bottom);
             const std::wstring text = more_row ? rows[i] : FitConfirmItemText(
                 rows[i], text_rect.right - text_rect.left,
                 [&](std::wstring_view s) {
@@ -298,15 +407,18 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
                 });
             painter.DrawText(text, text_rect,
                              compositor.TextFormat(),
-                             more_row ? theme.text_secondary : theme.text,
-                             fluent::HorizontalAlignment::Left, theme.surface_card);
+                             more_row ? theme.text_secondary : theme.text);
         }
     }
-    DrawDialogParagraph(compositor, formats.note.get(), l.note, spec.note,
-                        high_contrast ? theme.text : theme.text_secondary);
+    {
+        RiseIn in(compositor, visual.body_in, rise);
+        DrawDialogParagraph(compositor, formats.note.get(), l.note, spec.note,
+                            high_contrast ? theme.text : theme.text_secondary);
+    }
 
-    // Footer band: one layer up from the body, like the main window's sheet.
-    painter.FillRoundedRect(l.footer, 0, theme.surface_sheet);
+    // Footer band: the one the file-operation dialogs share.
+    painter.FillRoundedRect(l.footer, 0, high_contrast ? theme.bg
+                            : dark ? HexColor(0x000000, 0.2f) : HexColor(0x000000, 0.045f));
     painter.FillRoundedRect(D2D1::RectF(l.footer.left, l.footer.top, l.footer.right,
                                         l.footer.top + 1.0f),
                             0, theme.stroke_divider);
@@ -315,32 +427,55 @@ void DrawConfirmDialog(Compositor& compositor, fluent::Painter& painter, const T
         fluent::ControlState state{};
         state.hovered = visual.hover == id;
         state.pressed = visual.pressed == id;
-        state.keyboard_focus = visual.show_focus && visual.focus == id;
+        state.keyboard_focus = visual.show_focus && visual.focus == id && !visual.focus_glide;
         return state;
     };
-    painter.DrawButton({l.cancel, spec.cancel_text, {}, fluent::ButtonKind::Standard,
-                        state_for(kConfirmCancel)});
-    if (!spec.secondary_text.empty()) {
-        painter.DrawButton({l.secondary, spec.secondary_text, {},
-                            fluent::ButtonKind::Standard, state_for(kConfirmSecondary)});
-    }
-    painter.DrawButton({l.primary, spec.confirm_text, {},
-                        spec.danger ? fluent::ButtonKind::Danger : fluent::ButtonKind::Primary,
-                        state_for(kConfirmPrimary)});
-    // The shared accent ring vanishes against a filled button; add the Fluent
-    // outer ring in the text colour.
-    if (state_for(kConfirmPrimary).keyboard_focus) {
-        const float gap = Dip(scale, 3.0f);
-        painter.StrokeRoundedRect(D2D1::RectF(l.primary.left - gap, l.primary.top - gap,
-                                              l.primary.right + gap, l.primary.bottom + gap),
-                                  Dip(scale, theme.radius_control) + gap, theme.text,
-                                  Dip(scale, 1.5f));
+    // A button held down (pointer still on it) sinks a little.
+    auto pressed_scale = [&](int id) {
+        return visual.pressed == id && visual.hover == id && !high_contrast ? 0.97f : 1.0f;
+    };
+    {
+        RiseIn in(compositor, visual.footer_in, rise);
+        if (!spec.single_button) {
+            AroundCentre press(compositor, Centre(l.cancel), pressed_scale(kConfirmCancel), 0.0f);
+            painter.DrawButton({l.cancel, spec.cancel_text, {}, fluent::ButtonKind::Standard,
+                                state_for(kConfirmCancel)});
+        }
+        if (!spec.secondary_text.empty()) {
+            AroundCentre press(compositor, Centre(l.secondary), pressed_scale(kConfirmSecondary),
+                               0.0f);
+            fluent::ControlState secondary_state = state_for(kConfirmSecondary);
+            secondary_state.enabled = ConfirmAnyChecked(spec);
+            painter.DrawButton({l.secondary, spec.secondary_text, {},
+                                fluent::ButtonKind::Standard, secondary_state});
+        }
+        // Check box dialogs: nothing ticked, nothing to confirm.
+        const bool any_checked = ConfirmAnyChecked(spec);
+        {
+            AroundCentre press(compositor, Centre(l.primary), pressed_scale(kConfirmPrimary),
+                               0.0f);
+            fluent::ControlState primary_state = state_for(kConfirmPrimary);
+            primary_state.enabled = any_checked;
+            painter.DrawButton({l.primary, spec.confirm_text, {},
+                                spec.danger ? fluent::ButtonKind::Danger
+                                            : fluent::ButtonKind::Primary,
+                                primary_state});
+        }
+        // The focus ring travelling between buttons (the window springs focus_rect).
+        const bool ring = visual.show_focus && visual.focus_glide;
+        if (ring) painter.DrawFocusRing(visual.focus_rect, Dip(scale, theme.radius_control));
+        // The shared accent ring vanishes against a filled button; add the Fluent
+        // outer ring in the text colour.
+        if (visual.show_focus && visual.focus == kConfirmPrimary) {
+            const D2D1_RECT_F& r = ring ? visual.focus_rect : l.primary;
+            const float gap = Dip(scale, 3.0f);
+            painter.StrokeRoundedRect(D2D1::RectF(r.left - gap, r.top - gap,
+                                                  r.right + gap, r.bottom + gap),
+                                      Dip(scale, theme.radius_control) + gap, theme.text,
+                                      Dip(scale, 1.5f));
+        }
     }
 
-    // The footer band covers the surface outline; draw it again on top.
-    const float inset = 0.5f;
-    painter.StrokeRoundedRect(D2D1::RectF(inset, inset, l.width - inset, l.height - inset),
-                              Dip(scale, 12.0f), theme.stroke_card);
 }
 
 } // namespace pulse::ui

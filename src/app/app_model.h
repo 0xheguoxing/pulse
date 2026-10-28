@@ -3,16 +3,19 @@
 #include "../fs/fs_enum.h"
 #include "../fs/fs_recycle.h"
 #include "../fs/fs_snapshot.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "places.h"
 #include "tag_ads_sync.h"
 #include "column_view_model.h"
 #include "explorer_handoff.h"
 #include "entry_order_hold.h"
+#include "entry_sort.h"
 #include "create_rename_intent.h"
 #include "pane_header_animation.h"
+#include "details_tree.h"
 #include "../index/content_result_store.h"
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <array>
 #include <string>
@@ -46,22 +49,51 @@ struct Tab {
 
     int selected_index = -1;
     int selection_anchor = -1;
+    // Keyboard focus that is not the selection (Ctrl+arrows, a Ctrl-click
+    // that deselects). It lapses as soon as the selection changes elsewhere.
+    int caret_index = -1;
+    uint64_t caret_revision = UINT64_MAX;
     bool all_selected = false;
     std::unordered_set<int> selected;
     float scroll_y = 0.0f;
     float scroll_x = 0.0f;
     ui::ViewMode view_mode = ui::ViewMode::Details;
+    // Icon size the header's icon button and the first Ctrl+wheel step out of
+    // Details return to (session only; ui::IsZoomIconMode values).
+    ui::ViewMode last_icon_mode = ui::ViewMode::MediumIcons;
+    // Continuous icon size in DIP (ui::ZoomIconDip); 0 = the mode's preset.
+    float icon_dip = 0.0f;
+    float last_icon_dip = 0.0f;  // goes with last_icon_mode
+    // #58-7b: this folder has no saved view; once its listing lands, Large
+    // icons replace the default if it is mostly pictures (not saved).
+    bool auto_view_pending = false;
+    // Icon views shown as a photo wall (the header's wall button), kept per
+    // folder; stays set in other views so returning to the icons brings it back.
+    bool wall = false;
     uint64_t view_generation = 1;
     std::vector<CreateRenameIntent> create_rename_intents;
     ui::SortColumn sort_column = ui::SortColumn::Name;
     ui::SortDirection sort_direction = ui::SortDirection::Asc;
-    // "Group by" (app::GroupBy value) for current_path. Only list-like views
-    // draw group headers, so the worker sorts by EffectiveGroup() and icon
-    // views keep the plain order.
+    // "Group by" (app::GroupBy value) for current_path. Views that draw group
+    // headers (ui::ShowsGroups: all but List, and not a photo wall) sort by
+    // EffectiveGroup(); the others keep the plain order.
     int group_by = 0;
     int EffectiveGroup() const {
-        return view_mode == ui::ViewMode::Details || view_mode == ui::ViewMode::Content
-            ? group_by : 0;
+        // This PC always groups its rows (磁盘 / 设备 / 网盘程序入口), as
+        // Explorer does; 7 = app::GroupBy::ThisPc.
+        if (current_path.empty()) return ui::ShowsGroups(view_mode) ? 7 : 0;
+        // The network page likewise (已固定 / 网络驱动器 / 局域网设备 / 最近访问);
+        // 8 = app::GroupBy::Network, pulse:networks = kNetworkLocationsPath.
+        if (current_path == L"pulse:networks") return ui::ShowsGroups(view_mode) ? 8 : 0;
+        const bool walled = wall && ui::IsZoomIconMode(view_mode);
+        return ui::ShowsGroups(view_mode) && !walled ? group_by : 0;
+    }
+    // Where folders sit next to files (app::FolderSortMode) when chosen for
+    // current_path, remembered per folder like the sort column; -1 follows
+    // Settings > Folders first. Virtual views keep the tab's choice.
+    int folder_sort = -1;
+    FolderSortMode EffectiveFolderSort() const {
+        return folder_sort >= 0 ? FolderSortModeFromInt(folder_sort) : DefaultFolderSortMode();
     }
     // Collapsed group keys per folder (session only).
     std::map<std::wstring, std::set<std::wstring>> collapsed_groups;
@@ -76,6 +108,13 @@ struct Tab {
     std::vector<float> column_widths_dip;
     bool show_protected_os_files = false;
     std::wstring virtual_title; // tag/search views; empty for real folders
+    std::wstring virtual_type_column; // the assistant's lists: the 类型 column's name (empty: 原因)
+    // The network page's status bar summary (counts, LAN discovery state);
+    // only read while current_path is pulse:networks.
+    std::wstring virtual_status;
+    // A short note after the pane header title (network page: the current
+    // network's name and category); cleared with virtual_title.
+    std::wstring virtual_header_note;
     std::wstring banner_title;
     std::wstring banner_message;
     TagAdsNoticeState tag_ads_notice;
@@ -84,6 +123,9 @@ struct Tab {
     bool net_readonly = false;
     uint64_t cache_unix = 0;
     int recent_filter = 0; // RecentFilter; transient per tab.
+    // Tag views: the 细分 suggestions, counted when the view loads.
+    std::vector<std::pair<std::wstring, int>> tag_refine;     // tag id, items
+    std::vector<std::pair<std::wstring, int>> tag_locations;  // folder, items
     int change_days = 7;
     uint32_t change_kind = UINT32_MAX;
     uint64_t change_cursor = 0;
@@ -145,7 +187,18 @@ struct Tab {
     std::map<size_t,index::ContentResultStore::Row> content_action_rows;
     bool content_action_ready = false;
     size_t content_action_count = 0;
-    size_t EntryCount() const { if(content_action_ready && all_selected) return content_action_count; return content_results ? content_results->Count() : snapshot ? snapshot->size() : 0; }
+    size_t EntryCount() const { if(content_action_ready && all_selected) return content_action_count; if(const auto* combined=TreeEntries()) return combined->size(); return content_results ? content_results->Count() : snapshot ? snapshot->size() : 0; }
+    // Inline folder expansion in the details view (app_details_tree.cpp).
+    std::shared_ptr<DetailsTree> tree;
+    // Snapshot rows followed by expanded children and placeholders while the
+    // tree was built for the current snapshot; null otherwise.
+    const std::vector<fs::DirEntry>* TreeEntries() const {
+        return tree && tree->combined && tree->base == snapshot && snapshot && !content_results
+            ? tree->combined.get() : nullptr;
+    }
+    // Moves the selection on child rows into the tree stash (by path) before
+    // the rows they index go away.
+    void StashTreeSelection();
     fs::DirEntry EntryAt(size_t index) const;
     size_t search_total = 0;
     size_t search_next_offset = 0;
@@ -226,6 +279,14 @@ struct Tab {
     void SelectIndices(const std::vector<int>& indices);
     void InvertIndices(const std::vector<int>& universe);
     void MoveFocus(int index, bool extend, const ui::PaneViewModel* view = nullptr);
+    // Ctrl+Shift: adds anchor..index to the selection instead of replacing it.
+    void AddRange(int from, int to, const ui::PaneViewModel* view = nullptr);
+    void SetCaret(int index) { caret_index = index; caret_revision = selection_revision; }
+    bool HasCaret() const {
+        return caret_revision == selection_revision && caret_index >= 0 && caret_index < CountBound();
+    }
+    // The row keyboard navigation starts from.
+    int FocusIndex() const { return HasCaret() ? caret_index : selected_index; }
     bool IsSelected(int index) const;
     int SelectedCount() const;
     std::vector<int> SelectedIndices() const;
@@ -305,6 +366,7 @@ struct Pane {
     bool target = false;
     float filter_expand = 0.0f;
     PaneHeaderAnimation header_animation;
+    bool size_slider_open = false;  // narrow pane: the header's size button opened the slider
     float filter_animation_from = 0.0f;
     float filter_animation_target = 0.0f;
     uint64_t filter_animation_start = 0;
@@ -509,6 +571,8 @@ private:
     std::vector<TrayBatch> batches_;
     uint64_t next_id_ = 1;
     std::map<uint64_t, std::vector<std::wstring>> inflight_sources_;
+    // The same paths keyed for lookup, counted across tasks.
+    std::unordered_map<std::wstring, size_t> inflight_keys_;
 };
 
 // ---------------------------------------------------------------------------
@@ -519,6 +583,7 @@ struct SidebarEntry {
     std::wstring detail;
     std::wstring glyph;
     std::wstring fallback;
+    std::wstring icon_path; // ui::SidebarItem::icon_path
     std::wstring badge;
     uint32_t badge_rgb = 0x0078D4;
     D2D1_COLOR_F color = {};
@@ -536,16 +601,34 @@ struct SidebarEntry {
     int builtin = -1;
 };
 
-// Built-in quick-access links, in the order they are listed. The stored mask
-// (session "quickAccessHidden") is indexed by these values, so changing the set
-// or the order needs a session migration (see kSessionVersion in session.cpp).
+// Built-in quick-access links. The stored mask (session "quickAccessHidden") is
+// indexed by these values, so new links are appended and any other change needs
+// a session migration (see kSessionVersion in session.cpp). The sidebar lists
+// them in BuildSidebarModel's order, not in value order.
 enum class BuiltinQuickAccess : int {
     Recent = 0,
     Desktop,
     Downloads,
     RecycleBin,
+    Pictures,   // session version 9
+    Videos,
+    Documents,
+    Music,
     Count,
 };
+
+// Links a fresh profile hides: Documents and Music are one click away in the
+// section menu, but a default sidebar keeps to the folders people open most.
+inline constexpr uint32_t kDefaultQuickAccessHiddenMask =
+    (1u << static_cast<int>(BuiltinQuickAccess::Documents)) |
+    (1u << static_cast<int>(BuiltinQuickAccess::Music));
+
+// Layout keys of the built-in links in the quick-access order list (places
+// "quick_access_order"): L"builtin:pictures" and so on. They are stored, so a
+// name never changes. Empty for values outside BuiltinQuickAccess.
+std::wstring BuiltinQuickAccessKey(int builtin);
+// The BuiltinQuickAccess value of a key, or -1 for pins and unknown names.
+int BuiltinQuickAccessFromKey(const std::wstring& key);
 
 // Sidebar sections. The ids are stable: the collapse/hide bitmasks stored in the
 // session are indexed by them, and the user may reorder the groups by dragging.
@@ -585,6 +668,7 @@ struct SidebarModel {
     std::vector<SidebarEntry> drives;
     std::vector<SidebarEntry> cloud;   // OneDrive accounts (empty while signed out)
     std::vector<SidebarEntry> starred; // the "starred items" root row
+    std::vector<SidebarEntry> devices; // phones after the drives (SyncDeviceSidebar)
 };
 
 SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle = nullptr);
@@ -603,6 +687,14 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
                                          bool starred_expanded = true,
                                          const std::vector<int>* sidebar_order = nullptr,
                                          uint32_t quick_access_hidden_mask = 0);
+// Keys of the built-in links in quick_access (the sidebar's default order).
+std::vector<std::wstring> BuiltinQuickAccessDefaultKeys(const std::vector<SidebarEntry>& quick_access);
+// Quick-access rows in display order: built-in links and pinned folders, in the
+// user's arrangement when places has one (MergeQuickAccessOrder). Links switched
+// off in hidden_mask are left out unless include_hidden (the editor lists them).
+std::vector<std::wstring> QuickAccessDisplayKeys(const std::vector<SidebarEntry>& quick_access,
+                                                 const PlacesCatalog* places,
+                                                 uint32_t hidden_mask, bool include_hidden);
 
 // Sanitizes a stored section order: keeps only known ids, appends the missing
 // ones, drops duplicates. Returns DefaultSidebarOrder() when nothing survives.

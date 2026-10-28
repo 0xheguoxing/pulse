@@ -117,6 +117,43 @@ static void UnitTests() {
     Check(sniff(std::string("qoif\0\0\0\x10\0\0\0\x10\x04\0", 14)) == L"QOI", "sniff QOI");
     Check(SniffImagePackFormat(nullptr, 0).empty(), "sniff nothing");
 
+    // PNG / WebP the pack accelerates: big stills only, the rest stays on WIC.
+    Check(imgpack::IsAcceleratedExtension(L".png") && imgpack::IsAcceleratedExtension(L".WebP") &&
+          !imgpack::IsAcceleratedExtension(L".jpg") && !imgpack::IsAcceleratedExtension(L".pngx") &&
+          !imgpack::IsAcceleratedExtension(L""), "accelerated extensions");
+    auto be32 = [](std::string& s, uint32_t v) { for (int i = 3; i >= 0; --i) s += static_cast<char>((v >> (i * 8)) & 0xff); };
+    auto png = [&](uint32_t w, uint32_t h, uint8_t interlace, const char* extra) {
+        std::string s("\x89PNG\r\n\x1a\n", 8);
+        be32(s, 13); s += "IHDR"; be32(s, w); be32(s, h);
+        s += static_cast<char>(8); s += static_cast<char>(2); s += '\0'; s += '\0'; s += static_cast<char>(interlace);
+        be32(s, 0);                                   // CRC (not checked)
+        if (extra) { be32(s, 4); s += extra; s += "abcd"; be32(s, 0); }
+        be32(s, 2); s += "IDAT"; s += "xx"; be32(s, 0);
+        return s;
+    };
+    auto accel = [](const std::string& s) { return AcceleratedSourcePixels(reinterpret_cast<const uint8_t*>(s.data()), s.size()); };
+    Check(accel(png(10000, 8000, 0, nullptr)) == 80000000ull, "accelerate: still PNG");
+    Check(accel(png(10000, 8000, 0, "tEXt")) == 80000000ull, "accelerate: PNG with text ahead of IDAT");
+    Check(accel(png(10000, 8000, 1, nullptr)) == 0, "accelerate: interlaced PNG stays on WIC");
+    Check(accel(png(10000, 8000, 0, "acTL")) == 0, "accelerate: APNG stays on WIC");
+    Check(accel(png(10000, 8000, 0, "eXIf")) == 0, "accelerate: PNG with Exif stays on WIC");
+    { std::string cut = png(10000, 8000, 0, nullptr); cut.resize(40); Check(accel(cut) == 0, "accelerate: no IDAT in sight"); }
+    auto webp = [](const char* fourcc, std::string payload) {
+        std::string s = "RIFF"; s += std::string("\0\0\0\0", 4); s += "WEBP"; s += fourcc;
+        s += std::string("\0\0\0\0", 4); s += payload; s.resize((std::max)(s.size(), size_t{40}), '\0');
+        return s;
+    };
+    // VP8X: flags, 3 reserved, canvas (w-1, h-1) 24-bit little endian. 9999 = 0x270F, 7999 = 0x1F3F.
+    Check(accel(webp("VP8X", std::string("\x10\0\0\0\x0f\x27\0\x3f\x1f\0", 10))) == 80000000ull, "accelerate: VP8X still with alpha");
+    Check(accel(webp("VP8X", std::string("\x12\0\0\0\x0f\x27\0\x3f\x1f\0", 10))) == 0, "accelerate: animated WebP stays on WIC");
+    Check(accel(webp("VP8X", std::string("\x08\0\0\0\x0f\x27\0\x3f\x1f\0", 10))) == 0, "accelerate: WebP with Exif stays on WIC");
+    // VP8: frame tag, start code 9d 01 2a, 14-bit width and height. 10000 = 0x2710, 8000 = 0x1F40.
+    Check(accel(webp("VP8 ", std::string("\0\0\0\x9d\x01\x2a\x10\x27\x40\x1f", 10))) == 80000000ull, "accelerate: lossy WebP");
+    Check(accel(webp("VP8 ", std::string("\0\0\0\x9d\x01\x2b\x10\x27\x40\x1f", 10))) == 0, "accelerate: bad VP8 start code");
+    // VP8L: 0x2f, then (w-1) | (h-1) << 14. w-1 = 9999, h-1 = 7999 -> 0x07CFE70F.
+    Check(accel(webp("VP8L", std::string("\x2f\x0f\xe7\xcf\x07", 5))) == 80000000ull, "accelerate: lossless WebP");
+    Check(accel("") == 0 && AcceleratedSourcePixels(nullptr, 0) == 0, "accelerate: nothing");
+
     ImagePackFrame frame;
     const std::string pixels(2 * 3 * 4, '\x7F');
     Check(ParseImagePackFrame(Bytes(Header(2, 3, 8) + pixels), 256, frame) && frame.width == 2 && frame.height == 3 &&
@@ -342,6 +379,36 @@ int wmain() {
             Check(ok == 12, "12 parallel thumbnails all decode");
         }
 
+        // Big still PNG / WebP: the pack takes them; small and animated ones stay on WIC.
+        const fs::path big_png = images / L"big.png", small_png = images / L"small.png",
+            big_webp = images / L"big.webp", anim_webp = images / L"anim.webp";
+        const std::wstring big_src = L"-f lavfi -i testsrc2=size=5000x4000:rate=1 -frames:v 1 ";
+        Check(gen(big_src + L"-c:v png", big_png), "fixture: 5000x4000 png");
+        Check(gen(src + L"-c:v png", small_png), "fixture: 1280x720 png");
+        const bool have_webp = gen(big_src + L"-c:v libwebp -quality 80", big_webp);
+        const bool have_anim_webp = have_webp &&
+            gen(L"-f lavfi -i testsrc2=size=5000x4000:rate=2 -frames:v 2 -c:v libwebp -loop 0", anim_webp);
+        if (!have_webp) printf("SKIP webp: this FFmpeg has no libwebp\n");
+        {
+            std::vector<std::pair<const char*, fs::path>> big = {{"png", big_png}};
+            if (have_webp) big.push_back({"webp", big_webp});
+            for (const auto& [name, file] : big) {
+                preview::ImagePackFrame frame;
+                const ULONGLONG t0 = GetTickCount64();
+                const bool ok = preview::ImagePackAccelerate(file.wstring(), 256, true, frame);
+                printf("     big %-4s 5000x4000 -> %ux%u in %llu ms\n", name, frame.width, frame.height, GetTickCount64() - t0);
+                snprintf(what, sizeof(what), "%s: a big still goes through the pack", name);
+                Check(ok && frame.width == 256 && frame.height == 205 && frame.source_width == 5000 &&
+                      frame.source_height == 4000 && frame.stride == 256 * 4 && PixelsVary(frame.pixels), what);
+            }
+            preview::ImagePackFrame frame;
+            Check(!preview::ImagePackAccelerate(small_png.wstring(), 256, true, frame) && frame.pixels.empty(),
+                  "png: a small picture stays on WIC");
+            if (have_anim_webp)
+                Check(!preview::ImagePackAccelerate(anim_webp.wstring(), 256, true, frame), "webp: animation stays on WIC");
+            Check(!preview::ImagePackAccelerate(qoi.wstring(), 256, true, frame), "accelerate: other formats are not taken");
+        }
+
         // End to end through the preview host and its decoder table.
         {
             pulse_test::Host host;
@@ -350,6 +417,12 @@ int wmain() {
             for (const fs::path& file : {qoi, exr, hdr}) {
                 pulse_test::Result r;
                 snprintf(what, sizeof(what), "host: %ls grid thumbnail", file.filename().c_str());
+                Check(host.Request(file.wstring(), r, MAXDWORD, 256, ipc::PreviewRequestKind::Content, grid) &&
+                      r.response.kind == ipc::PreviewContentKind::Bitmap && r.response.width == 256, what);
+            }
+            for (const fs::path& file : {big_png, have_webp ? big_webp : big_png}) {
+                pulse_test::Result r;
+                snprintf(what, sizeof(what), "host: %ls grid thumbnail through the pack", file.filename().c_str());
                 Check(host.Request(file.wstring(), r, MAXDWORD, 256, ipc::PreviewRequestKind::Content, grid) &&
                       r.response.kind == ipc::PreviewContentKind::Bitmap && r.response.width == 256, what);
             }
@@ -385,6 +458,11 @@ int wmain() {
             host.Request(qoi.wstring(), r, MAXDWORD, 256, ipc::PreviewRequestKind::Content, ipc::kPreviewRequestFlagGrid);
             Check(r.response.kind != ipc::PreviewContentKind::Bitmap && r.error != L"image-pack-missing",
                   "host: grid thumbnails without the pack stay quiet");
+            r = {};
+            Check(host.Request(big_png.wstring(), r, MAXDWORD, 256, ipc::PreviewRequestKind::Content,
+                               ipc::kPreviewRequestFlagGrid) &&
+                  r.response.kind == ipc::PreviewContentKind::Bitmap && r.response.width == 256,
+                  "host: big png without the pack still decodes (WIC)");
         }
     }
 

@@ -42,6 +42,12 @@ struct ImagePackFrame {
 // The picture scaled to fit `cap` x `cap` (never enlarged).
 bool ImagePackDecode(const std::wstring& path, UINT cap, bool grid, ImagePackFrame& frame);
 
+// Big still PNG / WebP (imgpack::IsAcceleratedExtension), which the pack
+// decodes several times faster than WIC. False - WIC goes on - when the file is
+// small, animated, turned by Exif, the pack is missing or busy, or the
+// installed pack predates these formats (remembered per pack folder).
+bool ImagePackAccelerate(const std::wstring& path, UINT cap, bool grid, ImagePackFrame& frame);
+
 // Details-pane rows (size, format, channels). Appends at most `max_rows`
 // rows not already present in `rows`.
 bool ImagePackProperties(const std::wstring& path, std::vector<PreviewPropertyValue>& rows,
@@ -59,6 +65,9 @@ std::wstring_view SniffImagePackFormat(const uint8_t* bytes, size_t size);
 bool ParseImagePackFrame(const std::vector<uint8_t>& output, UINT cap, ImagePackFrame& frame);
 // pulse-imgpack probe output ("key=value" lines) -> display rows.
 std::vector<PreviewPropertyValue> ParseImagePackProbe(std::string_view output);
+// First bytes of a PNG / WebP -> its pixel count when the pack should take it
+// (still, not interlaced, no Exif orientation), else 0. Size is not judged here.
+uint64_t AcceleratedSourcePixels(const uint8_t* bytes, size_t size);
 // How many decoders may run at once on a machine with `cpus` logical CPUs.
 unsigned ImagePackConcurrency(unsigned cpus);
 

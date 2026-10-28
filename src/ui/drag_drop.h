@@ -58,6 +58,11 @@ std::wstring DropLaunchArguments(const std::vector<std::wstring>& sources);
 // IDataObject inspection (drop-in side).
 // ---------------------------------------------------------------------------
 bool ExtractHDropPaths(IDataObject* obj, std::vector<std::wstring>& out);
+// Items with no filesystem path (a phone's files): their "::{CLSID}\..."
+// parsing names, only when every item is one. False for anything else.
+bool ExtractShellItemIds(IDataObject* obj, std::vector<std::wstring>& out);
+// A "::{CLSID}\..." parsing name: a shell item with no filesystem path.
+bool IsShellItemId(const std::wstring& path);
 DWORD PreferredDropEffect(IDataObject* obj); // 0 when absent
 
 // ---------------------------------------------------------------------------
@@ -69,6 +74,9 @@ public:
     static FileDataObject* Create(const std::vector<std::wstring>& paths);
 
     DWORD PerformedEffect() const { return performed_effect_; }
+    // CFSTR_LOGICALPERFORMEDDROPEFFECT: what happened from the user's view,
+    // e.g. MOVE after an optimized move that reports NONE as performed.
+    DWORD LogicalEffect() const { return logical_effect_; }
 
     IFACEMETHODIMP QueryInterface(REFIID riid, void** out) override;
     IFACEMETHODIMP_(ULONG) AddRef() override;
@@ -101,7 +109,38 @@ private:
     LONG ref_ = 1;
     std::vector<std::wstring> paths_;
     DWORD performed_effect_ = 0;
+    DWORD logical_effect_ = 0;
 };
+
+// Optional visual that follows the pointer during a file drag (the card stack
+// in drag_stack.cpp). Pulse.exe registers a factory at start-up; builds that
+// compile drag_drop.cpp alone (the console drag test) run without one.
+class DragVisual {
+public:
+    virtual ~DragVisual() = default;
+    // Called from the modal loop on every input change, pointer moves included.
+    virtual void Track() = 0;
+    // The effect the current target answered (DROPEFFECT_*).
+    virtual void Effect(DWORD effect) = 0;
+    // The drag ended. The visual animates out and frees itself; the caller
+    // must not touch it afterwards.
+    virtual void Finish(DWORD effect, bool cancelled) = 0;
+};
+using DragVisualFactory = DragVisual* (*)(const std::vector<std::wstring>& paths);
+void SetDragVisualFactory(DragVisualFactory factory);
+
+// Landing in the real slots (pulse_motion_v2, rolando-sound-cards): a drop
+// into a folder that a Pulse list shows asks the card stack to wait at the
+// drop point instead of gulping; once the new rows are on screen their
+// rects (screen px: icon left, row top/right/bottom) land the cards there.
+// Without an answer the stack gulps on its own after a short wait.
+void ExpectDragLanding();                 // the drop target, before Drop returns
+bool TakeDragLandingExpectation();        // the visual, in Finish
+void SetDragLandingWindow(HWND hwnd);     // the visual waiting (nullptr: none)
+bool DragLandingAwaiting();
+bool LandDragStack(const std::vector<RECT>& screen_rects);  // posts to the visual
+std::vector<RECT> TakeDragLandingRects(); // the visual, on that message
+inline constexpr UINT kDragLandMessage = WM_APP + 0x4C;
 
 class ListDropSource final : public IDropSource {
 public:
@@ -113,11 +152,19 @@ public:
     IFACEMETHODIMP_(ULONG) AddRef() override { return ++ref_; }
     IFACEMETHODIMP_(ULONG) Release() override;
     IFACEMETHODIMP QueryContinueDrag(BOOL escape_pressed, DWORD key_state) override;
-    IFACEMETHODIMP GiveFeedback(DWORD) override { return DRAGDROP_S_USEDEFAULTCURSORS; }
+    IFACEMETHODIMP GiveFeedback(DWORD effect) override {
+        if (visual_) visual_->Effect(effect);
+        return DRAGDROP_S_USEDEFAULTCURSORS;
+    }
+
+    void SetVisual(DragVisual* visual) { visual_ = visual; }
+    bool Cancelled() const { return cancelled_; }
 
 private:
     LONG ref_ = 1;
     std::function<bool()> esc_hook_;
+    DragVisual* visual_ = nullptr; // not owned
+    bool cancelled_ = false;
 };
 
 // Runs the modal DoDragDrop loop. Returns the performed DROPEFFECT_*.
@@ -129,7 +176,8 @@ DWORD DoFileDragDrop(const std::vector<std::wstring>& paths, DWORD allowed_effec
 // Drop-in target.
 // ---------------------------------------------------------------------------
 struct DropTargetCallbacks {
-    // pt in client coordinates; sources already extracted from CF_HDROP.
+    // pt in client coordinates; sources already extracted from CF_HDROP, or
+    // shell item ids (ExtractShellItemIds) when the drag has no CF_HDROP.
     // Return the DROPEFFECT_* to show (badge + cursor follow it). allowed is
     // the source's effect mask, preferred its Preferred DropEffect (0 when
     // absent), so the badge matches what the drop will actually do.

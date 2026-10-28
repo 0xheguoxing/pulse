@@ -16,9 +16,8 @@ Pick the package for your system on the releases page:
 | --- | --- | --- |
 | Windows (64-bit) | Windows 10 / Windows 11 | `PulseSetup-<version>.exe` |
 | Windows 8.1 compatible (64-bit) | Windows 8.1 | `PulseSetup-<version>-win81.exe` |
-| Portable (64-bit) | Windows 10 / Windows 11 | `Pulse-<version>-portable-win-x64.zip` |
 
-Run the installer and follow the wizard. You can enable the PulseIndex service during setup for whole-disk indexed search. The portable edition runs straight from the unpacked folder and still keeps its settings in your user app-data folder; the index service is only deployed by the installer.
+Run the installer and follow the wizard. You can enable the PulseIndex service during setup for whole-disk indexed search. There is no portable edition from 1.0.58 on.
 
 The interface is available in Simplified Chinese, Traditional Chinese and English. It follows Windows by default and can be changed in Settings → Display language.
 

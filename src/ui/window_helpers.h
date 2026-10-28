@@ -20,7 +20,20 @@ bool ContainsRect(const D2D1_RECT_F& rect, float x, float y);
 
 LRESULT BorderlessHitTest(HWND hwnd, LPARAM lparam, float title_height,
                           const D2D1_RECT_F& client_buttons);
+// System acrylic for dialogs (Mica Alt / Mica before 22H2); false = paint solid
+// (unsupported, transparency effects off, high contrast, Windows 10).
 bool ApplyBackdrop(HWND hwnd, bool dark);
+bool IsAcrylicBackdrop(HWND hwnd);
+// See-through cards and footer bands for dialogs over acrylic.
+D2D1_COLOR_F GlassCard(bool dark);
+D2D1_COLOR_F GlassSheet(bool dark);
+void ApplyGlass(Theme& theme, bool dark);
+// Windows 10 (or PULSE_TEST_OWN_CORNERS=1): BeginSurface clips the card to
+// 8 px corners and ApplyBackdrop gives the window a shadow window of its own.
+bool DrawsOwnCorners();
+// Hides that shadow until the window is next hidden: for exit animations
+// that shrink the card.
+void SuppressWindowShadow(HWND hwnd);
 // Longest prefix of `text` that fits `width` with a trailing ellipsis.
 std::wstring FitTextEnd(const std::wstring& text, float width,
                         const std::function<float(std::wstring_view)>& measure);

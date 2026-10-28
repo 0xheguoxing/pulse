@@ -26,6 +26,8 @@ namespace pulse::ui {
 namespace {
 
 const wchar_t* Pick(const wchar_t* zh, const wchar_t* en) { return l10n::Pick(zh, en); }
+using l10n::Get;
+using l10n::StringId;
 
 template <size_t N>
 void AppendTable(std::vector<std::wstring>& out, const std::wstring_view (&table)[N]) {
@@ -279,16 +281,16 @@ PreviewFormatState PreviewFormatSupport(const WindowViewModel& vm, size_t group,
 
 PreviewCodecInfo PreviewCodec(int index) {
     switch (index) {
-    case 0: return {Pick(L"HEIF 图像扩展", L"HEIF Image Extensions"),
-                    Pick(L"HEIC / HEIF 照片（iPhone 常用）", L"HEIC / HEIF photos (common on iPhone)"),
+    case 0: return {Get(StringId::HEIFImageExtensions).c_str(),
+                    Get(StringId::HEICHEIFPhotosCommonOnIPhone).c_str(),
                     L"9PMMSR1CGPWG"};
-    case 1: return {Pick(L"HEVC 视频扩展", L"HEVC Video Extensions"),
-                    Pick(L"HEVC (H.265) 视频，以及 HEIC 照片的解码", L"HEVC (H.265) video, and decoding HEIC photos"),
+    case 1: return {Get(StringId::HEVCVideoExtensions).c_str(),
+                    Get(StringId::HEVCH265VideoAndDecodingHEICPhotos).c_str(),
                     L"9NMZLZ57R3T7"};
-    case 2: return {Pick(L"AV1 视频扩展", L"AV1 Video Extension"),
-                    Pick(L"AVIF 图片和 AV1 视频", L"AVIF images and AV1 video"), L"9MVZQVXJBQ9V"};
-    default: return {Pick(L"WebP 图像扩展", L"WebP Image Extensions"),
-                     Pick(L"WebP 图片和动图", L"WebP images and animations"), nullptr};
+    case 2: return {Get(StringId::AV1VideoExtension).c_str(),
+                    Get(StringId::AVIFImagesAndAV1Video).c_str(), L"9MVZQVXJBQ9V"};
+    default: return {Get(StringId::WebPImageExtensions).c_str(),
+                     Get(StringId::WebPImagesAndAnimations).c_str(), nullptr};
     }
 }
 

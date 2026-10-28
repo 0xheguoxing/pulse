@@ -1,4 +1,5 @@
 #include "../app/places.h"
+#include "../fs/fs_enum.h"
 #include "../app/context_menu_prefs.h"
 #include "../common/utf8_file.h"
 #include <filesystem>
@@ -90,6 +91,121 @@ static void WorkspaceRoundTrip() {
         }
     }
 }
+static void QuickAccessLayout() {
+    using Keys = std::vector<std::wstring>;
+    const Keys defaults = {L"builtin:recent", L"builtin:desktop", L"C:\\a", L"C:\\b"};
+    Check(MergeQuickAccessOrder({}, defaults) == defaults, "QA order: no saved order keeps the defaults");
+    Check(MergeQuickAccessOrder({L"C:\\b", L"builtin:desktop", L"C:\\A", L"builtin:recent"}, defaults) ==
+              Keys{L"C:\\b", L"builtin:desktop", L"C:\\a", L"builtin:recent"},
+          "QA order: the saved order wins and paths match case-insensitively");
+    const Keys grown = {L"builtin:recent", L"builtin:desktop", L"builtin:pictures",
+                        L"C:\\a", L"C:\\b", L"C:\\c"};
+    Check(MergeQuickAccessOrder({L"C:\\b", L"builtin:desktop", L"C:\\gone", L"C:\\a", L"builtin:recent"}, grown) ==
+              Keys{L"C:\\b", L"builtin:desktop", L"builtin:pictures", L"C:\\a", L"builtin:recent", L"C:\\c"},
+          "QA order: a new link follows its default predecessor, a new pin goes last, stale keys drop");
+
+    const Keys keys = {L"builtin:recent", L"builtin:desktop", L"builtin:downloads", L"C:\\a", L"C:\\b"};
+    const Keys visible = {L"builtin:recent", L"builtin:desktop", L"C:\\a", L"C:\\b"};
+    Check(MoveQuickAccessKey(keys, visible, L"C:\\b", 0) ==
+              Keys{L"C:\\b", L"builtin:recent", L"builtin:desktop", L"builtin:downloads", L"C:\\a"},
+          "QA move: a pin goes above the built-in links");
+    Check(MoveQuickAccessKey(keys, visible, L"builtin:recent", 4) ==
+              Keys{L"builtin:desktop", L"builtin:downloads", L"C:\\a", L"C:\\b", L"builtin:recent"},
+          "QA move: a link goes to the end");
+    Check(MoveQuickAccessKey(keys, visible, L"C:\\a", 2) == keys &&
+              MoveQuickAccessKey(keys, visible, L"C:\\a", 3) == keys,
+          "QA move: the row's own gaps change nothing");
+    Check(MoveQuickAccessKey(keys, visible, L"C:\\a", 1) ==
+              Keys{L"builtin:recent", L"C:\\a", L"builtin:desktop", L"builtin:downloads", L"C:\\b"},
+          "QA move: hidden links keep their places");
+
+    const Keys builtin = {L"builtin:recent", L"builtin:desktop"};
+    // The catalog stores pins in their normalized (extended-length) form.
+    const std::wstring a = pulse::fs::NormalizePath(L"C:\\a");
+    const std::wstring b = pulse::fs::NormalizePath(L"C:\\b");
+    const std::wstring z = pulse::fs::NormalizePath(L"C:\\z");
+    PlacesCatalog c;
+    c.quick_access_paths = {L"C:\\a", L"C:\\b"};
+    Check(c.SetQuickAccessLayout({L"builtin:recent", L"builtin:desktop", L"C:\\b", L"C:\\a"}, builtin) &&
+              c.quick_access_order.empty() && c.quick_access_paths == Keys{b, a},
+          "QA layout: the default arrangement stores only the pin order");
+    Check(c.SetQuickAccessLayout({L"C:\\a", L"builtin:recent", L"builtin:desktop"}, builtin) &&
+              c.quick_access_paths == Keys{a} &&
+              c.quick_access_order == Keys{a, L"builtin:recent", L"builtin:desktop"},
+          "QA layout: a mixed order is stored and dropped pins are unpinned");
+    Check(!c.SetQuickAccessLayout({L"C:\\a", L"builtin:recent", L"builtin:desktop"}, builtin),
+          "QA layout: an unchanged layout is not saved again");
+    {
+        PlacesCatalog reader;
+        Check(reader.Load() && reader.quick_access_order == c.quick_access_order &&
+                  reader.quick_access_paths == c.quick_access_paths,
+              "QA layout: the order survives save and reload");
+    }
+    c.RemapPaths(L"C:\\a", L"C:\\z");
+    Check(c.quick_access_order.size() == 3 && c.quick_access_order[0] == z,
+          "QA layout: a renamed pinned folder keeps its place");
+    c.SetQuickAccessPinned({L"C:\\z"}, false);
+    Check(c.quick_access_order == Keys{L"builtin:recent", L"builtin:desktop"},
+          "QA layout: unpinning removes the folder from the order");
+}
+static void BatchedAssignments() {
+    // Batch calls must leave what one call per path left.
+    const auto N = [](const wchar_t* path) { return pulse::fs::NormalizePath(path); };
+    const auto seed = [&](PlacesCatalog& c) {
+        c.persist = false;
+        c.tags.clear(); c.starred_items.clear(); c.recent_items.clear();
+        ColorTag tag; tag.id = L"batch"; tag.name = L"batch";
+        for (const wchar_t* path : {L"C:\\src\\a.jpg", L"C:\\src\\b.jpg", L"C:\\src\\dir\\c.jpg",
+                                    L"C:\\src\\dir", L"C:\\keep\\d.jpg", L"C:\\src\\ab.jpg"}) {
+            tag.paths.push_back(N(path));
+            StarredItem star; star.path = N(path); c.starred_items.push_back(star);
+            RecentItem recent; recent.path = N(path); c.recent_items.push_back(recent);
+        }
+        c.tags.push_back(tag);
+    };
+    const auto same = [](const PlacesCatalog& left, const PlacesCatalog& right) {
+        if (left.tags.size() != right.tags.size() || left.starred_items.size() != right.starred_items.size() ||
+            left.recent_items.size() != right.recent_items.size()) return false;
+        for (size_t i = 0; i < left.tags.size(); ++i)
+            if (left.tags[i].paths != right.tags[i].paths) return false;
+        for (size_t i = 0; i < left.starred_items.size(); ++i)
+            if (left.starred_items[i].path != right.starred_items[i].path) return false;
+        for (size_t i = 0; i < left.recent_items.size(); ++i)
+            if (left.recent_items[i].path != right.recent_items[i].path) return false;
+        return true;
+    };
+    using Moves = std::vector<std::pair<std::wstring, std::wstring>>;
+    for (const Moves& moves : {
+             Moves{{L"C:\\src\\a.jpg", L"C:\\dst\\a.jpg"}, {L"c:\\SRC\\DIR", L"C:\\dst\\dir"},
+                   {L"C:\\src\\b.jpg", L"C:\\dst\\b.jpg"}},
+             // A chain and nested sources fall back to one move after another.
+             Moves{{L"C:\\src\\a.jpg", L"C:\\src\\b.jpg"}, {L"C:\\src\\b.jpg", L"C:\\other\\b.jpg"}},
+             Moves{{L"C:\\src", L"C:\\moved"}, {L"C:\\src\\dir", L"C:\\elsewhere\\dir"}}}) {
+        PlacesCatalog batch, single;
+        seed(batch); seed(single);
+        batch.RemapPaths(moves);
+        for (const auto& [from, to] : moves) single.RemapPaths(from, to);
+        Check(same(batch, single), "batched remap leaves what one remap per item left");
+    }
+    {
+        PlacesCatalog batch;
+        seed(batch);
+        batch.RemapPaths(Moves{{L"C:\\src\\a.jpg", L"C:\\dst\\a.jpg"}, {L"C:\\src\\dir", L"C:\\dst\\dir"}});
+        Check(batch.starred_items[0].path == N(L"C:\\dst\\a.jpg") &&
+                  batch.starred_items[2].path == N(L"C:\\dst\\dir\\c.jpg") &&
+                  batch.starred_items[5].path == N(L"C:\\src\\ab.jpg"),
+              "batched remap moves items and descendants but not name prefixes");
+    }
+    for (bool descendants : {true, false}) {
+        const std::vector<std::wstring> removed = {L"c:\\SRC\\A.JPG", L"C:\\src\\dir", L"C:\\missing"};
+        PlacesCatalog batch, single;
+        seed(batch); seed(single);
+        batch.RemoveAssignments(removed, descendants);
+        for (const auto& path : removed) single.RemoveAssignments(path, descendants);
+        Check(same(batch, single) && batch.starred_items.size() == (descendants ? 3u : 4u),
+              "batched removal leaves what one removal per item left");
+    }
+}
 int main(int argc, char** argv) {
     const auto root = std::filesystem::absolute(L"bench_data/places-audit-" + std::to_wstring(GetCurrentProcessId()));
     if (std::filesystem::exists(root)) return 2;
@@ -101,6 +217,8 @@ int main(int argc, char** argv) {
         return failures ? 1 : 0;
     }
     Menu();
+    QuickAccessLayout();
+    BatchedAssignments();
     {
         PlacesCatalog c;
         c.quick_access_paths = {L"C:\\old"};

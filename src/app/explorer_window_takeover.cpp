@@ -1,5 +1,6 @@
 // explorer_window_takeover.cpp — see explorer_window_takeover.h.
 #include "explorer_window_takeover.h"
+#include "../common/os_version.h"
 
 #include "shell_window_plan.h"
 #include "shell_window_registry.h"   // TraceShellWindows
@@ -55,13 +56,9 @@ bool IsExplorerProcess(DWORD pid) {
     return ok && _wcsicmp(PathFindFileNameW(image), L"explorer.exe") == 0;
 }
 
+// The kernel's build, not the (compatibility-layer shimmed) RtlGetVersion one.
 bool IsWindows11() {
-    using VersionFn = LONG (WINAPI*)(OSVERSIONINFOW*);
-    const auto version_fn = reinterpret_cast<VersionFn>(
-        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
-    OSVERSIONINFOW version{};
-    version.dwOSVersionInfoSize = sizeof(version);
-    return version_fn && version_fn(&version) == 0 && version.dwBuildNumber >= 22000;
+    return pulse::os::TrueWindowsBuild() >= 22000;
 }
 
 bool HasClass(HWND hwnd, const wchar_t* name) {

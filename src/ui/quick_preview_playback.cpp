@@ -3,12 +3,14 @@
 #include "typography.h"
 #include "ffmpeg_playback.h"
 #include "../common/localization.h"
+#include "../common/text_format.h"
 #include "../common/image_pack_protocol.h"
 #include "../common/preview_extensions.h"
 #include <d2d1helper.h>
 #include <shellapi.h>
 #include <algorithm>
 #include <cmath>
+#include <cwctype>
 
 namespace pulse::ui {
 namespace {
@@ -110,9 +112,10 @@ float QuickPreviewWindow::PlaybackHeight() const noexcept {
     return HasPlayback() ? (kVideoChrome ? kChromeBarHeight : kPlaybackHeight) * scale_ : 0.0f;
 }
 D2D1_RECT_F QuickPreviewWindow::PlaybackRect() const {
-    const float height = static_cast<float>(compositor_.Height());
-    return D2D1::RectF(0, height - PlaybackHeight(),
-        static_cast<float>(compositor_.Width()), height);
+    // Directly above the footer.
+    const float bottom = static_cast<float>(compositor_.Height()) - FooterHeight();
+    return D2D1::RectF(0, bottom - PlaybackHeight(),
+        static_cast<float>(compositor_.Width()), bottom);
 }
 QuickPreviewWindow::PlaybackGeometry QuickPreviewWindow::PlaybackLayout() const {
     PlaybackGeometry g;
@@ -463,10 +466,50 @@ void QuickPreviewWindow::EndPlaybackDrag(bool resume) {
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+float QuickPreviewWindow::PlaybackBarOpacity() {
+    // The pointer is polled: over the video it belongs to the player's window.
+    const uint64_t now = GetTickCount64();
+    POINT cursor{};
+    RECT window{};
+    if (GetCursorPos(&cursor) && GetWindowRect(hwnd_, &window) && PtInRect(&window, cursor) &&
+        (cursor.x != pointer_last_.x || cursor.y != pointer_last_.y)) {
+        pointer_last_ = cursor;
+        pointer_tick_ = now;
+    }
+    const auto state = video_.Snapshot();
+    if (!state.playing || playback_drag_ || playback_hover_x_ >= 0.0f || playback_hover_button_ >= 0 ||
+        VideoPreview::IsAudio(item_.path))
+        pointer_tick_ = now;
+    const uint64_t idle = now - pointer_tick_;
+    if (idle <= 2000) return 1.0f;
+    return (std::max)(0.0f, 1.0f - static_cast<float>(idle - 2000) / 300.0f);
+}
+
 void QuickPreviewWindow::DrawPlayback(ID2D1DeviceContext* dc, ID2D1SolidColorBrush* brush) {
     if (!HasPlayback() || !dc || !brush) return;
     if (kVideoChrome) {
+        const auto state = video_.Snapshot();
+        const bool picture = video_.active() && !VideoPreview::IsAudio(item_.path) && state.ready &&
+            SUCCEEDED(state.error) && !CodecCardVisible(state) && !Palette().high_contrast;
+        if (!picture) {
+            DrawPlaybackChrome(dc, brush);
+            return;
+        }
+        // On the video's black: light ink whatever the theme, fading while the pointer rests.
+        const float opacity = PlaybackBarOpacity();
+        if (opacity <= 0.01f) return;
+        const bool saved_dark = dark_;
+        const D2D1_COLOR_F saved_color = brush->GetColor();
+        dark_ = true;
+        brush->SetColor(D2D1::ColorF(0xF4F4F4));
+        const bool layer = opacity < 0.99f;
+        if (layer)
+            dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), opacity), nullptr);
         DrawPlaybackChrome(dc, brush);
+        if (layer) dc->PopLayer();
+        dark_ = saved_dark;
+        brush->SetColor(saved_color);
         return;
     }
     const auto bar = PlaybackRect();
@@ -734,9 +777,13 @@ bool QuickPreviewWindow::CodecCardVisible(const VideoPreview::State& state) cons
 }
 bool QuickPreviewWindow::OverCodecButton(POINT point) const {
     return Contains(codec_store_rect_, point) || Contains(codec_open_rect_, point) ||
-           Contains(codec_pack_rect_, point);
+           Contains(codec_pack_rect_, point) || Contains(cloud_download_rect_, point);
 }
 bool QuickPreviewWindow::CodecCardClick(POINT point) {
+    if (Contains(cloud_download_rect_, point)) {
+        PostAction(QuickPreviewAction::DownloadCloud);
+        return true;
+    }
     if (Contains(codec_pack_rect_, point)) {
         // The app starts the download, or cancels the running one.
         PostAction(codec_pack_image_ ? QuickPreviewAction::InstallImagePack : QuickPreviewAction::InstallMediaPack);
@@ -757,6 +804,119 @@ void QuickPreviewWindow::SetMediaPackOffer(const MediaPackOffer& offer) {
     if (offer == pack_offer_) return;
     pack_offer_ = offer;
     if (hwnd_ && visible() && video_.active()) InvalidateRect(hwnd_, nullptr, FALSE);
+}
+void QuickPreviewWindow::SetCloudDownloadOffer(const CloudDownloadOffer& offer) {
+    if (offer == cloud_offer_) return;
+    cloud_offer_ = offer;
+    if (hwnd_ && visible() && OfflinePlaceholder()) InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+// 下载并预览 (C4b): same card as the codec hint - what is missing, why Pulse
+// waits (it never downloads just to preview), one accent button; a progress
+// bar takes the button's place while the file comes down.
+bool QuickPreviewWindow::DrawCloudCard(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
+                                       ID2D1SolidColorBrush* brush) {
+    cloud_download_rect_ = {};
+    auto* factory = compositor_.DwriteFactory();
+    auto* caption = compositor_.SmallFormat();
+    auto* icons = compositor_.IconFormat();
+    if (!dc || !brush || !factory || !caption) return false;
+    const float s = scale_;
+    const bool mine = cloud_offer_.path == item_.path;
+    const bool downloading = mine && cloud_offer_.percent >= 0;
+    const std::wstring provider = mine && !cloud_offer_.provider.empty()
+        ? cloud_offer_.provider : l10n::Get(l10n::StringId::CloudProviderGeneric);
+    const auto fill = [](std::wstring str, std::wstring_view key, const std::wstring& value) {
+        if (const size_t at = str.find(key); at != std::wstring::npos) str.replace(at, key.size(), value);
+        return str;
+    };
+    const std::wstring note = downloading
+        ? fill(fill(l10n::Get(l10n::StringId::CloudDownloadingFrom), L"{provider}", provider),
+               L"{n}", std::to_wstring(cloud_offer_.percent))
+        : fill(fill(l10n::Get(l10n::StringId::CloudOnlyNote), L"{size}",
+                    pulse::format::ByteSize(item_.size, true)), L"{provider}", provider);
+    const float width = (std::min)(440.0f * s, content.right - content.left - 32.0f * s);
+    if (width < 160.0f * s) return false;
+    const float inner = width - 40.0f * s;
+    ComPtr<IDWriteTextLayout> layout;
+    factory->CreateTextLayout(note.data(), static_cast<UINT32>(note.size()), caption, inner, 400.0f * s, &layout);
+    float text_h = 18.0f * s;
+    if (layout.get()) {
+        layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        DWRITE_TEXT_METRICS metrics{};
+        if (SUCCEEDED(layout->GetMetrics(&metrics))) text_h = metrics.height;
+    }
+    const float action_h = downloading ? 4.0f * s : 32.0f * s;
+    const float height = 24.0f * s + 40.0f * s + 12.0f * s + text_h + 20.0f * s + action_h + 24.0f * s;
+    if (content.bottom - content.top < height) return false;
+    const float cx = (content.left + content.right) * 0.5f;
+    const float top = std::round((content.top + content.bottom - height) * 0.5f);
+    const auto card = D2D1::RectF(cx - width * 0.5f, top, cx + width * 0.5f, top + height);
+    const auto original = brush->GetColor();
+    const auto tint = [&](float alpha) {
+        auto color = original;
+        color.a = original.a * alpha;
+        brush->SetColor(color);
+        return brush;
+    };
+    ComPtr<ID2D1SolidColorBrush> card_fill, line, accent, on_accent;
+    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0xFFFFFF, 0.05f) : D2D1::ColorF(0xFFFFFF, 1.0f), &card_fill);
+    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0xFFFFFF, 0.08f) : D2D1::ColorF(0x000000, 0.07f), &line);
+    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x60CDFF) : D2D1::ColorF(0x005FB8), &accent);
+    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x062030) : D2D1::ColorF(0xFFFFFF), &on_accent);
+    const auto rounded = D2D1::RoundedRect(card, 12.0f * s, 12.0f * s);
+    if (card_fill.get()) dc->FillRoundedRectangle(rounded, card_fill.get());
+    if (line.get()) dc->DrawRoundedRectangle(rounded, line.get(), 1.0f);
+    const auto glyph = [&](const wchar_t* code, float size, const D2D1_RECT_F& box, ID2D1Brush* ink) {
+        if (!icons || !ink) return;
+        ComPtr<IDWriteTextLayout> g;
+        factory->CreateTextLayout(code, 1, icons, box.right - box.left, box.bottom - box.top, &g);
+        if (!g.get()) return;
+        g->SetFontSize(size, DWRITE_TEXT_RANGE{0, 1});
+        g->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        g->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        dc->DrawTextLayout(D2D1::Point2F(box.left, box.top), g.get(), ink);
+    };
+    float y = top + 24.0f * s;
+    glyph(downloading ? L"\xE896" : L"\xE753", 32.0f * s, D2D1::RectF(cx - 24.0f * s, y, cx + 24.0f * s, y + 40.0f * s),
+          tint(0.85f));
+    y += 40.0f * s + 12.0f * s;
+    if (layout.get()) dc->DrawTextLayout(D2D1::Point2F(cx - inner * 0.5f, y), layout.get(), tint(0.72f));
+    y += text_h + 20.0f * s;
+    if (downloading) {
+        const float bar_w = (std::min)(260.0f * s, inner);
+        const float r = 2.0f * s;
+        dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - bar_w * 0.5f, y, cx + bar_w * 0.5f, y + 4.0f * s), r, r),
+                                 tint(0.12f));
+        const float done = bar_w * std::clamp(static_cast<float>(cloud_offer_.percent) / 100.0f, 0.0f, 1.0f);
+        if (accent.get() && done >= 4.0f * s)
+            dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(cx - bar_w * 0.5f, y, cx - bar_w * 0.5f + done, y + 4.0f * s),
+                                                       r, r), accent.get());
+    } else if (accent.get() && on_accent.get()) {
+        const std::wstring label = l10n::Get(l10n::StringId::CloudDownloadPreview);
+        const float label_w = typography::MeasureAdvance(factory, caption, label);
+        const float icon_w = 16.0f * s, gap = 6.0f * s;
+        const float bw = (std::min)(inner, label_w + icon_w + gap + 32.0f * s);
+        const auto button = D2D1::RectF(std::round(cx - bw * 0.5f), y, std::round(cx + bw * 0.5f), y + 32.0f * s);
+        dc->FillRoundedRectangle(D2D1::RoundedRect(button, 5.0f * s, 5.0f * s), accent.get());
+        const float start = (std::max)(button.left + 8.0f * s, cx - (icon_w + gap + label_w) * 0.5f);
+        glyph(L"\xE896", 14.0f * s, D2D1::RectF(start, button.top, start + icon_w, button.bottom), on_accent.get());
+        ComPtr<IDWriteTextLayout> text;
+        const float box = (std::max)(1.0f, button.right - 8.0f * s - (start + icon_w + gap));
+        factory->CreateTextLayout(label.data(), static_cast<UINT32>(label.size()), caption, box,
+                                  button.bottom - button.top, &text);
+        if (text.get()) {
+            text->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            text->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            text->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            dc->DrawTextLayout(D2D1::Point2F(start + icon_w + gap, button.top), text.get(), on_accent.get());
+        }
+        cloud_download_rect_ = button;
+    }
+    brush->SetColor(original);
+    return true;
 }
 void QuickPreviewWindow::SetImagePackOffer(const MediaPackOffer& offer) {
     if (offer == image_offer_) return;
@@ -801,21 +961,20 @@ void QuickPreviewWindow::DrawCodecCard(ID2D1DeviceContext* dc, const D2D1_RECT_F
     const bool zh = l10n::IsChinese();
     CodecCardText t;
     if (state.unsupported_audio) {
-        t.title = l10n::HantText(l10n::Pick(L"此音频暂无法预览", L"Audio preview unavailable"));
-        t.lead = l10n::HantText(l10n::Pick(L"系统无法解码此音频。\n可尝试用默认应用打开。",
-                          L"Windows cannot decode this audio.\nTry opening it in the default app."));
+        t.title = l10n::HantText(l10n::Get(l10n::StringId::AudioPreviewUnavailable).c_str());
+        t.lead = l10n::HantText(l10n::Get(l10n::StringId::WindowsCannotDecodeThisAudioTryOpeningItInTheDefaultApp).c_str());
         t.pack = pack_offer_.installable || pack_offer_.installing;
         DrawCodecCardText(dc, content, t, brush);
         return;
     }
-    t.title = l10n::Pick(L"这台电脑无法显示此视频的画面", L"Can't show this video on this PC");
-    t.lead = l10n::Pick(L"视频使用 ", L"It's encoded as ");
+    t.title = l10n::Get(l10n::StringId::CanTShowThisVideoOnThisPC).c_str();
+    t.lead = l10n::Get(l10n::StringId::ItSEncodedAs).c_str();
     t.name = state.codec_name;
-    t.tail = l10n::Pick(L" 编码，系统中没有对应的解码器。\n声音仍可正常播放。", L" and no decoder for it is installed.\nThe sound still plays.");
+    t.tail = l10n::Get(l10n::StringId::AndNoDecoderForItIsInstalledTheSoundStillPlays).c_str();
     t.store_id = state.store_id;
     if (state.store_id)
         t.get = zh ? l10n::Cn(L"获取 ") + state.codec + l10n::Cn(L" 视频扩展") : L"Get " + state.codec + L" Video Extension";
-    t.hint = l10n::Pick(L"安装后重新打开预览即可看到画面", L"Reopen the preview after installing");
+    t.hint = l10n::Get(l10n::StringId::ReopenThePreviewAfterInstalling).c_str();
     t.pack = pack_offer_.installable || pack_offer_.installing;
     DrawCodecCardText(dc, content, t, brush);
 }
@@ -829,9 +988,9 @@ void QuickPreviewWindow::DrawImageCodecCard(ID2D1DeviceContext* dc, const D2D1_R
     t.picture = true;
     t.image_pack = true;
     t.pack = image_offer_.installable || image_offer_.installing;
-    t.title = l10n::Pick(L"这台电脑无法显示此图片", L"Can't show this picture on this PC");
-    t.lead = l10n::Pick(L"图片使用 ", L"It uses ");
-    t.tail = l10n::Pick(L" 格式，系统中没有对应的解码器。", L" and no decoder for it is installed.");
+    t.title = l10n::Get(l10n::StringId::CanTShowThisPictureOnThisPC).c_str();
+    t.lead = l10n::Get(l10n::StringId::ItUses).c_str();
+    t.tail = l10n::Get(l10n::StringId::AndNoDecoderForItIsInstalled).c_str();
     if (codec == L"pack") {
         const size_t dot = item_.path.find_last_of(L'.');
         std::wstring extension = dot == std::wstring::npos ? std::wstring{} : item_.path.substr(dot);
@@ -839,23 +998,23 @@ void QuickPreviewWindow::DrawImageCodecCard(ID2D1DeviceContext* dc, const D2D1_R
         t.name = extension == L".exr" ? L"OpenEXR" : extension == L".hdr" ? L"Radiance HDR"
                : extension == L".qoi" ? L"QOI" : extension == L".jxl" ? L"JPEG XL" : L"";
         if (t.name.empty()) t.name = extension.size() > 1 ? extension.substr(1) : extension;
-        t.tail = l10n::Pick(L" 格式，Windows 无法直接读取。", L", which Windows cannot read by itself.");
+        t.tail = l10n::Get(l10n::StringId::WhichWindowsCannotReadByItself).c_str();
     } else if (codec == L"av1") {
         t.name = L"AVIF";
         t.store_id = L"9MVZQVXJBQ9V";
-        t.get = l10n::Pick(L"获取 AV1 视频扩展", L"Get AV1 Video Extension");
-        t.hint = l10n::Pick(L"安装后重新打开预览即可看到图片", L"Reopen the preview after installing");
+        t.get = l10n::Get(l10n::StringId::GetAV1VideoExtension).c_str();
+        t.hint = l10n::Get(l10n::StringId::ReopenThePreviewAfterInstalling_2).c_str();
     } else if (codec == L"hevc") {
         t.name = L"HEIF / HEIC";
-        t.tail = l10n::Pick(L" 格式，照片使用 HEVC 编码，还需要 HEVC 视频扩展。", L"; its photo is HEVC-encoded and needs the HEVC Video Extension.");
+        t.tail = l10n::Get(l10n::StringId::ItsPhotoIsHEVCEncodedAndNeedsTheHEVCVideoExtension).c_str();
         t.store_id = L"9NMZLZ57R3T7";
-        t.get = l10n::Pick(L"获取 HEVC 视频扩展", L"Get HEVC Video Extension");
-        t.hint = l10n::Pick(L"安装后重新打开预览即可看到图片", L"Reopen the preview after installing");
+        t.get = l10n::Get(l10n::StringId::GetHEVCVideoExtension).c_str();
+        t.hint = l10n::Get(l10n::StringId::ReopenThePreviewAfterInstalling_2).c_str();
     } else {
         t.name = L"HEIF / HEIC";
         t.store_id = L"9PMMSR1CGPWG";
-        t.get = l10n::Pick(L"获取 HEIF 图像扩展", L"Get HEIF Image Extensions");
-        t.hint = l10n::Pick(L"iPhone 照片常用这个格式；部分 HEIC 还需要 HEVC 视频扩展", L"Common for iPhone photos; some HEIC also need the HEVC Video Extension");
+        t.get = l10n::Get(l10n::StringId::GetHEIFImageExtensions).c_str();
+        t.hint = l10n::Get(l10n::StringId::CommonForIPhonePhotosSomeHEICAlsoNeedTheHEVCVideoExtension).c_str();
     }
     DrawCodecCardText(dc, content, t, brush);
 }
@@ -878,7 +1037,7 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
     const std::wstring& lead = text.lead;
     const std::wstring body = text.lead + text.name + text.tail;
     const std::wstring& get = text.get;
-    const std::wstring open = l10n::Pick(L"用默认应用打开", L"Open in default app");
+    const std::wstring open = l10n::Get(l10n::StringId::OpenInDefaultApp).c_str();
     const std::wstring& hint = text.hint;
 
     const float width = (std::min)(440.0f * s, content.right - content.left - 32.0f * s);
@@ -975,13 +1134,13 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
         if (offer.installing) {
             const int percent = static_cast<int>(std::clamp(offer.progress, 0.0f, 1.0f) * 100.0f + 0.5f);
             label = (text.image_pack
-                ? l10n::Pick(L"正在下载图像预览增强包 ", L"Downloading the image preview pack ")
-                : l10n::Pick(L"正在下载 FFmpeg 预览增强包 ", L"Downloading the FFmpeg preview pack ")) +
-                    std::to_wstring(percent) + l10n::Pick(L"% · 点击取消", L"% · Click to cancel");
+                ? l10n::Get(l10n::StringId::DownloadingTheImagePreviewPack).c_str()
+                : l10n::Get(l10n::StringId::DownloadingTheFFmpegPreviewPack).c_str()) +
+                    std::to_wstring(percent) + l10n::Get(l10n::StringId::ClickToCancel).c_str();
         } else {
             label = text.image_pack
-                ? l10n::Pick(L"安装图像预览增强包", L"Install the image preview pack")
-                : l10n::Pick(L"安装 FFmpeg 预览增强包", L"Install the FFmpeg preview pack");
+                ? l10n::Get(l10n::StringId::InstallTheImagePreviewPack).c_str()
+                : l10n::Get(l10n::StringId::InstallTheFFmpegPreviewPack).c_str();
             if (offer.download_bytes) {
                 const uint64_t mb = (std::max)(uint64_t{1}, (offer.download_bytes + 512 * 1024) / (1024 * 1024));
                 label += L" \x00B7 " + std::to_wstring(mb) + L" MB";
@@ -1024,9 +1183,8 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
     if (text.pack) {
         if (!offer.notice.empty()) footnote = offer.notice;
         else if (offer.installing)
-            footnote = l10n::Pick(L"安装完成后会自动重新打开预览", L"The preview reopens by itself once installed");
-        else footnote = l10n::Pick(L"预览增强包可随时在“设置 › 预览增强包”中卸载",
-                                   L"Remove it any time in Settings › Preview packs");
+            footnote = l10n::Get(l10n::StringId::ThePreviewReopensByItselfOnceInstalled).c_str();
+        else footnote = l10n::Get(l10n::StringId::RemoveItAnyTimeInSettingsPreviewPacks).c_str();
     } else if (text.store_id) {
         footnote = hint;
     }
@@ -1039,4 +1197,25 @@ void QuickPreviewWindow::DrawCodecCardText(ID2D1DeviceContext* dc, const D2D1_RE
     caption->SetParagraphAlignment(sp);
     brush->SetColor(original);
 }
+void QuickPreviewWindow::SetMediaFooter(const VideoPreview::State& state, std::vector<std::wstring> extra) {
+    std::vector<std::wstring> parts;
+    std::wstring ext;
+    if (const size_t dot = item_.name.find_last_of(L'.'); dot != std::wstring::npos && dot + 1 < item_.name.size()) {
+        ext = item_.name.substr(dot + 1);
+        for (wchar_t& c : ext) c = static_cast<wchar_t>(std::towupper(c));
+    }
+    if (!ext.empty()) parts.push_back(std::move(ext));
+    if (!state.codec_name.empty()) parts.push_back(state.codec_name);
+    if (state.width && state.height) {
+        wchar_t dims[48];
+        swprintf_s(dims, L"%u \x00D7 %u", state.width, state.height);
+        parts.push_back(dims);
+    }
+    if (state.duration > 0) parts.push_back(ShortClock(state.duration, state.duration >= 36000000000LL));
+    for (std::wstring& part : extra)
+        if (!part.empty()) parts.push_back(std::move(part));
+    if (item_.size) parts.push_back(pulse::format::ByteSize(item_.size, true));
+    SetFooterParts(std::move(parts));
+}
+
 } // namespace pulse::ui

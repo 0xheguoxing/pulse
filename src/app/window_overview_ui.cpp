@@ -10,6 +10,7 @@
 #include "../common/localization.h"
 #include "../common/path_utils.h"
 #include "../fs/fs_enum.h"
+#include "../ui/ui_renderer.h"
 
 #include <windowsx.h>
 
@@ -210,7 +211,7 @@ void Hover(AppState& s, float x, float y) {
 
 bool Down(int vk) { return (GetKeyState(vk) & 0x8000) != 0; }
 
-bool IsToggleKey(WPARAM vk) { return vk == 'O' && Down(VK_CONTROL) && Down(VK_SHIFT) && !Down(VK_MENU); }
+bool IsToggleKey(WPARAM vk) { return IsWindowOverviewKey(vk); }
 
 void Open(AppState& s) {
     s.overview = {};
@@ -220,6 +221,19 @@ void Open(AppState& s) {
 }
 
 }  // namespace
+
+bool IsWindowOverviewKey(WPARAM vk) {
+    return vk == 'O' && Down(VK_CONTROL) && Down(VK_SHIFT) && !Down(VK_MENU);
+}
+
+bool MergeAllWindows(AppState& s) {
+    std::vector<HWND> others;
+    for (HWND hwnd : OpenWindows(s))
+        if (hwnd != s.hwnd) others.push_back(hwnd);
+    if (s.overview.open) Close(s);
+    if (others.empty()) return false;
+    return MergeWindowsInto(others, s) > 0;  // one toast here undoes all of them
+}
 
 void ToggleWindowOverview(AppState& s) {
     if (s.overview.open)

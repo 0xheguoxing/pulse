@@ -179,12 +179,16 @@ bool ParseArchivePackListing(std::string_view output, DWORD exit_code,
         if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
         if (line == "----------") { records = true; continue; }
         if (line.empty()) { if (records && !flush()) return Fail(error, L"archive-pack-record"); continue; }
+        // 7-Zip prints "Key = " with an empty value for unknown properties
+        // (WIM/XAR/HFS directories have no Size); treat those as absent.
+        if (line.size() >= 2 && line.substr(line.size() - 2) == " =") continue;
         const size_t equal = line.find(" = ");
         if (equal == std::string_view::npos) {
             if (records) return Fail(error, L"archive-pack-record");
             continue;
         }
         const auto key = line.substr(0, equal), value = line.substr(equal + 3);
+        if (value.empty()) continue;
         if (!records) {
             if (key == "Type") {
                 if (!Wide(value, format) || format.size() > 32 || format.find_first_of(L"\t\r\n") != std::wstring::npos)
@@ -208,6 +212,7 @@ bool ParseArchivePackListing(std::string_view output, DWORD exit_code,
             has_size = true;
         } else if (key == "Folder") entry.dir = value == "+";
         else if (key == "Attributes" && value.find('D') != std::string_view::npos) entry.dir = true;
+        else if (key == "Mode" && value.front() == 'd') entry.dir = true;  // XAR / tar-style modes
         else if (key == "Encrypted" && value == "+") { entry.encrypted = true; incomplete = true; }
         else if ((key == "Split Before" || key == "Split After") && value == "+") incomplete = true;
         else if (key == "Modified" && value.size() >= 19) {

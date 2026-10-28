@@ -2,6 +2,7 @@
 #include "locked_item_prompt.h"
 #include "app_internal.h"
 #include "../common/localization.h"
+#include "../ui/file_operation_dialog.h"
 #include <algorithm>
 
 namespace pulse {
@@ -35,12 +36,21 @@ ui::ConfirmDialogSpec LockedItemPromptSpec(const ops::OpStatus& status, bool can
     return spec;
 }
 
+// The dialog watches the owners and the item and comes back with Retry on its
+// own once the item is free (pulse_ops_dialogs.html §5).
 void PromptLockedItem(AppState& s, const ops::OpStatus& status) {
-    const bool can_end = LockedItemOwnersClosable(status);
-    if (!ui::ShowConfirmDialog(s.hwnd, LockedItemPromptSpec(status, can_end), s.darkMode,
-                               s.accentColor))
-        return;
-    s.ops.RetryLockedOperation(status.task_id, can_end);
+    ui::LockedItemInfo info;
+    info.type = status.type;
+    info.path = status.locked_path;
+    info.owners = status.lock_owners;
+    info.can_end = LockedItemOwnersClosable(status);
+    info.can_skip = s.ops.CanSkipLockedItem(status.task_id);
+    switch (ui::ShowLockedItemDialog(s.hwnd, info, s.darkMode, s.accentColor)) {
+    case ui::LockedItemChoice::Retry: s.ops.RetryLockedOperation(status.task_id, false); break;
+    case ui::LockedItemChoice::EndAndRetry: s.ops.RetryLockedOperation(status.task_id, true); break;
+    case ui::LockedItemChoice::Skip: s.ops.RetryLockedOperation(status.task_id, false, true); break;
+    case ui::LockedItemChoice::Cancel: break;
+    }
 }
 
 } // namespace pulse

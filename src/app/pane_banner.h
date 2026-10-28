@@ -6,7 +6,7 @@
 #include <string>
 
 #include "../common/localization.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "app_model.h"
 
 namespace pulse::app {
@@ -38,17 +38,21 @@ inline PaneBannerStyle ClassifyPaneBanner(const Tab& tab, bool can_go_up, bool c
         if (is(I::ContentUpdatesPaused)) return with(0, A::Refresh, A::ManageIndex);
         return with(0, A::ManageIndex);
     }
+    // Phones: plug in / allow on the phone, then retry (or it reloads by itself).
+    if (is(I::DeviceDisconnectedTitle) || is(I::DeviceWaitingTitle))
+        return with(2, A::Retry, can_go_up ? A::GoUp : A::None);
+    if (is(I::DeviceNoResponseTitle)) return with(3, A::Retry, can_go_up ? A::GoUp : A::None);
     if (is(I::DriveLockedTitle)) return with(2, A::Unlock);
     if (is(I::Offline)) return with(2, A::Reconnect);
     if (is(I::CannotOpen)) {
         // A share that wants a sign-in offers that, anything else a plain retry.
-        if (tab.banner_message.rfind(l10n::Pick(L"未登录", L"Not signed in"), 0) == 0)
+        if (tab.banner_message.rfind(l10n::Get(l10n::StringId::NotSignedIn).c_str(), 0) == 0)
             return with(3, A::Reconnect, can_go_up ? A::GoUp : A::None);
         return with(3, A::Retry, can_go_up ? A::GoUp : A::None);
     }
     if (is(I::SearchIncomplete)) return with(3, A::Retry);
     if (is(I::CannotOpenSavedSearch)) return with(3, A::None);
-    if (is(I::NetworkDiscoveryOffTitle)) return with(2, A::NetworkSettings);
+    if (is(I::NetworkDiscoveryOffTitle)) return with(2, A::NetworkSettings, A::LanRescan);
     if (is(I::NetworkLiveAddFailed)) return with(3, network_live_action ? A::AddNetworkIndex : A::None);
     if (is(I::NetworkLiveAdded)) {
         st.kind = 1;

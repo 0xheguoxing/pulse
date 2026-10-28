@@ -8,7 +8,9 @@
 
 namespace pulse::index {
 enum class IndexMemoryPoint : size_t {
-    ChangeFlushBefore, ChangeFlushSnapshot, ChangeFlushAfter, MergeBefore, MergeFlattened, TimingFlush, Count
+    ChangeFlushBefore, ChangeFlushSnapshot, ChangeFlushAfter, MergeBefore, MergeFlattened, TimingFlush,
+    // WriteIndexFile stages: the full-merge peak lies after MergeFlattened.
+    WritePrefix1, WritePrefix2, WriteSorted, Count
 };
 // Worker-owned, allocation-free samples at a few maintenance boundaries, not an
 // allocator hook or a per-event poll. Process-wide values include other threads.
@@ -33,6 +35,9 @@ public:
         uint64_t calls = 0, failures = 0, tick = 0;
         uint64_t working_set_bytes = 0, private_commit_bytes = 0;
         uint64_t max_working_set_bytes = 0, max_private_commit_bytes = 0;
+        // Process lifetime peak commit (PeakPagefileUsage) when sampled; catches
+        // short peaks between sample points.
+        uint64_t peak_private_commit_bytes = 0;
     };
     void Capture(IndexMemoryPoint point) noexcept {
         if (!IndexDiagnosticsEnabled()) return;
@@ -46,6 +51,7 @@ public:
         sample.tick = GetTickCount64();
         sample.working_set_bytes = counters.WorkingSetSize;
         sample.private_commit_bytes = counters.PrivateUsage;
+        sample.peak_private_commit_bytes = counters.PeakPagefileUsage;
         if (sample.working_set_bytes > sample.max_working_set_bytes) sample.max_working_set_bytes = sample.working_set_bytes;
         if (sample.private_commit_bytes > sample.max_private_commit_bytes) sample.max_private_commit_bytes = sample.private_commit_bytes;
     }
@@ -72,7 +78,9 @@ public:
             ",\"usn_sum_stream_peak_charged_bytes\":" + std::to_string(r.usn_sum_stream_peak_charged_bytes) +
             ",\"usn_queue_overflows\":" + std::to_string(r.usn_queue_overflows) + "},\"points\":{";
         constexpr const char* names[]{"change_flush_before", "change_flush_snapshot", "change_flush_after",
-            "merge_before", "merge_flattened", "timing_flush"};
+            "merge_before", "merge_flattened", "timing_flush", "write_prefix1", "write_prefix2",
+            "write_sorted"};
+        static_assert(std::size(names) == static_cast<size_t>(IndexMemoryPoint::Count));
         for (size_t i = 0; i < samples_.size(); ++i) {
             const auto& s = samples_[i];
             if (i) out += ',';
@@ -81,7 +89,8 @@ public:
                 ",\"working_set_bytes\":" + std::to_string(s.working_set_bytes) +
                 ",\"private_commit_bytes\":" + std::to_string(s.private_commit_bytes) +
                 ",\"max_working_set_bytes\":" + std::to_string(s.max_working_set_bytes) +
-                ",\"max_private_commit_bytes\":" + std::to_string(s.max_private_commit_bytes) + "}";
+                ",\"max_private_commit_bytes\":" + std::to_string(s.max_private_commit_bytes) +
+                ",\"peak_private_commit_bytes\":" + std::to_string(s.peak_private_commit_bytes) + "}";
         }
         return out + "}}";
     }

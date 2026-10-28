@@ -1,9 +1,11 @@
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <string>
 #include <vector>
 #include "../app/dir_notify_queue.h"
 
@@ -121,6 +123,30 @@ void RunRecovery(const std::filesystem::path& root) {
     CloseHandle(reconciled); CloseHandle(changed);
     DeleteFileW((root / L"recovered.txt").c_str());
 }
+// #58-12: a full change buffer is not a failure. Every overflow asks for one
+// fresh listing; the handle stays open and armed, with no retry backoff.
+void RunOverflow(const std::wstring& path) {
+    injected_error = ERROR_NOTIFY_ENUM_DIR; async_failure = true; attempts = 0; wait_limit = 5;
+    { std::lock_guard lock(delays_mutex); delays.clear(); }
+    ResetEvent(reached); ResetEvent(release_read);
+    std::atomic<int> overflows{0}, details{0};
+    pulse::fs::DirWatch watch;
+    Check(watch.Start(path, [&](bool overflow, auto events) {
+        if (overflow) ++overflows;
+        if (!events.empty()) ++details;
+    }), "OVERFLOW-01 watcher starts");
+    Check(WaitForSingleObject(reached, 3000) == WAIT_OBJECT_0, "OVERFLOW-02 repeated overflows keep reading");
+    Check(watch.Armed(), "OVERFLOW-03 the watch stays armed through an overflow");
+    const auto start = GetTickCount64();
+    watch.Stop();
+    Check(GetTickCount64() - start < 500, "OVERFLOW-04 Stop interrupts the overflow pause");
+    SetEvent(release_read);
+    Drain();
+    std::lock_guard lock(delays_mutex);
+    Check(delays.size() >= 5 && std::all_of(delays.begin(), delays.end(), [](DWORD d) { return d == 100; }),
+          "OVERFLOW-05 only the short overflow pause, no failure backoff");
+    Check(overflows >= 5 && details == 0, "OVERFLOW-06 each overflow asks for a fresh listing");
+}
 void RunQueue() {
     struct Batch { std::wstring path; bool overflow; std::vector<pulse::fs::DirNotifyEvent> events; };
     std::vector<Batch> queue;
@@ -141,6 +167,65 @@ void RunQueue() {
     Check(queue.size() == 1 && !queue[0].overflow && queue[0].events.size() == 1,
           "new events are accepted after the queue is drained");
 }
+void RunPacer() {
+    struct Batch { std::wstring path; bool overflow; std::vector<pulse::fs::DirNotifyEvent> events; };
+    using Pacer = pulse::app::DirNotifyPacer<Batch>;
+    const auto removed = [](const wchar_t* name) {
+        return std::vector<pulse::fs::DirNotifyEvent>{{FILE_ACTION_REMOVED, name, {}}};
+    };
+    Pacer pacer;
+    std::vector<Batch> incoming, due;
+    const ULONGLONG t0 = 1000000;
+    incoming.push_back({L"a", false, removed(L"1")});
+    pacer.Take(incoming, t0, due);
+    Check(due.size() == 1 && !pacer.Holding() && incoming.empty(), "PACE-01 a calm folder's change lands at once");
+    // A bulk delete: one item per drain.
+    due.clear();
+    for (int i = 2; i <= 40; ++i) {
+        incoming.push_back({L"a", false, removed(std::to_wstring(i).c_str())});
+        pacer.Take(incoming, t0 + static_cast<ULONGLONG>(i), due);
+    }
+    Check(due.empty() && pacer.Holding(), "PACE-02 a burst inside the window is held");
+    incoming.push_back({L"b", false, removed(L"x")});
+    pacer.Take(incoming, t0 + 50, due);
+    Check(due.size() == 1 && due[0].path == L"b", "PACE-03 another folder is not held by the busy one");
+    due.clear();
+    pacer.Take(incoming, t0 + Pacer::kPaceMs - 1, due);
+    Check(due.empty(), "PACE-04 nothing lands before the window ends");
+    pacer.Take(incoming, t0 + Pacer::kPaceMs, due);
+    bool ordered = due.size() == 39;
+    for (size_t i = 0; ordered && i < due.size(); ++i)
+        ordered = due[i].path == L"a" && due[i].events.size() == 1 && due[i].events[0].name == std::to_wstring(i + 2);
+    Check(ordered && !pacer.Holding(), "PACE-05 the held burst lands together, in order");
+    due.clear();
+    incoming.push_back({L"a", false, removed(L"41")});
+    pacer.Take(incoming, t0 + Pacer::kPaceMs + 10, due);
+    Check(due.empty() && pacer.Holding(), "PACE-06 landing a burst starts the next window");
+    pacer.Take(incoming, t0 + 2 * Pacer::kPaceMs, due);
+    Check(due.size() == 1 && !pacer.Holding(), "PACE-07 one patch per window while the burst goes on");
+    // Size changes neither start a window nor jump ahead of held removals.
+    Pacer sizes;
+    due.clear();
+    incoming.push_back({L"c", false, {{FILE_ACTION_MODIFIED, L"f", {}}}});
+    sizes.Take(incoming, t0, due);
+    incoming.push_back({L"c", false, {{FILE_ACTION_MODIFIED, L"f", {}}}});
+    sizes.Take(incoming, t0 + 1, due);
+    Check(due.size() == 2 && !sizes.Holding(), "PACE-08 size-only changes do not start a window");
+    due.clear();
+    incoming.push_back({L"c", false, removed(L"g")});
+    sizes.Take(incoming, t0 + 2, due);
+    incoming.push_back({L"c", false, {{FILE_ACTION_MODIFIED, L"h", {}}}});
+    sizes.Take(incoming, t0 + 3, due);
+    Check(due.size() == 1 && sizes.Holding(), "PACE-09 a change after a removal waits behind it");
+    // A full relisting starts a window too.
+    Pacer overflow;
+    due.clear();
+    incoming.push_back({L"d", true, {}});
+    overflow.Take(incoming, t0, due);
+    incoming.push_back({L"d", false, removed(L"z")});
+    overflow.Take(incoming, t0 + 1, due);
+    Check(due.size() == 1 && due[0].overflow && overflow.Holding(), "PACE-10 an overflow starts a window");
+}
 }
 int wmain() {
     const auto root = std::filesystem::absolute(std::filesystem::path(L"bench_data") /
@@ -154,7 +239,9 @@ int wmain() {
     RunFailure(root.wstring(), ERROR_INVALID_FUNCTION, true, 4);
     RunFailure(root.wstring(), ERROR_ACCESS_DENIED, true, 7);
     RunRecovery(root);
+    RunOverflow(root.wstring());
     RunQueue();
+    RunPacer();
     CloseHandle(reached); CloseHandle(release_read);
     Check(std::filesystem::remove(root), "owned fixture removed");
     std::cout << "Failures: " << failures << std::endl;

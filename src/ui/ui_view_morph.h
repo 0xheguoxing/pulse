@@ -63,6 +63,7 @@ public:
         float scroll_y = 0.0f;
         float row_height_dip = 0.0f;
         size_t count = 0;
+        float icon_dip = 0.0f;  // icon grids: custom thumbnail width (ViewLayoutParams)
     };
 
     struct Sample {
@@ -122,8 +123,8 @@ public:
 
     // Call right after BeginFrame with this frame's layout inputs.
     void NoteLayout(const D2D1_RECT_F& viewport, float scroll_x, float scroll_y,
-                    float row_height_dip, size_t count) noexcept {
-        layout_ = LayoutParams{true, viewport, scroll_x, scroll_y, row_height_dip, count};
+                    float row_height_dip, size_t count, float icon_dip = 0.0f) noexcept {
+        layout_ = LayoutParams{true, viewport, scroll_x, scroll_y, row_height_dip, count, icon_dip};
     }
     const LayoutParams& FromLayout() const noexcept { return from_layout_; }
     // Where the item was when the switch started / was drawn this frame.

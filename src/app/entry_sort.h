@@ -1,6 +1,6 @@
 #pragma once
 #include "../fs/fs_enum.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -22,10 +22,27 @@ constexpr FolderSortMode FolderSortModeFromInt(int value) noexcept {
                       : FolderSortMode::FoldersFirst;
 }
 
-// The worker sorts on its own thread; keep the current pref in one atomic slot
-// instead of threading it through every WorkItem and snapshot patch.
+// The settings default (Settings > Folders first), for folders without their
+// own choice. One atomic slot, readable from any thread.
 void SetFolderSortMode(FolderSortMode mode) noexcept;
+FolderSortMode DefaultFolderSortMode() noexcept;
+// The mode EntryLess and SortEntries use on this thread: the innermost
+// ScopedFolderSortMode, else the settings default.
 FolderSortMode CurrentFolderSortMode() noexcept;
+
+// A folder's own mode (remembered per folder like its sort column) for the
+// sorts on this thread. The worker and the notify patcher wrap their sorts in
+// one, next to ScopedEntryGrouping. Nestable; restores the previous mode.
+class ScopedFolderSortMode {
+public:
+    explicit ScopedFolderSortMode(FolderSortMode mode) noexcept;
+    ~ScopedFolderSortMode();
+    ScopedFolderSortMode(const ScopedFolderSortMode&) = delete;
+    ScopedFolderSortMode& operator=(const ScopedFolderSortMode&) = delete;
+
+private:
+    int previous_;
+};
 
 bool EntryLess(const fs::DirEntry& a, const fs::DirEntry& b,
                ui::SortColumn col, ui::SortDirection dir);

@@ -343,6 +343,22 @@ int wmain() {
           !Read(open_verb, L"LegacyDisable").exists && !Read(open_verb, L"ProgrammaticAccessOnly").exists &&
           !Read(open_verb, L"HideBasedOnVelocityId").exists,
           "taking over unhides the open verb Pulse makes the default (#228)");
+    // A double-click still opened Explorer: menu tools also mark the verb
+    // NeverDefault, Shift-only, browser-window-only or AppliesTo.
+    const struct { const wchar_t* name; const wchar_t* value; const char* label; } markers[] = {
+        {L"NeverDefault", L"", "a NeverDefault open verb reads as not in effect; taking over clears it"},
+        {L"Extended", L"", "a Shift-only open verb reads as not in effect; taking over clears it"},
+        {L"OnlyInBrowserWindow", L"", "a browser-window-only open verb reads as not in effect; taking over clears it"},
+        {L"AppliesTo", L"System.ItemName:=\"none\"", "an AppliesTo open verb reads as not in effect; taking over clears it"},
+    };
+    for (const auto& marker : markers) {
+        Set(open_verb, marker.name, marker.value);
+        const bool hidden = !ReadShellIntegration(ShellIntegrationKind::Folders, exe) &&
+            HasShellIntegrationOwnership(ShellIntegrationKind::Folders, exe);
+        Check(hidden && ApplyShellIntegration(ShellIntegrationKind::Folders, exe, true) &&
+              ReadShellIntegration(ShellIntegrationKind::Folders, exe) && !Read(open_verb, marker.name).exists,
+              marker.label);
+    }
     Set(drive_open, L"LegacyDisable", L"");
     Check(!ReadShellIntegration(ShellIntegrationKind::Folders, exe) &&
           HasShellIntegrationOwnership(ShellIntegrationKind::Folders, exe),

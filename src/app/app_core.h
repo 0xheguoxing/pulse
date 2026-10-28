@@ -22,12 +22,16 @@
 #include "closed_windows.h"
 #include "context_menu_controller.h"
 #include "context_menu_prefs.h"
+#include "dir_notify_queue.h"
 #include "duplicate_scan.h"
 #include "explorer_window_takeover.h"
 #include "external_open.h"
 #include "folder_sizes.h"
+#include "dialog_jump.h"
+#include "double_ctrl.h"
 #include "global_search_hotkey.h"
 #include "global_search_window.h"
+#include "jump_history.h"
 #include "host_window.h"
 #include "window_registry.h"
 #include "live_network_search.h"
@@ -56,6 +60,7 @@ namespace pulse {
 
 struct SidebarRefreshLoad;
 struct NetworkLocationLoad;
+struct NetworkPageLoad;
 
 struct AppState;
 
@@ -74,6 +79,9 @@ struct AppCore {
     };
     std::mutex notify_mu;
     std::vector<DirNotifyBatch> notify_queue;
+    // Taken from notify_queue on the UI thread (DrainDirNotifies); holds the
+    // batches of folders that were patched moments ago.
+    app::DirNotifyPacer<DirNotifyBatch> notify_pacer;
     struct CoalescedSizePatch {
         std::wstring path;
         std::wstring name;
@@ -85,6 +93,8 @@ struct AppCore {
     app::SidebarModel sidebar;
     std::shared_ptr<SidebarRefreshLoad> sidebarRefresh;
     std::shared_ptr<NetworkLocationLoad> networkLocations;
+    // The network page's 最近访问 and LAN discovery cache (app_network_page.cpp).
+    std::shared_ptr<NetworkPageLoad> networkPage;
     fs::RecycleBinInfo recycle_info;
     // SHQueryRecycleBin and $I files lag IFileOperation; retry occupancy/list
     // after recycle mutations and ignore occupancy that still matches the
@@ -121,6 +131,10 @@ struct AppCore {
     app::TrayController tray_controller;
 
     GlobalSearchHotkey globalSearchHotkey;
+    DoubleCtrlWatcher doubleCtrl;          // Ctrl Ctrl summons the quick search popup
+    // Frequent places, shared by quick search and the dialog jump bar.
+    std::shared_ptr<app::JumpHistory> jumpHistory = std::make_shared<app::JumpHistory>();
+    app::DialogJump dialogJump;            // jump bar under other programs' Open / Save dialogs
     GlobalSearchWindow globalSearchWindow;
     app::SingleInstanceCoordinator single_instance;
 
@@ -160,6 +174,10 @@ struct AppCore {
     bool restoreUpdateSession = false;
     std::wstring prefsSavedJson;
     ULONGLONG sessionAutosaveCheck = 0;
+    // Last input, paint, window change or dirty UI tick in any window, and the
+    // last autosave pass that serialized the session (TickSessionAutosave).
+    ULONGLONG sessionActivity = 0;
+    ULONGLONG sessionAutosaveFull = 0;
     uint32_t nextIndexReq = 1;
 
     app::UncProbeScheduler probe_scheduler;

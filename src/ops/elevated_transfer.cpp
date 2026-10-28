@@ -1,4 +1,5 @@
 #include "elevated_transfer.h"
+#include "source_listing.h"
 #include "../common/path_utils.h"
 #include <shobjidl.h>
 #include <shlobj.h>
@@ -6,6 +7,7 @@
 #include <wrl/client.h>
 #include <filesystem>
 #include <new>
+#include <unordered_map>
 #include <utility>
 #include <sherrors.h>
 
@@ -165,11 +167,16 @@ bool TargetNeedsElevation(const std::wstring& destination, DWORD required_access
 }
 bool NeedsShellTransfer(const std::vector<std::wstring>& sources,
                         const std::wstring& destination, bool move, const std::wstring& target_name) {
+    constexpr DWORD kAnyEntry = FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY;
+    const SourceListing listing(sources);
     DWORD required_access = 0;
     for (const auto& source : sources) {
-        const DWORD attributes = GetFileAttributesW(source.c_str());
+        // Past this point no source can ask for more.
+        if (required_access == kAnyEntry) break;
+        const ListedSource* listed = listing.Find(source);
+        const DWORD attributes = listed ? listed->attributes : GetFileAttributesW(source.c_str());
         if (attributes == INVALID_FILE_ATTRIBUTES) {
-            required_access |= FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY;
+            required_access |= kAnyEntry;
         } else if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
             const auto target = std::filesystem::path(destination) /
                 (target_name.empty() ? std::filesystem::path(source).filename() : std::filesystem::path(target_name));
@@ -185,10 +192,19 @@ bool NeedsShellTransfer(const std::vector<std::wstring>& sources,
         }
     }
     if (required_access && TargetNeedsElevation(destination, required_access)) return true;
-    if (move) for (const auto& source : sources) {
-        if (!Denied(ProbeAccess(source, DELETE))) continue;
+    if (!move) return false;
+    // A folder that lets this user delete its children lets any of them go,
+    // whatever each child's own entry says. Asking the folder once spares an
+    // open per item, which dominated moves of thousands of files.
+    std::unordered_map<std::wstring, bool> folder_allows;
+    for (const auto& source : sources) {
         const auto parent = std::filesystem::path(source).parent_path().wstring();
-        if (parent.empty() || ProbeAccess(parent, FILE_DELETE_CHILD) != ERROR_SUCCESS) return true;
+        auto folder = folder_allows.find(parent);
+        if (folder == folder_allows.end())
+            folder = folder_allows.emplace(parent,
+                !parent.empty() && ProbeAccess(parent, FILE_DELETE_CHILD) == ERROR_SUCCESS).first;
+        if (folder->second) continue;
+        if (Denied(ProbeAccess(source, DELETE))) return true;
     }
     return false;
 }

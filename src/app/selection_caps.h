@@ -20,9 +20,11 @@ enum class SelectionKind : uint8_t {
     None,           // nothing selected
     Files,          // ordinary files and folders
     Drives,         // This PC drive rows
+    Launchers,      // This PC program icons (网盘程序入口): open only
     NetworkShares,  // the share list of \\server
     NetworkPlaces,  // pulse:networks (pinned and system network locations)
     Recycle,        // Recycle Bin items
+    Device,         // a phone's files and storages: Explorer's verbs via the shell host
 };
 
 struct SelectionCaps {
@@ -66,7 +68,28 @@ inline SelectionCaps ComputeSelectionCaps(const Tab& tab, const PlacesCatalog* p
     const int count = tab.SelectedCount();
     if (count <= 0) return caps;
     std::wstring kind;
-    if (ParsePulsePath(tab.current_path, &kind, nullptr) && kind == L"recycle") {
+    std::wstring rest;
+    if (ParsePulsePath(tab.current_path, &kind, &rest) && kind == L"device") {
+        // Phone files: what Explorer offers for them, run by the shell host
+        // on their shell ids. A device root lists its storages: copy only.
+        caps.kind = SelectionKind::Device;
+        caps.copy = true;
+        if (rest.find(L'\\') == std::wstring::npos) return caps;
+        caps.cut = true;
+        bool read_only = false;
+        for (int index : tab.SelectedIndices()) {
+            if (index < 0 || static_cast<size_t>(index) >= tab.EntryCount()) continue;
+            if (tab.EntryAt(static_cast<size_t>(index)).attrs & FILE_ATTRIBUTE_READONLY) {
+                read_only = true;
+                break;
+            }
+        }
+        caps.cut = !read_only;  // a cut deletes the source afterwards
+        caps.del = !read_only;
+        caps.rename = count == 1 && !read_only;
+        return caps;
+    }
+    if (kind == L"recycle") {
         caps.kind = SelectionKind::Recycle;
         caps.del = true;  // permanent delete, confirmed
         return caps;
@@ -94,11 +117,16 @@ inline SelectionCaps ComputeSelectionCaps(const Tab& tab, const PlacesCatalog* p
     // a huge selection costs nothing per frame.
     if (tab.current_path.empty() && tab.snapshot) {
         bool drives = false;
+        bool launchers = false;
         bool all_locked = true;
         bool rename = count == 1;
         for (int index : tab.SelectedIndices()) {
             if (index < 0 || static_cast<size_t>(index) >= tab.EntryCount()) continue;
             const fs::DirEntry e = tab.EntryAt(static_cast<size_t>(index));
+            if (e.pc_launcher || e.pc_device) {  // programs and phones: open only
+                launchers = true;
+                continue;
+            }
             if (!e.drive_type) continue;
             drives = true;
             caps.any_removable = caps.any_removable || e.drive_type == DRIVE_REMOVABLE ||
@@ -108,6 +136,10 @@ inline SelectionCaps ComputeSelectionCaps(const Tab& tab, const PlacesCatalog* p
             all_locked = all_locked && e.drive_locked;
             // A disc has no writable label; a locked volume cannot be read.
             if (e.drive_locked || e.drive_type == DRIVE_CDROM) rename = false;
+        }
+        if (launchers) {
+            caps.kind = SelectionKind::Launchers;  // no file commands at all
+            return caps;
         }
         if (drives) {
             caps.kind = SelectionKind::Drives;

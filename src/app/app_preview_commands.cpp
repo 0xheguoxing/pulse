@@ -1,8 +1,40 @@
 #include "app_internal.h"
 #include "../ops/clipboard.h"
 #include "../ui/quick_preview_command.h"
+#include "../fs/cloud_state.h"
+#include "cloud_download.h"
+#include "cloud_roots.h"
+#include "../common/localization.h"
 
 namespace pulse {
+void StartCloudPreviewDownload(AppState& s, const std::wstring& path, uint64_t size) {
+    if (path.empty() || !s.hwnd) return;
+    // Only ever for a file that is really online-only right now: the button
+    // can be a frame stale, and a folder would make the provider fetch a listing.
+    const DWORD attrs = GetFileAttributesW(path.c_str());
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY) ||
+        !fs::IsCloudPlaceholder(attrs)) return;
+    app::StartCloudDownload(path, size, s.hwnd, WM_CLOUD_DOWNLOAD);
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void HandleCloudDownloadMessage(AppState& s, WPARAM event, LPARAM job) {
+    if (!s.hwnd) return;
+    // Repaint: BuildVm hands the percent to the details well and Quick Look.
+    InvalidateRect(s.hwnd, nullptr, FALSE);
+    if (event != app::kCloudDownloadFailed) {
+        // Done: the provider clears the placeholder bits; the folder watcher
+        // brings the new attributes, which re-key the preview cache, and
+        // SyncQuickPreview reloads Quick Look on the attribute change.
+        return;
+    }
+    std::wstring provider = app::CloudRootLabelFor(app::CloudDownloadPathFor(job));
+    if (provider.empty()) provider = l10n::Get(l10n::StringId::CloudProviderGeneric);
+    std::wstring title = l10n::Get(l10n::StringId::CloudDownloadFailed);
+    if (const size_t at = title.find(L"{provider}"); at != std::wstring::npos) title.replace(at, 10, provider);
+    s.notification_toast.ShowSnack(s.hwnd, ui::SnackIcon::Suggest, std::move(title), {}, {}, {}, 3000);
+}
+
 void HandleQuickPreviewCommand(AppState& s, const ui::QuickPreviewCommand& command) {
     if (!s.quickPreview.visible() || command.target.path.empty()) return;
     if (command.action == ui::QuickPreviewAction::InstallMediaPack) {
@@ -17,8 +49,19 @@ void HandleQuickPreviewCommand(AppState& s, const ui::QuickPreviewCommand& comma
         InvalidateRect(s.hwnd, nullptr, FALSE);
         return;
     }
+    if (command.action == ui::QuickPreviewAction::DownloadCloud) {
+        StartCloudPreviewDownload(s, command.target.path, command.target.size);
+        return;
+    }
     const auto& target = command.target;
     const auto action = command.action;
+    if (action == ui::QuickPreviewAction::OpenInNewTab) {
+        if (!(target.attrs & FILE_ATTRIBUTE_DIRECTORY)) return;
+        s.quickPreview.Close();
+        OpenFolderTab(s, target.path);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+        return;
+    }
     if (target.read_only && (action == ui::QuickPreviewAction::Cut ||
         action == ui::QuickPreviewAction::Rename || action == ui::QuickPreviewAction::Delete)) return;
 

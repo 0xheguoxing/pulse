@@ -1,4 +1,6 @@
 #include "folder_sizes.h"
+#include "../fs/drive_kind.h"
+#include "../fs/cloud_state.h"
 #include "folder_size_scanner.h"
 #include "folder_size_store.h"
 #include "../fs/fs_enum.h"
@@ -15,6 +17,7 @@
 #include <set>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 namespace pulse::app {
 namespace {
@@ -109,9 +112,32 @@ struct FolderSizes::Impl {
     uint64_t probe_events = 0;
     std::function<std::wstring()> cache_path;
     std::thread worker, index_worker;
-    std::atomic<bool> stopping{false}, changed{false};
+    // Set by every thread that changes what the window shows. The first change
+    // after the window took the last batch also wakes it (SetChangeNotify), so
+    // a result does not wait for the window's idle poll.
+    struct ChangeFlag {
+        std::atomic<bool> value{false}, posted{false};
+        std::atomic<HWND> hwnd{nullptr};
+        std::atomic<UINT> message{0};
+        ChangeFlag& operator=(bool set) noexcept {
+            value.store(set);
+            if (set && !posted.exchange(true))
+                if (const HWND target = hwnd.load()) PostMessageW(target, message.load(), 0, 0);
+            return *this;
+        }
+        bool exchange(bool set) noexcept { posted.store(false); return value.exchange(set); }
+    };
+    std::atomic<bool> stopping{false};
+    ChangeFlag changed;
     bool index_enabled = true;
+    // dirty_revision counts changes to what the cache file holds; a result
+    // confirmed again only moves its verified time, which waits for the final
+    // save (stamps_dirty) instead of rewriting the file every 3 s.
     uint64_t scope = 0, watch_sequence = 0, dirty_revision = 0, saved_revision = 0;
+    bool stamps_dirty = false;
+    // Set under mutex with every notify: work arrived since Run's last pass,
+    // which may have been outside the lock when the notify fired.
+    bool kick = false;
     FolderSizeStats stats;
     HANDLE index_cancel = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     ~Impl() { if (index_cancel) CloseHandle(index_cancel); }
@@ -153,8 +179,7 @@ struct FolderSizes::Impl {
     uint8_t ProbeFolder(const std::wstring& key) {
         const auto type = DriveType(key);
         if (type != DRIVE_FIXED && type != DRIVE_RAMDISK) return 0;
-        constexpr DWORD kSkip = FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE |
-            FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
+        constexpr DWORD kSkip = FILE_ATTRIBUTE_REPARSE_POINT | ::pulse::fs::kCloudPlaceholderAttrs;
         const DWORD attrs = GetFileAttributesW(key.c_str());
         if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY) || (attrs & kSkip)) return 0;
         WIN32_FIND_DATAW data{};
@@ -213,11 +238,12 @@ struct FolderSizes::Impl {
     }
     void InvalidateLocked(const std::wstring& key, uint64_t delay = 200, bool known_only = false) {
         if (key.empty()) return;
-        if (store.Invalidate(key, GetTickCount64(), delay, known_only)) { changed = true; ++dirty_revision; }
+        // Staleness is not saved: a restored value is unverified until checked.
+        if (store.Invalidate(key, GetTickCount64(), delay, known_only)) changed = true;
     }
     void Invalidate(const std::wstring& path) {
         const auto key = Key(path);
-        { std::lock_guard lock(mutex); InvalidateLocked(key); }
+        { std::lock_guard lock(mutex); InvalidateLocked(key); kick = true; }
         wake.notify_all();
     }
     UINT DriveType(const std::wstring& path) {
@@ -226,20 +252,26 @@ struct FolderSizes::Impl {
         const auto root = plain.substr(0, 3);
         const auto found = drive_types.find(root);
         if (found != drive_types.end()) return found->second;
-        return drive_types.emplace(root, GetDriveTypeW(root.c_str())).first->second;
+        // Cloud mounts count as network drives: never walked for sizes.
+        return drive_types.emplace(root, ::pulse::fs::IsRemoteLikeDrive(root) ? static_cast<UINT>(DRIVE_REMOTE)
+                                                                       : GetDriveTypeW(root.c_str())).first->second;
     }
-    void Save(const std::wstring& file) {
+    void Save(const std::wstring& file, bool final = false) {
         if (file.empty()) return;
         folder_size::SavedValues values;
         uint64_t revision = 0;
+        bool stamps = false;
         {
             std::lock_guard lock(mutex);
-            if (dirty_revision == saved_revision) return;
+            if (dirty_revision == saved_revision && !(final && stamps_dirty)) return;
             values = store.Snapshot(); revision = dirty_revision;
+            stamps = std::exchange(stamps_dirty, false);
         }
-        if (folder_size::WriteValues(file, values)) {
-            std::lock_guard lock(mutex); saved_revision = revision;
-        }
+        // The write runs outside the lock: the UI thread reads sizes under it.
+        const bool written = folder_size::WriteValues(file, values);
+        std::lock_guard lock(mutex);
+        if (written) saved_revision = (std::max)(saved_revision, revision);
+        else stamps_dirty |= stamps;
     }
     void UpdateWatches(const std::wstring& cache_key) {
         std::vector<std::shared_ptr<fs::DirWatch>> retired;
@@ -307,6 +339,7 @@ struct FolderSizes::Impl {
                         }
                         for (const auto& path : paths) { InvalidateLocked(path); StaleProbeLocked(path); }
                     }
+                    kick = true;
                 }
                 wake.notify_all();
             }, true);
@@ -367,6 +400,7 @@ struct FolderSizes::Impl {
                 const auto answered = GetTickCount64();
                 next_poll = answered + (received ? (more ? 0 : 1000) : 2000);
                 if (stopping) continue;
+                kick = true;  // an answer can grant or revoke index authority
                 (void)request_scope;
                 for (size_t i = 0; i < paths.size(); ++i) {
                     const auto found = store.entries.find(paths[i]);
@@ -388,6 +422,7 @@ struct FolderSizes::Impl {
                             ++dirty_revision; changed = true;
                         }
                         entry.value.verified_at = folder_size::NowUtcMs();
+                        stamps_dirty = true;
                         entry.index_current = true;
                     } else if (received && i < values.size()) {
                         // Totals may still be building in the service: ask again soon.
@@ -397,6 +432,7 @@ struct FolderSizes::Impl {
                     // different list label. Its timestamp remains available in details.
                 }
             }
+            wake.notify_all();
         }
         SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
     }
@@ -409,6 +445,7 @@ struct FolderSizes::Impl {
         }
         const auto now = GetTickCount64();
         const auto utc = folder_size::NowUtcMs();
+        bool saved_change = false;
         for (auto& subtree : job.completed) {
             const auto key = Key(subtree.path);
             auto* entry = store.Ensure(key, protected_paths);
@@ -417,6 +454,7 @@ struct FolderSizes::Impl {
                 entry->value.state = FolderSizeState::Cached;
                 entry->value.verified = false;
             } else {
+                saved_change |= SavedFieldsDiffer(entry->value, subtree.value);
                 entry->value = subtree.value;
                 entry->value.verified_revision = entry->revision;
                 entry->value.verified_at = subtree.value.has_value ? utc : 0;
@@ -441,7 +479,49 @@ struct FolderSizes::Impl {
                 }
             }
         }
-        ++stats.jobs_completed; ++dirty_revision; changed = true;
+        ++stats.jobs_completed; changed = true;
+        // The same totals found again only refresh their verified time.
+        if (saved_change) ++dirty_revision;
+        else if (!job.completed.empty()) stamps_dirty = true;
+    }
+    // What WriteValues stores, apart from the verified time.
+    static bool SavedFieldsDiffer(const FolderSizeValue& saved, const FolderSizeValue& next) {
+        if (saved.has_value != next.has_value) return true;
+        if (!next.has_value) return false;
+        return saved.bytes != next.bytes || saved.partial != next.partial || saved.source != next.source ||
+            saved.skipped != next.skipped || saved.issues != next.issues;
+    }
+    // The earliest time something Run skipped becomes due without a notify:
+    // backoffs, freshness, unwatched probe ageing, watch leases, the pending
+    // save. `now` is the scheduling pass's clock, so a backoff that expired
+    // since then is still seen. Capped so a case missed here costs a late
+    // pass, not a lost one.
+    uint64_t IdleDeadline(uint64_t now, uint64_t last_save, bool saving) const {
+        uint64_t due = now + kProbeFreshMs;
+        // Scheduling skipped rows already past these times for other reasons.
+        const auto at = [&](uint64_t when) { if (when > now && when < due) due = when; };
+        // The next pass always acts on these once expired, so overdue is due now.
+        const auto by = [&](uint64_t when) { due = (std::min)(due, (std::max)(when, now)); };
+        for (const auto& path : order) {
+            const auto demand = wanted.find(path);
+            const auto found = store.entries.find(path);
+            if (demand == wanted.end() || !demand->second || found == store.entries.end()) continue;
+            at(found->second.not_before);
+            if (found->second.completed && !manual.contains(path)) at(found->second.completed + kFreshMs);
+        }
+        for (const auto& key : probe_wanted) {
+            const auto found = probes.find(key);
+            if (found == probes.end() || found->second.stale) continue;
+            if (found->second.generation != 0 && Coverage(key) == found->second.generation) continue;
+            by(found->second.at + kProbeFreshMs);
+        }
+        for (const auto& root : roots)
+            if (const auto used = watch_used.find(root); used != watch_used.end()) by(used->second + kWatchLeaseMs);
+        if (saving && dirty_revision != saved_revision) {
+            if (now - last_save >= 3000) return now;
+            at(last_save + 3000);
+        }
+        return due;
     }
     void Run() {
         SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
@@ -465,6 +545,7 @@ struct FolderSizes::Impl {
         uint64_t last_save = GetTickCount64(), schedule_scope = 0;
         bool manual_turn = true;
         while (!stopping) {
+            { std::lock_guard lock(mutex); kick = false; }
             UpdateWatches(cache_key);
             const bool probing = RunProbes();
             std::vector<std::wstring> classify;
@@ -542,7 +623,12 @@ struct FolderSizes::Impl {
                     });
                     if (urgent != jobs.end()) std::rotate(jobs.begin(), urgent, std::next(urgent));
                 }
-                if (jobs.empty() && !probing) wake.wait_for(lock, std::chrono::milliseconds(100));
+                if (jobs.empty() && !probing) {
+                    const auto due = IdleDeadline(now, last_save, !file.empty());
+                    const auto idle_now = GetTickCount64();
+                    wake.wait_for(lock, std::chrono::milliseconds(due > idle_now ? due - idle_now : 0),
+                        [&] { return kick || stopping.load(); });
+                }
             }
             if (!jobs.empty() && !stopping) {
                 manual_turn = !manual_turn;
@@ -615,7 +701,7 @@ struct FolderSizes::Impl {
             watches.clear();
         }
         for (auto& watch : retired) watch->Stop();
-        Save(file);
+        Save(file, true);
         SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
     }
 };
@@ -707,6 +793,7 @@ void FolderSizes::Sync(std::vector<FolderSizeRequest> visible, std::vector<std::
             state.index_worker = std::thread([&state] { state.RunIndex(); });
     }
     (void)cancelled; // Worker rejects obsolete auto jobs between bounded slices.
+    state.kick = true;
     state.wake.notify_all();
 }
 void FolderSizes::Calculate(const std::wstring& path) {
@@ -723,7 +810,7 @@ void FolderSizes::Calculate(const std::wstring& path) {
         found->second.work.activity = FolderSizeActivity::Queued;
         found->second.work.manual = true;
     }
-    ++state.scope; state.changed = true;
+    ++state.scope; state.changed = true; state.kick = true;
     if (state.index_cancel) SetEvent(state.index_cancel);
     state.wake.notify_all();
 }
@@ -737,7 +824,7 @@ void FolderSizes::Cancel(const std::wstring& path) {
         found->second.work.activity = FolderSizeActivity::Cancelled;
         found->second.auto_deferred = true;
     }
-    state.manual.erase(key); ++state.scope; state.changed = true;
+    state.manual.erase(key); ++state.scope; state.changed = true; state.kick = true;
     if (state.worker.joinable() && state.active_scan_path == key) CancelSynchronousIo(state.worker.native_handle());
     state.wake.notify_all();
 }
@@ -807,6 +894,7 @@ void FolderSizes::Probe(std::vector<std::wstring> paths) {
         std::erase_if(state.probes, [&](const auto& item) { return !seen.contains(item.first); });
     if (!work) return;
     if (!state.worker.joinable()) state.worker = std::thread([&state] { state.Run(); });
+    state.kick = true;
     state.wake.notify_all();
 }
 uint8_t FolderSizes::Content(const std::wstring& path) const {
@@ -821,6 +909,10 @@ bool FolderLooksEmpty(uint8_t content, bool show_hidden, bool show_protected) {
     return !(show_hidden && show_protected && (content & FolderContentSystem));
 }
 bool FolderSizes::TakeChanged() { return impl_->changed.exchange(false); }
+void FolderSizes::SetChangeNotify(HWND hwnd, UINT message) {
+    impl_->changed.message.store(message);
+    impl_->changed.hwnd.store(hwnd);
+}
 FolderSizeStats FolderSizes::ReadStats() const {
     std::lock_guard lock(impl_->mutex);
     auto stats = impl_->stats; stats.cache_items = impl_->store.entries.size();

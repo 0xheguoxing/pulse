@@ -1,9 +1,12 @@
 #include "edit_host.h"
 #include "FluentTokens.h"
 #include "legacy_icons.h"
+#include "command_icons.h"
 #include "../common/windows_compat.h"
 #include "quick_preview_window.h"
+#include "../app/folder_alias.h"
 #include "preview_notice.h"
+#include "../common/file_placeholder.h"
 #include "../common/localization.h"
 #include "../common/text_format.h"
 #include "../ipc/preview_protocol.h"
@@ -29,12 +32,23 @@
 namespace pulse::ui {
 namespace {
 
+// 别名: the title names the item the way the list does — the alias, then the
+// real name under 别名 + 原名.
+template <class Item>
+std::wstring PreviewTitle(const Item& item) {
+    const std::wstring alias = item.path.empty() ? std::wstring() : app::AliasStore::Instance().Shown(item.path);
+    if (alias.empty()) return item.name;
+    if (app::AliasStore::Instance().Display() != app::AliasDisplay::Both || item.name.empty()) return alias;
+    return alias + L"\u2003" + item.name;
+}
+// The folder / archive card's own heading: the alias alone.
+template <class Item>
+std::wstring PreviewCardName(const Item& item) {
+    const std::wstring alias = item.path.empty() ? std::wstring() : app::AliasStore::Instance().Shown(item.path);
+    return alias.empty() ? item.name : alias;
+}
+
 constexpr wchar_t kWindowClass[] = L"Pulse.QuickPreview";
-constexpr DWORD kRecallOnOpen = 0x00040000;
-constexpr DWORD kRecallOnData = 0x00400000;
-constexpr DWORD kPinned = 0x00080000;
-constexpr float kCloseButtonWidth = 46.0f;
-constexpr float kChromeButtonWidth = 40.0f;   // prev / next / more, left of close
 constexpr float kCloseGlyphSize = 16.0f * 0.66f;
 constexpr float kFindBarHeight = 44.0f;
 // Rollback switch: false shows Markdown as highlighted source only (no host
@@ -52,11 +66,11 @@ constexpr bool kDocView = true;
 // size pills and HEIF / AVIF without the codec card.
 constexpr bool kImageExtras = true;
 constexpr UINT_PTR kTableTipTimer = 73;
-constexpr float kHudHeight = 28.0f;
 constexpr UINT_PTR kAnimationTimer = 7;
 constexpr UINT_PTR kPreviewDeadlineTimer = 31;
 constexpr UINT_PTR kFindEditCaretTimer = 71;
 constexpr UINT_PTR kZoomCloseTimer = 72;
+constexpr UINT_PTR kNavSlideTimer = 74;  // the next item slides in (motion phase 6)
 constexpr double kZoomOpenSeconds = 0.22;
 constexpr double kZoomCloseSeconds = 0.15;
 constexpr float kMaxDecodedZoom = 4.0f;
@@ -82,6 +96,8 @@ enum {
     kTextCmdFind,
     kTextCmdLineNumbers,
     kArchiveCmdCopyPath,
+    kViewCmdFirst,       // + 0 / 1: the header's view toggle, folded into the menu
+    kViewCmdSecond,
     kFileCmdBase = 100,  // + static_cast<int>(QuickPreviewAction)
 };
 
@@ -180,6 +196,7 @@ void QuickPreviewWindow::ResetTextState() {
     text_layout_width_ = 0.0f;
     text_layout_scale_ = 0.0f;
     text_layout_hex_ = false;
+    hex_hover_ = hex_selected_ = -1;
     sel_anchor_ = sel_focus_ = 0;
     selecting_ = false;
     CloseFind();
@@ -198,6 +215,7 @@ void QuickPreviewWindow::ResetView() {
     pan_y_ = 0.0f;
     image_fit_ = true;
     image_zoom_ = 1.0f;
+    image_turns_ = 0;
     decoded_w_ = decoded_h_ = 0;
     source_w_ = source_h_ = 0;
     native_kind_ = NativeKind::None;
@@ -223,6 +241,7 @@ void QuickPreviewWindow::ResetAnimation() {
 void QuickPreviewWindow::RecreateFormats() {
     close_format_.reset();
     preview_text_format_.reset();
+    reading_text_format_.reset();
     text_layout_.reset();
     if (!compositor_.DwriteFactory()) return;
     typography::CreateTextFormat(compositor_.DwriteFactory(),
@@ -238,6 +257,24 @@ void QuickPreviewWindow::RecreateFormats() {
         preview_text_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         preview_text_format_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
     }
+    typography::CreateTextFormat(compositor_.DwriteFactory(),
+        {typography::FontRole::Text, 15.0f * scale_}, &reading_text_format_);
+    if (reading_text_format_.get()) {
+        const float line = 15.0f * 1.75f * scale_;
+        reading_text_format_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        reading_text_format_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        reading_text_format_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+        reading_text_format_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, line, line * 0.78f);
+    }
+    badge_format_.reset();
+    badge_small_format_.reset();
+    open_format_.reset();
+    typography::CreateTextFormat(compositor_.DwriteFactory(),
+        {typography::FontRole::Text, 9.0f * scale_, DWRITE_FONT_WEIGHT_BOLD}, &badge_format_);
+    typography::CreateTextFormat(compositor_.DwriteFactory(),
+        {typography::FontRole::Text, 7.5f * scale_, DWRITE_FONT_WEIGHT_BOLD}, &badge_small_format_);
+    typography::CreateTextFormat(compositor_.DwriteFactory(),
+        {typography::FontRole::Text, 12.5f * scale_, DWRITE_FONT_WEIGHT_SEMI_BOLD}, &open_format_);
     gutter_format_.reset();
     typography::CreateTextFormat(compositor_.DwriteFactory(),
         {typography::FontRole::Monospace, 13.0f * scale_}, &gutter_format_);
@@ -271,6 +308,9 @@ void QuickPreviewWindow::Show(const QuickPreviewItem& item, bool dark, WindowEff
         compositor_.ClearZoom();
     }
     item_ = item;
+    title_ = PreviewTitle(item_);
+    open_app_cache_.clear();   // associations may have changed since the last preview
+    RefreshItemFacts();
     dark_ = dark;
     commands_.Clear();
     effect_ = effect;
@@ -295,7 +335,7 @@ void QuickPreviewWindow::Show(const QuickPreviewItem& item, bool dark, WindowEff
     const int x = owner_rect.left + (owner_width - width) / 2;
     const int y = owner_rect.top + (owner_height - height) / 2;
     SetWindowTextW(hwnd_, item_.name.empty()
-        ? pulse::l10n::Get(pulse::l10n::StringId::QuickPreview).c_str() : item_.name.c_str());
+        ? pulse::l10n::Get(pulse::l10n::StringId::QuickPreview).c_str() : PreviewTitle(item_).c_str());
     // Zoom out of the item's icon. Only with a plain (None) window effect:
     // a DWM system backdrop would pop in at full size around the zooming
     // content. The DWM show transition is disabled while our zoom runs.
@@ -320,10 +360,36 @@ void QuickPreviewWindow::Show(const QuickPreviewItem& item, bool dark, WindowEff
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+// Prev / next: remember the direction so the item that answers slides in
+// from that side (pulse_motion_v2.html quick preview, spring Smooth).
+void QuickPreviewWindow::PostNavigate(int dir) {
+    if (!owner_ || !navigate_message_) return;
+    pending_nav_dir_ = dir;
+    pending_nav_at_ = motion::NowMs();
+    PostMessageW(owner_, navigate_message_, static_cast<WPARAM>(static_cast<INT_PTR>(dir)), 0);
+}
+
 void QuickPreviewWindow::Update(const QuickPreviewItem& item) {
     if (!visible() || item.path.empty()) return;
+    const uint64_t nav_now = motion::NowMs();
+    nav_dir_ = 0;
+    if (pending_nav_dir_ != 0 && item.path != item_.path && nav_now - pending_nav_at_ < 600 &&
+        motion::SystemAnimationsEnabled()) {
+        nav_dir_ = pending_nav_dir_;
+        nav_start_ = nav_now;
+        SetTimer(hwnd_, kNavSlideTimer, 15, nullptr);
+    }
+    pending_nav_dir_ = 0;
     commands_.Clear();
+    const bool same = item.path == item_.path;
+    const int position = item_.position, count = item_.count;
     item_ = item;
+    if (same && item_.count == 0) {   // a refresh of the shown item keeps its place
+        item_.position = position;
+        item_.count = count;
+    }
+    title_ = PreviewTitle(item_);
+    RefreshItemFacts();
     ++generation_;
     handler_immediate_ = false;
     ResetView();
@@ -332,7 +398,7 @@ void QuickPreviewWindow::Update(const QuickPreviewItem& item) {
     handler_.Reset();
     BeginVideo();
     SetWindowTextW(hwnd_, item_.name.empty()
-        ? pulse::l10n::Get(pulse::l10n::StringId::QuickPreview).c_str() : item_.name.c_str());
+        ? pulse::l10n::Get(pulse::l10n::StringId::QuickPreview).c_str() : PreviewTitle(item_).c_str());
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -383,7 +449,7 @@ bool QuickPreviewWindow::visible() const noexcept {
 }
 
 bool QuickPreviewWindow::OfflinePlaceholder() const noexcept {
-    return (item_.attrs & (kRecallOnOpen | kRecallOnData)) && !(item_.attrs & kPinned);
+    return files::PreviewWouldRecall(item_.attrs);   // the preview host's rule
 }
 
 void QuickPreviewWindow::Resize() {
@@ -402,7 +468,7 @@ float QuickPreviewWindow::FindBarHeight() const noexcept {
 
 D2D1_RECT_F QuickPreviewWindow::FindBarRect() const {
     const float width = static_cast<float>(compositor_.Width());
-    const float header = kTitleBarHeight * scale_;
+    const float header = HeaderHeight();
     return D2D1::RectF(0, header, width, header + kFindBarHeight * scale_);
 }
 
@@ -426,46 +492,30 @@ D2D1_RECT_F QuickPreviewWindow::FindEditCell() const {
 D2D1_RECT_F QuickPreviewWindow::ContentRect() const {
     const float width = static_cast<float>(compositor_.Width());
     const float height = static_cast<float>(compositor_.Height());
-    const float header = kTitleBarHeight * scale_;
-    return D2D1::RectF(0, header + FindBarHeight() + preview_notice_height_, width, height - PlaybackHeight());
+    const float header = HeaderHeight();
+    return D2D1::RectF(0, header + FindBarHeight() + preview_notice_height_, width - InfoDrawerWidth(),
+                       (std::max)(header, height - FooterHeight() - PlaybackHeight()));
 }
 
 D2D1_RECT_F QuickPreviewWindow::ChromeButtonRect(ChromeButton button) const {
-    const float width = static_cast<float>(compositor_.Width());
-    const float header = kTitleBarHeight * scale_;
-    const float slot = kChromeButtonWidth * scale_;
-    // Left to right: prev, next, more, then the non-client close button.
-    float right = width - kCloseButtonWidth * scale_;
     switch (button) {
-    case ChromeButton::More: break;
-    case ChromeButton::Next: right -= slot; break;
-    case ChromeButton::Prev: right -= slot * 2.0f; break;
+    case ChromeButton::Prev: return header_.prev;
+    case ChromeButton::Next: return header_.next;
+    case ChromeButton::More: return header_.more;
+    case ChromeButton::Open: return header_.open;
     default: return D2D1::RectF(0, 0, 0, 0);
     }
-    return D2D1::RectF(right - slot, 0, right, header);
 }
 
+// The view toggle in the header's tool area (LayoutHeader places it).
 D2D1_RECT_F QuickPreviewWindow::MarkdownToggleRect(int segment) const {
-    const bool zh = pulse::l10n::IsChinese();
+    const D2D1_RECT_F pill = header_.tools;
+    if (segment < 0) return pill;
     const float inner = 2.0f * scale_;
-    float w0 = zh ? 46.0f : 52.0f;  // "表格" / "Table"
-    if (toggle_kind_ == ToggleKind::Markdown) w0 = zh ? 46.0f : 68.0f;
-    else if (toggle_kind_ == ToggleKind::TreeSource) w0 = zh ? 40.0f : 48.0f;
-    else if (toggle_kind_ == ToggleKind::NotebookSource) w0 = zh ? 58.0f : 72.0f;
-    else if (toggle_kind_ == ToggleKind::DocHandler) w0 = zh ? 46.0f : 76.0f;
-    w0 *= scale_;
-    const bool handler_pill = toggle_kind_ == ToggleKind::TableHandler || toggle_kind_ == ToggleKind::DocHandler;
-    const float w1 = (handler_pill ? (zh ? 70.0f : 64.0f)
-                                                               : (zh ? 46.0f : 58.0f)) * scale_;
-    const float height = 24.0f * scale_;
-    const float top = (kTitleBarHeight * scale_ - height) * 0.5f;
-    const float right = ChromeButtonRect(ChromeButton::Prev).left - 6.0f * scale_;
-    const float left = right - w0 - w1 - inner * 2.0f;
+    const float w0 = ToggleSegmentWidth(0);
     if (segment == 0)
-        return D2D1::RectF(left + inner, top + inner, left + inner + w0, top + height - inner);
-    if (segment == 1)
-        return D2D1::RectF(left + inner + w0, top + inner, right - inner, top + height - inner);
-    return D2D1::RectF(left, top, right, top + height);
+        return D2D1::RectF(pill.left + inner, pill.top + inner, pill.left + inner + w0, pill.bottom - inner);
+    return D2D1::RectF(pill.left + inner + w0, pill.top + inner, pill.right - inner, pill.bottom - inner);
 }
 
 bool& QuickPreviewWindow::ToggleSecond() noexcept {
@@ -475,12 +525,14 @@ bool& QuickPreviewWindow::ToggleSecond() noexcept {
     case ToggleKind::TreeSource: return tree_source_;
     case ToggleKind::NotebookSource: return notebook_source_;
     case ToggleKind::DocHandler: return doc_handler_;
+    case ToggleKind::TextReading:
+        return ExtensionLabel(item_.path) == L"TXT" ? text_mono_txt_ : text_mono_other_;
     default: return markdown_source_;
     }
 }
 
 int QuickPreviewWindow::HitMarkdownToggle(POINT client) const {
-    if (!markdown_shown_) return -1;
+    if (!markdown_shown_ || !header_.tools_visible) return -1;
     const D2D1_RECT_F pill = MarkdownToggleRect(-1);
     const float x = static_cast<float>(client.x), y = static_cast<float>(client.y);
     if (x < pill.left || x >= pill.right || y < pill.top || y >= pill.bottom) return -1;
@@ -491,17 +543,8 @@ void QuickPreviewWindow::DrawMarkdownToggle(ID2D1DeviceContext* dc,
                                             ID2D1SolidColorBrush* text_brush) {
     IDWriteTextFormat* format = compositor_.SmallFormat();
     if (!dc || !text_brush || !format) return;
-    const wchar_t* labels[2] = {pulse::l10n::Pick(L"\x6E32\x67D3", L"Rendered"), pulse::l10n::Pick(L"\x6E90\x7801", L"Source")};
-    if (toggle_kind_ == ToggleKind::TableSource || toggle_kind_ == ToggleKind::TableHandler)
-        labels[0] = pulse::l10n::Pick(L"\x8868\x683C", L"Table");
-    else if (toggle_kind_ == ToggleKind::TreeSource)
-        labels[0] = pulse::l10n::Pick(L"\x6811", L"Tree");
-    else if (toggle_kind_ == ToggleKind::NotebookSource)
-        labels[0] = pulse::l10n::Pick(L"\x7B14\x8BB0\x672C", L"Notebook");
-    else if (toggle_kind_ == ToggleKind::DocHandler)
-        labels[0] = pulse::l10n::Pick(L"\x6B63\x6587", L"Document");
-    if (toggle_kind_ == ToggleKind::TableHandler || toggle_kind_ == ToggleKind::DocHandler)
-        labels[1] = pulse::l10n::Pick(L"\x7CFB\x7EDF\x9884\x89C8", L"System");
+    const wchar_t* labels[2]{};
+    ToggleLabels(labels);
     D2D1_COLOR_F color = text_brush->GetColor();
     ComPtr<ID2D1SolidColorBrush> track, thumb, dim;
     color.a = dark_ ? 0.08f : 0.06f;
@@ -519,24 +562,18 @@ void QuickPreviewWindow::DrawMarkdownToggle(ID2D1DeviceContext* dc,
     if (thumb.get()) dc->FillRoundedRectangle(D2D1::RoundedRect(knob, knob_radius, knob_radius), thumb.get());
     if (!dark_ && track.get())
         dc->DrawRoundedRectangle(D2D1::RoundedRect(knob, knob_radius, knob_radius), track.get(), 1.0f);
-    const auto text_alignment = format->GetTextAlignment();
-    const auto paragraph_alignment = format->GetParagraphAlignment();
-    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     for (int i = 0; i < 2; ++i) {
         ID2D1SolidColorBrush* brush = i == active || !dim.get() ? text_brush : dim.get();
-        dc->DrawTextW(labels[i], static_cast<UINT32>(wcslen(labels[i])), format,
-                      MarkdownToggleRect(i), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP,
-                      DWRITE_MEASURING_MODE_NATURAL);
+        DrawUiText(dc, labels[i], format, MarkdownToggleRect(i), brush->GetColor(),
+                   DWRITE_TEXT_ALIGNMENT_CENTER);
     }
-    format->SetTextAlignment(text_alignment);
-    format->SetParagraphAlignment(paragraph_alignment);
 }
 
 QuickPreviewWindow::ChromeButton QuickPreviewWindow::HitChromeButton(POINT client) const {
     const float x = static_cast<float>(client.x);
     const float y = static_cast<float>(client.y);
-    for (ChromeButton button : {ChromeButton::Prev, ChromeButton::Next, ChromeButton::More}) {
+    for (ChromeButton button : {ChromeButton::Prev, ChromeButton::Next, ChromeButton::Open,
+                                ChromeButton::More}) {
         const D2D1_RECT_F rect = ChromeButtonRect(button);
         if (x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom) return button;
     }
@@ -546,11 +583,17 @@ QuickPreviewWindow::ChromeButton QuickPreviewWindow::HitChromeButton(POINT clien
 void QuickPreviewWindow::ActivateChromeButton(ChromeButton button) {
     switch (button) {
     case ChromeButton::Prev:
-        if (owner_ && navigate_message_)
-            PostMessageW(owner_, navigate_message_, static_cast<WPARAM>(-1), 0);
+        PostNavigate(-1);
         break;
     case ChromeButton::Next:
-        if (owner_ && navigate_message_) PostMessageW(owner_, navigate_message_, 1, 0);
+        PostNavigate(1);
+        break;
+    case ChromeButton::Open:
+        // Folders open in a new tab; the list behind keeps its place.
+        if (command_message_)
+            PostAction((item_.attrs & FILE_ATTRIBUTE_DIRECTORY) ? QuickPreviewAction::OpenInNewTab
+                                                                : QuickPreviewAction::Open, &item_);
+        else if (owner_ && open_message_) PostMessageW(owner_, open_message_, 0, 0);
         break;
     case ChromeButton::More: {
         const D2D1_RECT_F rect = ChromeButtonRect(ChromeButton::More);
@@ -572,7 +615,8 @@ QuickPreviewItem QuickPreviewWindow::ActionTarget() const {
 
 void QuickPreviewWindow::PostAction(QuickPreviewAction action, const QuickPreviewItem* target) {
     if (!owner_ || !command_message_ || action == QuickPreviewAction::None) return;
-    if (native_kind_ == NativeKind::Archive &&
+    // An explicit target (header button, menus) is acted on as given.
+    if (!target && native_kind_ == NativeKind::Archive &&
         !CanApplyPreviewFileAction(archive_.IsFolderListing(), archive_.HasSelection())) {
         if (action == QuickPreviewAction::CopyPath || action == QuickPreviewAction::Copy)
             pulse::ops::WriteClipboardText(archive_.SelectedPath());
@@ -593,8 +637,8 @@ void QuickPreviewWindow::PostAction(QuickPreviewAction action, const QuickPrevie
 
 float QuickPreviewWindow::FitScale(float view_w, float view_h) const noexcept {
     if (decoded_w_ == 0 || decoded_h_ == 0) return 1.0f;
-    return (std::min)(view_w / static_cast<float>(decoded_w_),
-                      view_h / static_cast<float>(decoded_h_));
+    return (std::min)(view_w / TurnedW(),
+                      view_h / TurnedH());
 }
 
 bool QuickPreviewWindow::CanPanImage() const {
@@ -602,8 +646,8 @@ bool QuickPreviewWindow::CanPanImage() const {
     const D2D1_RECT_F content = ContentRect();
     const float view_w = content.right - content.left;
     const float view_h = content.bottom - content.top;
-    return decoded_w_ * image_zoom_ > view_w + 0.5f ||
-           decoded_h_ * image_zoom_ > view_h + 0.5f;
+    return TurnedW() * image_zoom_ > view_w + 0.5f ||
+           TurnedH() * image_zoom_ > view_h + 0.5f;
 }
 
 void QuickPreviewWindow::SetFitMode() {
@@ -633,8 +677,8 @@ void QuickPreviewWindow::ClampPan(float view_w, float view_h) {
         pan_y_ = 0.0f;
         return;
     }
-    const float draw_w = decoded_w_ * image_zoom_;
-    const float draw_h = decoded_h_ * image_zoom_;
+    const float draw_w = TurnedW() * image_zoom_;
+    const float draw_h = TurnedH() * image_zoom_;
     const float max_x = (std::max)(0.0f, (draw_w - view_w) * 0.5f);
     const float max_y = (std::max)(0.0f, (draw_h - view_h) * 0.5f);
     pan_x_ = std::clamp(pan_x_, -max_x, max_x);
@@ -654,16 +698,16 @@ void QuickPreviewWindow::ZoomAt(float cursor_x, float cursor_y, float factor) {
         SetFitMode();
         return;
     }
-    const float draw_w = decoded_w_ * old_zoom;
-    const float draw_h = decoded_h_ * old_zoom;
+    const float draw_w = TurnedW() * old_zoom;
+    const float draw_h = TurnedH() * old_zoom;
     const float left = content.left + (view_w - draw_w) * 0.5f + pan_x_;
     const float top = content.top + (view_h - draw_h) * 0.5f + pan_y_;
     const float u = (cursor_x - left) / (std::max)(0.001f, old_zoom);
     const float v = (cursor_y - top) / (std::max)(0.001f, old_zoom);
     image_fit_ = false;
     image_zoom_ = next;
-    const float new_w = decoded_w_ * next;
-    const float new_h = decoded_h_ * next;
+    const float new_w = TurnedW() * next;
+    const float new_h = TurnedH() * next;
     pan_x_ = cursor_x - u * next - content.left - (view_w - new_w) * 0.5f;
     pan_y_ = cursor_y - v * next - content.top - (view_h - new_h) * 0.5f;
     ClampPan(view_w, view_h);
@@ -673,8 +717,8 @@ D2D1_RECT_F QuickPreviewWindow::ImageDest(const D2D1_RECT_F& content) const {
     if (image_fit_ || decoded_w_ == 0 || decoded_h_ == 0) return content;
     const float view_w = content.right - content.left;
     const float view_h = content.bottom - content.top;
-    const float draw_w = decoded_w_ * image_zoom_;
-    const float draw_h = decoded_h_ * image_zoom_;
+    const float draw_w = TurnedW() * image_zoom_;
+    const float draw_h = TurnedH() * image_zoom_;
     const float left = content.left + (view_w - draw_w) * 0.5f + pan_x_;
     const float top = content.top + (view_h - draw_h) * 0.5f + pan_y_;
     return D2D1::RectF(left, top, left + draw_w, top + draw_h);
@@ -741,7 +785,7 @@ void QuickPreviewWindow::DrawIconSizes(ID2D1DeviceContext* dc, const D2D1_RECT_F
     const float gap = 6.0f * s, h = 22.0f * s;
     total += gap * static_cast<float>(labels.size() - 1);
     if (total > content.right - content.left - 24.0f * s) return;  // too narrow: the HUD still names the size
-    const float bottom = content.bottom - kHudHeight * s - 12.0f * s;
+    const float bottom = content.bottom - 12.0f * s;
     float x = std::round((content.left + content.right - total) * 0.5f);
     const float y = std::round(bottom - h);
     ComPtr<ID2D1SolidColorBrush> pill, accent, on_accent;
@@ -777,77 +821,144 @@ int QuickPreviewWindow::HitIconSize(POINT client) const {
     return -1;
 }
 
-void QuickPreviewWindow::DrawHud(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
-                                 ID2D1SolidColorBrush* text_brush) {
-    if (!dc || native_kind_ != NativeKind::Bitmap || decoded_w_ == 0) return;
-    const float hud_h = kHudHeight * scale_;
-    if (content.bottom - content.top < hud_h + 8.0f * scale_) return;
-    const D2D1_RECT_F hud = D2D1::RectF(content.left, content.bottom - hud_h,
-                                        content.right, content.bottom);
-    ComPtr<ID2D1SolidColorBrush> background;
-    dc->CreateSolidColorBrush(D2D1::ColorF(0x000000, dark_ ? 0.45f : 0.28f), &background);
-    dc->FillRectangle(hud, background.get());
-
-    const uint32_t shown_w = source_w_ ? source_w_ : decoded_w_;
-    const uint32_t shown_h = source_h_ ? source_h_ : decoded_h_;
+// Size · format · bytes on the left; the zoom (click: fit / actual pixels) on the right.
+void QuickPreviewWindow::SetImageFooter(const D2D1_RECT_F& content) {
+    if (native_kind_ != NativeKind::Bitmap || decoded_w_ == 0) return;
+    uint32_t shown_w = source_w_ ? source_w_ : decoded_w_;
+    uint32_t shown_h = source_h_ ? source_h_ : decoded_h_;
+    if (image_turns_ & 1) std::swap(shown_w, shown_h);
+    std::vector<std::wstring> parts;
     wchar_t dims[64];
-    swprintf_s(dims, L"%u\x00D7%u", shown_w, shown_h);
-    std::wstring line = dims;
-    if (source_w_ && source_h_ &&
-        (source_w_ != decoded_w_ || source_h_ != decoded_h_)) {
+    swprintf_s(dims, L"%u \x00D7 %u", shown_w, shown_h);
+    parts.push_back(dims);
+    if (source_w_ && source_h_ && (source_w_ != decoded_w_ || source_h_ != decoded_h_)) {
         wchar_t preview[64];
         swprintf_s(preview, pulse::l10n::Get(pulse::l10n::StringId::PreviewDecodedFormat).c_str(),
                    (std::max)(decoded_w_, decoded_h_));
-        line += L" \x00B7 ";
-        line += preview;
+        parts.push_back(preview);
     }
-    const std::wstring size = pulse::format::ByteSize(item_.size, true);
-    if (!size.empty()) {
-        line += L" \x00B7 ";
-        line += size;
-    }
-    if (const std::wstring ext = ExtensionLabel(item_.path); !ext.empty()) {
-        line += L" \x00B7 ";
-        line += ext;
-    }
-    line += L" \x00B7 ";
+    if (std::wstring ext = ExtensionLabel(item_.path); !ext.empty()) parts.push_back(std::move(ext));
+    if (std::wstring size = pulse::format::ByteSize(item_.size, true); !size.empty())
+        parts.push_back(std::move(size));
+    SetFooterParts(std::move(parts));
+    // Screen pixels per image pixel: fit scales the whole picture into the view.
+    float ratio = 1.0f;
     if (image_fit_) {
-        line += pulse::l10n::Get(pulse::l10n::StringId::PreviewFit);
+        ratio = (std::min)((content.right - content.left) / static_cast<float>(shown_w),
+                           (content.bottom - content.top) / static_cast<float>(shown_h));
     } else {
-        wchar_t percent[16];
-        swprintf_s(percent, L"%.0f%%", image_zoom_ * 100.0f);
-        line += percent;
+        const D2D1_RECT_F dest = ImageDest(content);
+        ratio = (dest.right - dest.left) / static_cast<float>(shown_w);
     }
-    const float pad = 12.0f * scale_;
-    IDWriteTextFormat* format = compositor_.SmallFormat();
-    if (format) {
-        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        dc->DrawTextW(line.data(), static_cast<UINT32>(line.size()), format,
-                      D2D1::RectF(hud.left + pad, hud.top, hud.right - pad, hud.bottom),
-                      text_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    wchar_t percent[16];
+    swprintf_s(percent, L"%.0f%%", ratio * 100.0f);
+    std::wstring zoom = percent;
+    if (image_fit_) zoom = std::wstring(pulse::l10n::Get(pulse::l10n::StringId::PreviewFit)) + L" \x00B7 " + zoom;
+    AddFooterControl(kFooterZoomOut, L"\x2212");
+    AddFooterControl(kFooterZoom, std::move(zoom));
+    AddFooterControl(kFooterZoomIn, L"+");
+    if ((!kImageExtras || !IsIconFile(item_.path)) && frame_count_ <= 1)
+        AddFooterControl(kFooterRotate, L"\x21BB");
+    if (!kImageExtras || !IsIconFile(item_.path)) {
+        using pulse::l10n::StringId;
+        static constexpr StringId kBackdrop[] = {StringId::PreviewBgAuto, StringId::PreviewBgLight,
+                                                 StringId::PreviewBgDark, StringId::PreviewBgChecker};
+        AddFooterControl(kFooterImageBg, pulse::l10n::Get(kBackdrop[image_backdrop_ & 3]));
     }
+    AddFooterControl(kFooterInfo, pulse::l10n::Get(pulse::l10n::StringId::Information));
+    footer_controls_.back().on = info_open_;
 }
 
-void QuickPreviewWindow::EnsureTextLayout(const std::wstring& text, bool hex, float width) {
+bool QuickPreviewWindow::ImageBackdropWanted() {
+    if (decoded_w_ == 0 || decoded_h_ == 0) return false;
+    if (image_backdrop_ != 0) return true;
+    ImageStats stats;
+    return thumbnails_.Stats(item_.path, preview_pixels_, item_.modified, item_.size, stats) &&
+           stats.has_alpha;
+}
+
+bool QuickPreviewWindow::DrawImageBackdrop(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
+                                           const D2D1_RECT_F& draw) {
+    if (!dc || !ImageBackdropWanted()) return false;
+    if (image_backdrop_ == 1 || image_backdrop_ == 2) {
+        ComPtr<ID2D1SolidColorBrush> fill;
+        dc->CreateSolidColorBrush(D2D1::ColorF(image_backdrop_ == 1 ? 0xF2F2F2 : 0x1C1C1C), &fill);
+        if (!fill.get()) return false;
+        dc->FillRectangle(content, fill.get());
+        return true;
+    }
+    // Checkerboard under the picture only: a 2 x 2 bitmap tiled at 8 DIP cells.
+    D2D1_RECT_F shown = draw;
+    if (image_fit_) {
+        const float aspect = TurnedW() / TurnedH();
+        const float dw = draw.right - draw.left, dh = draw.bottom - draw.top;
+        if (dw <= 0.0f || dh <= 0.0f) return false;
+        if (aspect > dw / dh) {
+            const float h = dw / aspect, cy = (draw.top + draw.bottom) * 0.5f;
+            shown.top = cy - h * 0.5f;
+            shown.bottom = cy + h * 0.5f;
+        } else {
+            const float w = dh * aspect, cx = (draw.left + draw.right) * 0.5f;
+            shown.left = cx - w * 0.5f;
+            shown.right = cx + w * 0.5f;
+        }
+    }
+    const uint32_t a = dark_ ? 0xFF2E2E2Eu : 0xFFFFFFFFu, b = dark_ ? 0xFF3C3C3Cu : 0xFFE6E6E6u;
+    const uint32_t cells[4] = {a, b, b, a};
+    const auto props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+    ComPtr<ID2D1Bitmap> tile;
+    ComPtr<ID2D1BitmapBrush> brush;
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(2, 2), cells, 8, &props, &tile)) || !tile.get() ||
+        FAILED(dc->CreateBitmapBrush(tile.get(), D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_WRAP,
+            D2D1_EXTEND_MODE_WRAP, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR), &brush)) ||
+        !brush.get())
+        return false;
+    const float cell = std::round(8.0f * scale_);
+    brush->SetTransform(D2D1::Matrix3x2F::Scale(cell, cell) *
+                        D2D1::Matrix3x2F::Translation(std::round(shown.left), std::round(shown.top)));
+    dc->FillRectangle(shown, brush.get());
+    return true;
+}
+
+bool QuickPreviewWindow::PlainTextCandidate() const {
+    // Prose-like text gets the 阅读 | 等宽 toggle; code keeps its highlighted view.
+    const std::wstring_view language = SyntaxLanguageName(L"." + ExtensionLabel(item_.path));
+    return language.empty() || language == L"Log";
+}
+
+void QuickPreviewWindow::EnsureTextLayout(const std::wstring& text, bool hex, float width,
+                                          bool reading) {
+    reading = reading && !hex && reading_text_format_.get();
     if (text.empty() || !compositor_.DwriteFactory() || !preview_text_format_.get()) {
         text_layout_.reset();
         return;
     }
     const std::wstring extension = L"." + ExtensionLabel(item_.path);
-    const bool gutter = !hex && line_numbers_ && SyntaxWantsLineNumbers(extension);
+    const bool gutter = !hex && !reading && line_numbers_ && SyntaxWantsLineNumbers(extension);
     if (text_layout_.get() && text == preview_text_ && hex == text_layout_hex_ &&
         std::abs(width - text_layout_width_) < 0.5f &&
         std::abs(scale_ - text_layout_scale_) < 0.001f && dark_ == text_layout_dark_ &&
-        gutter == (text_gutter_ > 0.0f)) return;
+        gutter == (text_gutter_ > 0.0f) && reading == text_layout_reading_) return;
     preview_text_ = text;
     text_layout_.reset();
     preview_text_format_->SetWordWrapping(
         hex ? DWRITE_WORD_WRAPPING_NO_WRAP : DWRITE_WORD_WRAPPING_WRAP);
     text_line_count_ = 1;
     for (const wchar_t c : text) if (c == L'\n') ++text_line_count_;
+    {
+        bool lf = false, crlf = false, cr = false;
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (text[i] == L'\r') {
+                if (i + 1 < text.size() && text[i + 1] == L'\n') { crlf = true; ++i; }
+                else cr = true;
+            } else if (text[i] == L'\n') {
+                lf = true;
+            }
+        }
+        const int kinds = static_cast<int>(lf) + static_cast<int>(crlf) + static_cast<int>(cr);
+        text_eol_ = kinds > 1 ? 4 : crlf ? 2 : cr ? 3 : lf ? 1 : 0;
+    }
     if (!text.empty() && text.back() == L'\n') --text_line_count_;
     line_starts_.clear();
     text_gutter_ = 0.0f;
@@ -866,11 +977,43 @@ void QuickPreviewWindow::EnsureTextLayout(const std::wstring& text, bool hex, fl
         const size_t digits = std::to_wstring(line_starts_.size()).size();
         text_gutter_ = (static_cast<float>((std::max)(digits, size_t{2})) + 2.0f) * digit;
     }
-    compositor_.DwriteFactory()->CreateTextLayout(
-        text.data(), static_cast<UINT32>(text.size()), preview_text_format_.get(),
-        (std::max)(1.0f, width - text_gutter_), 100000.0f, &text_layout_);
+    text_layout_reading_ = reading;
+    text_reading_x_ = 0.0f;
+    if (reading) {
+        // A centred column capped at 680 px reads like a page rather than a terminal.
+        static constexpr float kColumns[] = {560.0f, 680.0f, 860.0f};
+        const float column = (std::min)(kColumns[std::clamp(reading_width_, 0, 2)] * scale_,
+                                        (std::max)(1.0f, width));
+        text_reading_x_ = 20.0f * scale_ + (std::max)(0.0f, (width - column) * 0.5f);
+        compositor_.DwriteFactory()->CreateTextLayout(
+            text.data(), static_cast<UINT32>(text.size()), reading_text_format_.get(),
+            column, 100000.0f, &text_layout_);
+        // A short first line followed by a blank line is treated as the title.
+        const size_t first = text.find(L'\n');
+        if (text_layout_.get() && first != std::wstring::npos && first > 0) {
+            size_t end = first;
+            if (end > 0 && text[end - 1] == L'\r') --end;
+            size_t next = first + 1;
+            if (next < text.size() && text[next] == L'\r') ++next;
+            bool title = end > 0 && end <= 60 && next < text.size() && text[next] == L'\n';
+            if (title) {
+                bool ink = false;
+                for (size_t i = 0; i < end; ++i) if (!std::iswspace(text[i])) { ink = true; break; }
+                title = ink;
+            }
+            if (title) {
+                const DWRITE_TEXT_RANGE range{0, static_cast<UINT32>(end)};
+                text_layout_->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD, range);
+                text_layout_->SetFontSize(18.0f * scale_, range);
+            }
+        }
+    } else {
+        compositor_.DwriteFactory()->CreateTextLayout(
+            text.data(), static_cast<UINT32>(text.size()), preview_text_format_.get(),
+            (std::max)(1.0f, width - text_gutter_), 100000.0f, &text_layout_);
+    }
     syntax_language_ = hex ? std::wstring() : std::wstring(SyntaxLanguageName(extension));
-    if (!hex && text_layout_.get() && compositor_.Dc()) {
+    if (!hex && !reading && text_layout_.get() && compositor_.Dc()) {
         for (auto& brush : syntax_brushes_) brush.reset();
         const auto spans = HighlightSyntax(extension, text);
         for (const SyntaxSpan& span : spans) {
@@ -896,7 +1039,7 @@ bool QuickPreviewWindow::HitTestText(float x, float y, uint32_t& index) {
     const D2D1_RECT_F content = ContentRect();
     const float pad = 20.0f * scale_;
     const float origin_x = TextOriginX();
-    const float origin_y = content.top + pad - text_scroll_;
+    const float origin_y = content.top + pad + HexRulerHeight() - text_scroll_;
     BOOL trailing = FALSE;
     BOOL inside = FALSE;
     DWRITE_HIT_TEST_METRICS metrics{};
@@ -1210,7 +1353,7 @@ LRESULT CALLBACK QuickPreviewWindow::FindEditProc(HWND hwnd, UINT message, WPARA
 
 void QuickPreviewWindow::ShowContextMenu(POINT screen) {
     if (!text_menu_.Create(hwnd_, &compositor_, scale_)) return;
-    text_menu_.SetTheme(dark_, HexColor(0x0078D4));
+    text_menu_.SetTheme(dark_, accent_);
     // System preview handlers (video, PDF, Office) sit in a topmost overlay
     // over the content area; a plain popup would open underneath it.
     text_menu_.SetTopmost(native_kind_ == NativeKind::None);
@@ -1240,9 +1383,24 @@ void QuickPreviewWindow::ShowContextMenu(POINT screen) {
     const auto file_cmd = [](QuickPreviewAction action) {
         return kFileCmdBase + static_cast<int>(action);
     };
+    if (markdown_shown_ && !header_.tools_visible) {
+        // The header folded its view toggle into this menu.
+        const wchar_t* labels[2]{};
+        ToggleLabels(labels);
+        const bool second = ToggleSecond();
+        for (int i = 0; i < 2; ++i) {
+            FluentMenuItem item;
+            item.command = kViewCmdFirst + i;
+            item.text = labels[i];
+            item.radio_group = true;
+            item.radio = (i == 1) == second;
+            item.separator_after = i == 1;
+            items.push_back(std::move(item));
+        }
+    }
     if (archive_entry) {
         add(kArchiveCmdCopyPath, StringId::CopyPath, kLinkGlyph, L"Ctrl+Shift+C");
-        items.back().text = pulse::l10n::Pick(L"复制包内路径", L"Copy path inside archive");
+        items.back().text = pulse::l10n::Get(pulse::l10n::StringId::CopyPathInsideArchive).c_str();
     }
     if (text_kind) {
         // Text verbs keep their ids and order; file verbs follow below them.
@@ -1255,8 +1413,8 @@ void QuickPreviewWindow::ShowContextMenu(POINT screen) {
         if (line_toggle) {
             FluentMenuItem item;
             item.command = kTextCmdLineNumbers;
-            item.text = line_numbers_ ? (pulse::l10n::Pick(L"\x9690\x85CF\x884C\x53F7", L"Hide line numbers"))
-                                      : (pulse::l10n::Pick(L"\x663E\x793A\x884C\x53F7", L"Show line numbers"));
+            item.text = line_numbers_ ? (pulse::l10n::Get(pulse::l10n::StringId::HideLineNumbers).c_str())
+                                      : (pulse::l10n::Get(pulse::l10n::StringId::ShowLineNumbers).c_str());
             item.glyph = L"\xE8FD";
             item.shortcut = L"";
             item.separator_after = file_verbs;
@@ -1274,7 +1432,7 @@ void QuickPreviewWindow::ShowContextMenu(POINT screen) {
         add(file_cmd(QuickPreviewAction::ToggleStar),
             target.starred ? StringId::Unstar : StringId::Star,
             target.starred ? kStarFilledGlyph : kStarGlyph, L"", true, true);
-        if (child) items.back().text = pulse::l10n::Pick(L"切换星标", L"Toggle star");
+        if (child) items.back().text = pulse::l10n::Get(pulse::l10n::StringId::ToggleStar).c_str();
         add(file_cmd(QuickPreviewAction::Rename), StringId::Rename, kRenameGlyph, L"F2", writable);
         add(file_cmd(QuickPreviewAction::Delete), StringId::Delete, kDeleteGlyph, L"Delete",
             writable, true);
@@ -1283,7 +1441,18 @@ void QuickPreviewWindow::ShowContextMenu(POINT screen) {
     }
     if (items.empty()) return;
     const int cmd = text_menu_.TrackPopup(screen, std::move(items));
-    if (cmd == kTextCmdCopy) CopyTextSelection(true);
+    if (cmd == kViewCmdFirst || cmd == kViewCmdFirst + 1) {
+        if (menu_generation == generation_ && markdown_shown_) {
+            bool& second = ToggleSecond();
+            if ((cmd == kViewCmdFirst + 1) != second) {
+                second = cmd == kViewCmdFirst + 1;
+                selecting_ = false;
+                sel_anchor_ = sel_focus_ = 0;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
+    }
+    else if (cmd == kTextCmdCopy) CopyTextSelection(true);
     else if (cmd == kArchiveCmdCopyPath) pulse::ops::WriteClipboardText(archive_path);
     else if (cmd == kTextCmdSelectAll) SelectAllText();
     else if (cmd == kTextCmdFind) OpenFind();
@@ -1397,16 +1566,20 @@ void QuickPreviewWindow::DrawFindBar(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
 void QuickPreviewWindow::DrawTextPreview(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
                                           ID2D1SolidColorBrush* text_brush) {
     if (!text_layout_.get() || !dc) return;
+    LARGE_INTEGER text_start{};
+    QueryPerformanceCounter(&text_start);
     const float pad = 20.0f * scale_;
     const float origin_x = TextOriginX();
-    const float origin_y = content.top + pad - text_scroll_;
     DWRITE_TEXT_METRICS metrics{};
     if (SUCCEEDED(text_layout_->GetMetrics(&metrics))) {
-        // Leave room below the last line for the status pill (DrawTextStatus).
-        const float view = (std::max)(1.0f, content.bottom - content.top - pad - 40.0f * scale_);
+        // A little room below the last line.
+        const float view = (std::max)(1.0f, content.bottom - content.top - pad - HexRulerHeight() -
+                                                8.0f * scale_);
         const float max_scroll = (std::max)(0.0f, metrics.height - view);
         text_scroll_ = std::clamp(text_scroll_, 0.0f, max_scroll);
     }
+    // After the clamp: End and wheel overshoot must not draw one frame past the end.
+    const float origin_y = content.top + pad + HexRulerHeight() - text_scroll_;
     if (find_open_ && !find_query_.empty() && !find_matches_.empty()) {
         ComPtr<ID2D1SolidColorBrush> match_brush;
         ComPtr<ID2D1SolidColorBrush> current_brush;
@@ -1425,24 +1598,110 @@ void QuickPreviewWindow::DrawTextPreview(ID2D1DeviceContext* dc, const D2D1_RECT
         dc->CreateSolidColorBrush(D2D1::ColorF(0x0078D4, 0.35f), &sel);
         FillHitRange(dc, text_layout_.get(), a, b - a, origin_x, origin_y, sel.get());
     }
+    if (text_layout_hex_) {
+        // The clicked byte and the byte under the pointer, lit in both the hex
+        // and the character column.
+        const auto light = [&](int byte, float alpha) {
+            if (byte < 0) return;
+            ComPtr<ID2D1SolidColorBrush> tint_brush;
+            D2D1_COLOR_F tint = Palette().accent;
+            tint.a = alpha;
+            dc->CreateSolidColorBrush(tint, &tint_brush);
+            const uint32_t line = static_cast<uint32_t>(byte) / 16u * 76u;
+            const uint32_t column = static_cast<uint32_t>(byte) % 16u;
+            FillHitRange(dc, text_layout_.get(), line + 10u + column * 3u, 2u, origin_x, origin_y, tint_brush.get());
+            FillHitRange(dc, text_layout_.get(), line + 59u + column, 1u, origin_x, origin_y, tint_brush.get());
+        };
+        light(hex_selected_, dark_ ? 0.45f : 0.32f);
+        if (hex_hover_ != hex_selected_) light(hex_hover_, dark_ ? 0.26f : 0.16f);
+    }
     DrawLineNumbers(dc, content, origin_y);
     dc->DrawTextLayout(D2D1::Point2F(origin_x, origin_y), text_layout_.get(), text_brush,
                        D2D1_DRAW_TEXT_OPTIONS_CLIP | D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+    if (text_layout_hex_) DrawHexRuler(dc, content, origin_x);
+    LARGE_INTEGER now{}, freq{};
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    last_text_ms_ = static_cast<double>(now.QuadPart - text_start.QuadPart) * 1000.0 /
+                    static_cast<double>(freq.QuadPart);
 }
 
-// Status pill centred at the bottom of the text view, as in the preview mockup:
+// Hex dump lines are fixed at 76 characters: an 8-digit offset and two
+// spaces, 16 "XX " cells, a space, 16 characters and the line feed.
+int QuickPreviewWindow::HexByteAt(uint32_t index) const noexcept {
+    if (index >= preview_text_.size()) return -1;
+    const uint32_t line = index / 76u, c = index % 76u;
+    uint32_t column = 0;
+    if (c >= 10u && c < 58u) column = (c - 10u) / 3u;
+    else if (c >= 59u && c < 75u) column = c - 59u;
+    else return -1;
+    const size_t cell = static_cast<size_t>(line) * 76u + 10u + column * 3u;
+    if (cell >= preview_text_.size() || preview_text_[cell] == L' ') return -1;
+    return static_cast<int>(line * 16u + column);
+}
+
+void QuickPreviewWindow::DrawHexRuler(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
+                                      float origin_x) {
+    if (!dc || !preview_text_format_.get() || !compositor_.DwriteFactory()) return;
+    const ChromePalette palette = Palette();
+    const float s = scale_;
+    const float band = content.top + 20.0f * s + HexRulerHeight() - 6.0f * s;
+    ComPtr<ID2D1SolidColorBrush> bg, ink, line;
+    dc->CreateSolidColorBrush(palette.bg, &bg);
+    dc->CreateSolidColorBrush(palette.ink3, &ink);
+    dc->CreateSolidColorBrush(palette.line, &line);
+    if (!bg.get() || !ink.get()) return;
+    dc->FillRectangle(D2D1::RectF(content.left, content.top, content.right, band), bg.get());
+    if (line.get())
+        dc->FillRectangle(D2D1::RectF(content.left, band - (std::max)(1.0f, std::round(s)), content.right, band),
+                          line.get());
+    // Column ruler: 00..0F over the cells and 0..F over the characters, with
+    // the hovered column drawn in full ink.
+    std::wstring ruler(10, L' ');
+    static constexpr wchar_t kDigits[] = L"0123456789ABCDEF";
+    for (int i = 0; i < 16; ++i) { ruler += L'0'; ruler += kDigits[i]; ruler += L' '; }
+    ruler += L' ';
+    ruler += kDigits;
+    ComPtr<IDWriteTextLayout> layout;
+    preview_text_format_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    compositor_.DwriteFactory()->CreateTextLayout(ruler.data(), static_cast<UINT32>(ruler.size()),
+        preview_text_format_.get(), 10000.0f, 100.0f, &layout);
+    preview_text_format_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+    if (!layout.get()) return;
+    if (HexFocus() >= 0) {
+        ComPtr<ID2D1SolidColorBrush> strong;
+        dc->CreateSolidColorBrush(palette.ink, &strong);
+        const UINT32 column = static_cast<UINT32>(HexFocus() % 16);
+        if (strong.get()) {
+            layout->SetDrawingEffect(strong.get(), DWRITE_TEXT_RANGE{10u + column * 3u, 2u});
+            layout->SetDrawingEffect(strong.get(), DWRITE_TEXT_RANGE{59u + column, 1u});
+        }
+    }
+    dc->DrawTextLayout(D2D1::Point2F(origin_x, band - 4.0f * s - 18.0f * s), layout.get(), ink.get(),
+                       D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
+// Footer facts of the text view:
 //   C++  |  UTF-8  |  245 lines \x00B7 8.4 KB
-void QuickPreviewWindow::DrawTextStatus(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
-                                        bool hex, uint32_t bytes_read, bool truncated,
-                                        uint32_t encoding, ID2D1SolidColorBrush* text_brush) {
-    IDWriteTextFormat* format = compositor_.SmallFormat();
-    if (!dc || !format || !compositor_.DwriteFactory()) return;
+// CSV: kind, delimiter and encoding, shape. Workbooks: format, sheet, shape, size.
+void QuickPreviewWindow::SetTableFooter(uint32_t encoding) {
+    std::vector<std::wstring> parts = table_.StatusParts(encoding);
+    if (parts.empty()) return;
+    if (table_.IsSpreadsheet()) {
+        parts.insert(parts.begin(), ExtensionLabel(item_.path));
+        if (item_.size) parts.push_back(pulse::format::ByteSize(item_.size, true));
+    }
+    SetFooterParts(std::move(parts));
+}
+
+void QuickPreviewWindow::SetTextFooter(bool hex, uint32_t bytes_read, bool truncated,
+                                       uint32_t encoding, bool show_eol) {
     std::vector<std::wstring> parts;
     if (hex) {
-        parts.push_back(pulse::l10n::Pick(L"\x5341\x516D\x8FDB\x5236", L"Hex"));
+        parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::Hex).c_str());
     } else {
         parts.push_back(!syntax_language_.empty() ? syntax_language_
-                                                  : std::wstring(pulse::l10n::Pick(L"\x7EAF\x6587\x672C", L"Plain text")));
+                                                  : std::wstring(pulse::l10n::Get(pulse::l10n::StringId::PlainText).c_str()));
         std::wstring name;
         switch (static_cast<ipc::PreviewTextEncoding>(encoding)) {
         case ipc::PreviewTextEncoding::Utf8: name = L"UTF-8"; break;
@@ -1462,58 +1721,43 @@ void QuickPreviewWindow::DrawTextStatus(ID2D1DeviceContext* dc, const D2D1_RECT_
         default: break;
         }
         if (!name.empty()) parts.push_back(std::move(name));
+        switch (show_eol ? text_eol_ : 0) {
+        case 1: parts.push_back(L"LF"); break;
+        case 2: parts.push_back(L"CRLF"); break;
+        case 3: parts.push_back(L"CR"); break;
+        case 4: parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::PreviewMixedEol).c_str()); break;
+        default: break;
+        }
     }
-    std::wstring size = hex ? std::wstring() : std::to_wstring(text_line_count_) +
-        (pulse::l10n::Pick(L" \x884C \x00B7 ", L" lines \x00B7 "));
-    size += pulse::format::ByteSize(bytes_read, true);
-    if (truncated) size += pulse::l10n::Pick(L" \x00B7 \x5DF2\x622A\x65AD", L" \x00B7 truncated");
-    parts.push_back(std::move(size));
-    DrawStatusPill(dc, content, parts, text_brush);
-}
-
-void QuickPreviewWindow::DrawStatusPill(ID2D1DeviceContext* dc, const D2D1_RECT_F& content,
-                                        const std::vector<std::wstring>& parts,
-                                        ID2D1SolidColorBrush* text_brush) {
-    IDWriteTextFormat* format = compositor_.SmallFormat();
-    if (!dc || !format || !compositor_.DwriteFactory() || parts.empty()) return;
-    std::wstring label;
-    std::vector<UINT32> separators;
-    for (size_t i = 0; i < parts.size(); ++i) {
-        if (i) { separators.push_back(static_cast<UINT32>(label.size() + 2)); label += L"   |   "; }
-        label += parts[i];
+    // The catalog strings carry their own " · " joints; the footer adds its own.
+    const auto bare = [](std::wstring text) {
+        const auto joint = [](wchar_t c) { return c == L' ' || c == 0x00B7; };
+        while (!text.empty() && joint(text.back())) text.pop_back();
+        size_t start = 0;
+        while (start < text.size() && joint(text[start])) ++start;
+        return text.substr(start);
+    };
+    if (!hex)
+        parts.push_back(std::to_wstring(text_line_count_) + L" " +
+                        bare(pulse::l10n::Get(pulse::l10n::StringId::Lines).c_str()));
+    parts.push_back(pulse::format::ByteSize(bytes_read, true));
+    if (truncated) parts.push_back(bare(pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str()));
+    if (const int focus = HexFocus(); hex && focus >= 0) {
+        // 0x0000001F = 0x41 'A'
+        const size_t cell = static_cast<size_t>(focus) / 16u * 76u + 10u +
+                            static_cast<size_t>(focus % 16) * 3u;
+        if (cell + 1 < preview_text_.size()) {
+            const wchar_t ascii = preview_text_[static_cast<size_t>(focus) / 16u * 76u + 59u +
+                                                static_cast<size_t>(focus % 16)];
+            wchar_t buffer[64];
+            swprintf_s(buffer, L"0x%08X = 0x%c%c", static_cast<unsigned>(focus),
+                       preview_text_[cell], preview_text_[cell + 1]);
+            std::wstring part = buffer;
+            if (ascii != L'.') { part += L" '"; part += ascii; part += L"'"; }
+            parts.push_back(std::move(part));
+        }
     }
-    const auto text_alignment = format->GetTextAlignment();
-    const auto paragraph_alignment = format->GetParagraphAlignment();
-    format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-    ComPtr<IDWriteTextLayout> layout;
-    compositor_.DwriteFactory()->CreateTextLayout(label.data(), static_cast<UINT32>(label.size()),
-        format, 4000.0f, 100.0f, &layout);
-    format->SetTextAlignment(text_alignment);
-    format->SetParagraphAlignment(paragraph_alignment);
-    if (!layout.get()) return;
-    layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    ComPtr<ID2D1SolidColorBrush> dim, fill, line;
-    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x777777) : D2D1::ColorF(0xA0A0A0), &dim);
-    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x2B2B2B, 0.94f) : D2D1::ColorF(0xFFFFFF, 0.96f), &fill);
-    dc->CreateSolidColorBrush(dark_ ? D2D1::ColorF(0x454545) : D2D1::ColorF(0xD0D0D0), &line);
-    if (dim.get())
-        for (const UINT32 at : separators) layout->SetDrawingEffect(dim.get(), DWRITE_TEXT_RANGE{at + 1, 1});
-    DWRITE_TEXT_METRICS metrics{};
-    if (FAILED(layout->GetMetrics(&metrics))) return;
-    const float pill_h = 26.0f * scale_;
-    const float pill_w = (std::min)(metrics.width + 28.0f * scale_, content.right - content.left - 16.0f * scale_);
-    const float cx = (content.left + content.right) * 0.5f;
-    const D2D1_RECT_F pill = D2D1::RectF(cx - pill_w * 0.5f, content.bottom - pill_h - 10.0f * scale_,
-                                         cx + pill_w * 0.5f, content.bottom - 10.0f * scale_);
-    const auto rounded = D2D1::RoundedRect(pill, pill_h * 0.5f, pill_h * 0.5f);
-    if (fill.get()) dc->FillRoundedRectangle(rounded, fill.get());
-    if (line.get()) dc->DrawRoundedRectangle(rounded, line.get(), 1.0f);
-    dc->PushAxisAlignedClip(pill, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    dc->DrawTextLayout(D2D1::Point2F(cx - metrics.width * 0.5f,
-                                     (pill.top + pill.bottom) * 0.5f - metrics.height * 0.5f),
-                       layout.get(), text_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    dc->PopAxisAlignedClip();
+    SetFooterParts(std::move(parts));
 }
 
 // Enter / double-click on a row of a folder listing opens that item.
@@ -1535,6 +1779,7 @@ bool QuickPreviewWindow::OpenListingSelection() {
 }
 
 float QuickPreviewWindow::TextOriginX() const noexcept {
+    if (text_layout_reading_) return text_reading_x_;
     return 20.0f * scale_ + text_gutter_;
 }
 
@@ -1586,7 +1831,9 @@ bool QuickPreviewWindow::ClientPoint(LPARAM lparam, POINT& out) const {
 }
 
 HCURSOR QuickPreviewWindow::ContentCursor(POINT client) const {
-    if (OverCodecButton(client)) return LoadCursorW(nullptr, IDC_HAND);
+    if (OverCodecButton(client) || HitFooterControl(client) != 0) return LoadCursorW(nullptr, IDC_HAND);
+    if (client.y < static_cast<LONG>(HeaderHeight()) || client.y >= static_cast<LONG>(FooterRect().top))
+        return LoadCursorW(nullptr, IDC_ARROW);
     if (HasPlayback() && client.y >= PlaybackRect().top)
         return LoadCursorW(nullptr, IDC_HAND);
     if (find_open_ && FindBarHeight() > 0.0f) {
@@ -1617,42 +1864,6 @@ HCURSOR QuickPreviewWindow::ContentCursor(POINT client) const {
     return LoadCursorW(nullptr, IDC_ARROW);
 }
 
-void QuickPreviewWindow::DrawChromeButtons(ID2D1DeviceContext* dc,
-                                           ID2D1SolidColorBrush* text_brush) {
-    if (!dc || !text_brush) return;
-    ComPtr<ID2D1SolidColorBrush> hover_brush;
-    D2D1_COLOR_F hover_color = text_brush->GetColor();
-    hover_color.a = dark_ ? 0.10f : 0.08f;
-    dc->CreateSolidColorBrush(hover_color, &hover_brush);
-    struct Spec {
-        ChromeButton button;
-        const wchar_t* glyph;
-    };
-    const Spec specs[] = {
-        {ChromeButton::Prev, kPrevGlyph},
-        {ChromeButton::Next, kNextGlyph},
-        {ChromeButton::More, kMoreGlyph},
-    };
-    const float inset_x = 3.0f * scale_;
-    const float inset_y = 6.0f * scale_;
-    const float radius = 4.0f * scale_;
-    for (const Spec& spec : specs) {
-        const D2D1_RECT_F rect = ChromeButtonRect(spec.button);
-        if (chrome_hover_ == spec.button && hover_brush.get()) {
-            const D2D1_ROUNDED_RECT pill{
-                D2D1::RectF(rect.left + inset_x, rect.top + inset_y,
-                            rect.right - inset_x, rect.bottom - inset_y),
-                radius, radius};
-            dc->FillRoundedRectangle(pill, hover_brush.get());
-        }
-        if (!DrawLegacyIcon(dc, compositor_.DwriteFactory(), spec.glyph, rect, text_brush))
-            dc->DrawTextW(spec.glyph, 1,
-                      close_format_.get() ? close_format_.get() : compositor_.IconFormat(), rect,
-                      text_brush, D2D1_DRAW_TEXT_OPTIONS_CLIP,
-                      DWRITE_MEASURING_MODE_NATURAL);
-    }
-}
-
 void QuickPreviewWindow::SchedulePreviewDeadline() {
     uint64_t deadline = thumbnails_.TakeRetryDeadline();
     const auto handler = handler_.NextDeadline();
@@ -1671,6 +1882,8 @@ void QuickPreviewWindow::SchedulePreviewDeadline() {
 }
 
 void QuickPreviewWindow::Render() {
+    LARGE_INTEGER render_start{};
+    QueryPerformanceCounter(&render_start);
     thumbnails_.BeginFrame();
     if (!compositor_.Dc()) return;
     if (compositor_.NeedsRecovery()) {
@@ -1678,21 +1891,16 @@ void QuickPreviewWindow::Render() {
         compositor_.RecreateTextFormats(scale_);
         RecreateFormats();
         thumbnails_.SetDeviceContext(compositor_.Dc());
+        open_icons_.SetDeviceContext(compositor_.Dc());
     }
     Resize();
     auto* dc = compositor_.Dc();
     dc->BeginDraw();
-    const bool high_contrast = [] {
-        HIGHCONTRASTW value{sizeof(value)};
-        return SystemParametersInfoW(SPI_GETHIGHCONTRAST, sizeof(value), &value, 0) &&
-            (value.dwFlags & HCF_HIGHCONTRASTON);
-    }();
-    const D2D1_COLOR_F background = high_contrast
-        ? D2D1::ColorF(GetSysColor(COLOR_WINDOW))
-        : dark_ ? D2D1::ColorF(0x151515) : D2D1::ColorF(0xF7F7F7);
-    const D2D1_COLOR_F foreground = high_contrast
-        ? D2D1::ColorF(GetSysColor(COLOR_WINDOWTEXT))
-        : dark_ ? D2D1::ColorF(0xF4F4F4) : D2D1::ColorF(0x202020);
+    const ChromePalette palette = Palette();
+    const bool high_contrast = palette.high_contrast;
+    // System colours are COLORREFs (0x00BBGGRR): Palette() converts them.
+    const D2D1_COLOR_F background = palette.bg;
+    const D2D1_COLOR_F foreground = palette.ink;
     const D2D1_COLOR_F secondary = high_contrast ? foreground
         : dark_ ? D2D1::ColorF(0xB8B8B8) : D2D1::ColorF(0x606060);
     dc->Clear(background);
@@ -1703,36 +1911,37 @@ void QuickPreviewWindow::Render() {
     const float width = static_cast<float>(compositor_.Width());
     const float height = static_cast<float>(compositor_.Height());
     const float pad = 20.0f * scale_;
-    const float header = kTitleBarHeight * scale_;
-    const D2D1_RECT_F title_rect = typography::SnapVerticalBounds(D2D1::RectF(
-        pad, 8.0f * scale_,
-        markdown_shown_ ? MarkdownToggleRect(-1).left - 8.0f * scale_
-                        : width - (kCloseButtonWidth + kChromeButtonWidth * 3.0f + 8.0f) * scale_,
-        header));
-    dc->DrawTextW(item_.name.data(), static_cast<UINT32>(item_.name.size()),
-                  compositor_.HeaderFormat(), title_rect, text_brush.get(),
-                  D2D1_DRAW_TEXT_OPTIONS_CLIP, DWRITE_MEASURING_MODE_NATURAL);
-    const D2D1_RECT_F close_rect = D2D1::RectF(width - kCloseButtonWidth * scale_, 0,
-                                               width, header);
-    if (close_hover_) {
-        ComPtr<ID2D1SolidColorBrush> close_background;
-        dc->CreateSolidColorBrush(D2D1::ColorF(0xC42B1C), &close_background);
-        dc->FillRectangle(close_rect, close_background.get());
-    }
-    ComPtr<ID2D1SolidColorBrush> close_brush;
-    dc->CreateSolidColorBrush(close_hover_ ? D2D1::ColorF(0xFFFFFF) : foreground,
-                              &close_brush);
-    static constexpr wchar_t close_glyph[] = L"\xE711";
-    if (!DrawLegacyIcon(dc, compositor_.DwriteFactory(), close_glyph, close_rect, close_brush.get()))
-        dc->DrawTextW(close_glyph, 1,
-                  close_format_.get() ? close_format_.get() : compositor_.IconFormat(), close_rect,
-                  close_brush.get(), D2D1_DRAW_TEXT_OPTIONS_CLIP,
-                  DWRITE_MEASURING_MODE_NATURAL);
-    DrawChromeButtons(dc, text_brush.get());
+    const float header = HeaderHeight();
+    footer_parts_.clear();
+    footer_hint_.clear();
+    footer_controls_.clear();
     const D2D1_RECT_F notice_rect = D2D1::RectF(0, header + FindBarHeight(), width, height);
     preview_notice_height_ = DrawPreviewNotice(dc, compositor_.DwriteFactory(), compositor_.SmallFormat(),
         preview_notice_, notice_rect, scale_, CurrentTheme().text, CurrentTheme().fill_hover);
-    const D2D1_RECT_F full_content = D2D1::RectF(0, header, width, height);
+    const D2D1_RECT_F full_content = D2D1::RectF(0, header, width, (std::max)(header, height - FooterHeight()));
+    // Prev / next: the new item's content slides 36 px in from its side and
+    // fades in (160 ms). Preview handler windows stay put.
+    float nav_dx = 0.0f, nav_alpha = 1.0f;
+    if (nav_dir_ != 0) {
+        const float t = static_cast<float>(motion::NowMs() - nav_start_);
+        if (t >= static_cast<float>(motion::SpringSettleMs(motion::spring::Smooth))) {
+            nav_dir_ = 0;
+        } else {
+            const float p = motion::SpringProgress(motion::spring::Smooth, t);
+            nav_dx = std::round(36.0f * scale_ * static_cast<float>(nav_dir_) * (1.0f - p));
+            nav_alpha = (std::clamp)(t / 160.0f, 0.0f, 1.0f);
+        }
+    }
+    const bool nav_layer = nav_dx != 0.0f || nav_alpha < 1.0f;
+    D2D1_MATRIX_3X2_F nav_saved{};
+    if (nav_layer) {
+        dc->GetTransform(&nav_saved);
+        dc->SetTransform(D2D1::Matrix3x2F::Translation(nav_dx, 0.0f) *
+                         *D2D1::Matrix3x2F::ReinterpretBaseType(&nav_saved));
+        dc->PushLayer(D2D1::LayerParameters1(D2D1::InfiniteRect(), nullptr,
+                                             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
+                                             nav_alpha, nullptr, D2D1_LAYER_OPTIONS1_NONE), nullptr);
+    }
     const bool offline = OfflinePlaceholder();
     const bool use_handler = !offline && !safe_mode_ && !video_.active() &&
         !(item_.attrs & FILE_ATTRIBUTE_DIRECTORY) && PreviewHandlerHost::CanHost(item_.path) &&
@@ -1754,27 +1963,51 @@ void QuickPreviewWindow::Render() {
         markdown_shown_ = true;
         toggle_kind_ = ToggleKind::DocHandler;
     }
-    codec_store_rect_ = codec_open_rect_ = codec_pack_rect_ = D2D1_RECT_F{};
+    codec_store_rect_ = codec_open_rect_ = codec_pack_rect_ = cloud_download_rect_ = D2D1_RECT_F{};
     std::wstring status;
     if (offline) {
         native_kind_ = NativeKind::None;
-        status = pulse::l10n::Get(pulse::l10n::StringId::PreviewCloudOnly);
+        if (!DrawCloudCard(dc, ContentRect(), text_brush.get()))
+            status = pulse::l10n::Get(pulse::l10n::StringId::PreviewCloudOnly);
     } else if (video_.active()) {
         native_kind_ = NativeKind::None;
         const auto video = video_.Snapshot();
         const bool audio = VideoPreview::IsAudio(item_.path);
         const bool codec_card = CodecCardVisible(video);
-        LayoutVideo(dc, video, !audio && !codec_card && video.ready && SUCCEEDED(video.error) &&
-                                   visible());
+        const bool picture = !audio && !codec_card && video.ready && SUCCEEDED(video.error);
+        if (picture && !high_contrast) {
+            // Video sits on black, transport bar included.
+            ComPtr<ID2D1SolidColorBrush> black;
+            dc->CreateSolidColorBrush(D2D1::ColorF(0x000000), &black);
+            if (black.get())
+                dc->FillRectangle(D2D1::RectF(0, ContentRect().top, width, PlaybackRect().bottom), black.get());
+        }
+        LayoutVideo(dc, video, picture && visible());
         if (codec_card) DrawCodecCard(dc, ContentRect(), video, text_brush.get());
         if (audio && SUCCEEDED(video.error))
             DrawAudio(dc, video, text_brush.get(), secondary_brush.get());
+        else if (!audio) {
+            // Codec · size · length, then the frame rate; the decoder on the right.
+            std::vector<PreviewProperty> properties;
+            std::vector<std::wstring> facts;
+            thumbnails_.Properties(item_.path, item_.attrs, generation_, item_.modified, item_.size,
+                                   properties);
+            VideoPreview::State shown = video;
+            for (const PreviewProperty& property : properties) {
+                if (property.value.empty()) continue;
+                if (property.label == L"帧率") facts.push_back(property.value);
+                else if (property.label == L"编码格式" && shown.codec_name.empty()) shown.codec_name = property.value;
+            }
+            SetMediaFooter(shown, std::move(facts));
+            if (video.ready && SUCCEEDED(video.error))
+                footer_hint_ = pulse::l10n::Get(video.ffmpeg ? pulse::l10n::StringId::PreviewDecodeFfmpeg
+                                                             : pulse::l10n::StringId::PreviewDecodeSystem);
+        }
         if (codec_card) {
             // The card explains the missing picture.
         } else if (FAILED(video.error))
             status = video.unsupported_audio
-                ? l10n::HantText(l10n::Pick(L"系统无法解码此音频，请用默认应用打开。",
-                                          L"Windows cannot decode this audio. Open it in the default app."))
+                ? l10n::HantText(l10n::Get(l10n::StringId::WindowsCannotDecodeThisAudioOpenItInTheDefaultApp).c_str())
                 : pulse::l10n::Get(pulse::l10n::StringId::PreviewCannotRender);
         else if (!video.ready && !audio)
             status = pulse::l10n::Get(pulse::l10n::StringId::PreviewLoading);
@@ -1786,10 +2019,9 @@ void QuickPreviewWindow::Render() {
             status = pulse::l10n::Get(pulse::l10n::StringId::PreviewLoading);
         else if (state == PreviewHandlerHost::State::Failed)
             status = pulse::l10n::Get(pulse::l10n::StringId::PreviewHostUnavailable);
-        if (markdown_shown_) DrawMarkdownToggle(dc, text_brush.get());
     } else if (pages_count_ > 1) {
         native_kind_ = NativeKind::Pages;
-        DrawPages(dc, text_brush.get(), secondary_brush.get());
+        DrawPages(dc, secondary_brush.get());
     } else {
         std::wstring text;
         std::wstring error;
@@ -1814,6 +2046,8 @@ void QuickPreviewWindow::Render() {
         }
         const bool icon_unsized = icon && image_fit_ && (!decoded_w_ || !decoded_h_);
         dc->PushAxisAlignedClip(content, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        const bool backdrop = !icon && !folder && image_item_ && pages_count_ <= 1 &&
+                              DrawImageBackdrop(dc, content, draw);
         if (table_.TakePendingSheetRequest(sheet_request_)) {
             preview_text_.clear();
             find_matches_.clear();
@@ -1834,12 +2068,27 @@ void QuickPreviewWindow::Render() {
                                                       (std::min)(y + step, draw.bottom)), cell.get());
         }
         auto draw_at = [&](uint32_t pixels, uint32_t frame) {
-            return thumbnails_.Draw(dc, draw, item_.path, item_.attrs, pixels,
+            // A turned picture draws upright into the unturned box, under a rotation.
+            D2D1_RECT_F box = draw;
+            D2D1_MATRIX_3X2_F saved{};
+            const bool turned = image_turns_ != 0 && !icon && image_item_;
+            if (turned) {
+                dc->GetTransform(&saved);
+                const D2D1_POINT_2F c = D2D1::Point2F((draw.left + draw.right) * 0.5f, (draw.top + draw.bottom) * 0.5f);
+                if (image_turns_ & 1) {
+                    const float hw = (draw.bottom - draw.top) * 0.5f, hh = (draw.right - draw.left) * 0.5f;
+                    box = D2D1::RectF(c.x - hw, c.y - hh, c.x + hw, c.y + hh);
+                }
+                dc->SetTransform(D2D1::Matrix3x2F::Rotation(90.0f * static_cast<float>(image_turns_), c) * saved);
+            }
+            const PreviewDrawResult drawn = thumbnails_.Draw(dc, box, item_.path, item_.attrs, pixels,
                 generation_, item_.modified, item_.size, 1.0f, &text, &truncated,
                 &bytes_read, true, &error, nullptr, nullptr, nullptr, nullptr,
                 frame, &reported_frame_count, &reported_delay_ms, &reported_loop_count,
                 &decoded_w_, &decoded_h_, &source_w_, &source_h_, nullptr, &text_encoding,
                 false, nullptr, nullptr, &integrity);
+            if (turned) dc->SetTransform(saved);
+            return drawn;
         };
         PreviewDrawResult result = draw_at(want, requested);
         if (result == PreviewDrawResult::Pending && preview_pixels_ != 0 &&
@@ -1921,16 +2170,21 @@ void QuickPreviewWindow::Render() {
         }
         if (result == PreviewDrawResult::Bitmap) {
             native_kind_ = NativeKind::Bitmap;
-            DrawHud(dc, content, text_brush.get());
+            SetImageFooter(content);
+            // The first decoded frame tells the backdrop where (and whether) to draw.
+            if (!backdrop && !icon && image_item_ && ImageBackdropWanted())
+                InvalidateRect(hwnd_, nullptr, FALSE);
             if (icon) {
                 ParseIconSizes(text);
                 DrawIconSizes(dc, content, text_brush.get());
                 if (icon_unsized) InvalidateRect(hwnd_, nullptr, FALSE);  // lay out at the real size
             }
         } else if (result == PreviewDrawResult::Archive &&
-                   archive_.SetPayload(text, item_.name, item_.size)) {
+                   archive_.SetPayload(text, PreviewCardName(item_), item_.size)) {
             native_kind_ = NativeKind::Archive;
             archive_.Draw(dc, &compositor_, content, CurrentTheme(), scale_, true);
+            SetFooterParts(archive_.StatusParts());
+            footer_hint_ = archive_.Hint();
         } else if (result == PreviewDrawResult::Markdown && markdown_.SetPayload(text, item_.path) &&
                    (!markdown_.DocFormat().empty() ||
                     !(markdown_.IsNotebook() ? notebook_source_ : markdown_source_))) {
@@ -1952,6 +2206,10 @@ void QuickPreviewWindow::Render() {
             for (size_t i = 0; i < find_matches_.size(); ++i)
                 marks.push_back({find_matches_[i], static_cast<uint32_t>(find_query_.size()),
                                  i == find_index_});
+            markdown_.SetTocHidden(toc_hidden_);
+            if (markdown_.HasToc() && content.right - content.left >= 640.0f * scale_)
+                AddFooterControl(kFooterToc, pulse::l10n::Get(toc_hidden_
+                    ? pulse::l10n::StringId::PreviewShowToc : pulse::l10n::StringId::PreviewHideToc).c_str());
             if (markdown_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_,
                                scale_, &thumbnails_, generation_,
                                (std::min)(sel_anchor_, sel_focus_),
@@ -1964,22 +2222,22 @@ void QuickPreviewWindow::Render() {
                                     ? std::wstring(L"Jupyter")
                                     : L"Jupyter \x00B7 " + markdown_.NotebookKernel());
                 parts.push_back(std::to_wstring(markdown_.NotebookCells()) +
-                                (pulse::l10n::Pick(L" \x4E2A\x5355\x5143\x683C", L" cells")));
+                                (pulse::l10n::Get(pulse::l10n::StringId::Cells).c_str()));
                 std::wstring size = pulse::format::ByteSize(bytes_read, true);
-                if (truncated) size += pulse::l10n::Pick(L" \x00B7 \x5DF2\x622A\x65AD", L" \x00B7 truncated");
+                if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
                 parts.push_back(std::move(size));
-                DrawStatusPill(dc, content, parts, text_brush.get());
+                SetFooterParts(std::move(parts));
             } else if (markdown_.DocFormat() == L"docx") {
                 // Word 文档  |  约 1,240 字  |  38 KB
                 const bool zh = pulse::l10n::IsChinese();
                 std::vector<std::wstring> parts;
-                parts.push_back(pulse::l10n::Pick(L"Word \x6587\x6863", L"Word document"));
+                parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::WordDocument).c_str());
                 const std::wstring words = GroupedNumber(markdown_.WordCount());
                 parts.push_back(zh ? pulse::l10n::Cn(L"\x7EA6 ") + words + pulse::l10n::Cn(L" \x5B57") : L"about " + words + L" words");
                 std::wstring size = pulse::format::ByteSize(item_.size ? item_.size : bytes_read, true);
-                if (truncated) size += pulse::l10n::Pick(L" \x00B7 \x5DF2\x622A\x65AD", L" \x00B7 truncated");
+                if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
                 parts.push_back(std::move(size));
-                DrawStatusPill(dc, content, parts, text_brush.get());
+                SetFooterParts(std::move(parts));
             } else if (markdown_.DocFormat() == L"epub") {
                 // EPUB  |  第 1 / 27 章  |  author
                 const bool zh = pulse::l10n::IsChinese();
@@ -1991,8 +2249,27 @@ void QuickPreviewWindow::Render() {
                 std::wstring who = markdown_.DocAuthor();
                 if (who.size() > 40) who = who.substr(0, 39) + L"\x2026";
                 if (!who.empty()) parts.push_back(std::move(who));
-                if (truncated) parts.push_back(pulse::l10n::Pick(L"\x5DF2\x622A\x65AD", L"truncated"));
-                DrawStatusPill(dc, content, parts, text_brush.get());
+                if (truncated) parts.push_back(pulse::l10n::Get(pulse::l10n::StringId::Truncated_2).c_str());
+                SetFooterParts(std::move(parts));
+            } else if (markdown_.DocFormat().empty()) {
+                // Markdown  |  12 个标题  |  约 3,400 字  |  14 KB
+                std::vector<std::wstring> parts;
+                parts.push_back(L"Markdown");
+                wchar_t buffer[96];
+                if (markdown_.HeadingCount()) {
+                    swprintf_s(buffer, pulse::l10n::Get(pulse::l10n::StringId::PreviewHeadings).c_str(),
+                               markdown_.HeadingCount());
+                    parts.push_back(buffer);
+                }
+                if (markdown_.WordCount()) {
+                    swprintf_s(buffer, pulse::l10n::Get(pulse::l10n::StringId::PreviewAboutWords).c_str(),
+                               GroupedNumber(markdown_.WordCount()).c_str());
+                    parts.push_back(buffer);
+                }
+                std::wstring size = pulse::format::ByteSize(item_.size ? item_.size : bytes_read, true);
+                if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
+                parts.push_back(std::move(size));
+                SetFooterParts(std::move(parts));
             }
         } else if (result == PreviewDrawResult::Markdown && markdown_.SetPayload(text, item_.path)) {
             // Source mode: the highlighted text view with its status pill.
@@ -2006,8 +2283,7 @@ void QuickPreviewWindow::Render() {
                 if (find_open_) UpdateFindMatches();
             }
             DrawTextPreview(dc, content, text_brush.get());
-            DrawTextStatus(dc, content, false, bytes_read, truncated, text_encoding,
-                           text_brush.get());
+            SetTextFooter(false, bytes_read, truncated, text_encoding);
         } else if (result == PreviewDrawResult::Table && table_.SetPayload(text)) {
             const bool sheet = table_.IsSpreadsheet();
             if (kTableView && (!sheet || PreviewHandlerHost::CanHost(item_.path))) {
@@ -2024,8 +2300,7 @@ void QuickPreviewWindow::Render() {
                     if (find_open_) UpdateFindMatches();
                 }
                 DrawTextPreview(dc, content, text_brush.get());
-                DrawTextStatus(dc, content, false, bytes_read, truncated, text_encoding,
-                               text_brush.get());
+                SetTextFooter(false, bytes_read, truncated, text_encoding);
             } else {
                 native_kind_ = NativeKind::Table;
                 if (preview_text_ != table_.PlainText()) {
@@ -2039,10 +2314,10 @@ void QuickPreviewWindow::Render() {
                 for (size_t i = 0; i < find_matches_.size(); ++i)
                     marks.push_back({find_matches_[i], static_cast<uint32_t>(find_query_.size()),
                                      i == find_index_});
+                table_.SetFooterTabs(true);
                 table_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_,
                             background, marks);
-                const auto parts = table_.StatusParts(text_encoding);
-                if (!parts.empty()) DrawStatusPill(dc, content, parts, text_brush.get());
+                SetTableFooter(text_encoding);
             }
         } else if (result == PreviewDrawResult::Tree && tree_.SetPayload(text)) {
             // The Tree | Source pill only when there is a tree to go back to.
@@ -2063,10 +2338,9 @@ void QuickPreviewWindow::Render() {
                     parts.push_back(tree_.IsXml() ? L"XML" : L"JSON");
                     parts.push_back(tree_.ErrorText());
                     parts.push_back(pulse::format::ByteSize(bytes_read, true));
-                    DrawStatusPill(dc, content, parts, text_brush.get());
+                    SetFooterParts(std::move(parts));
                 } else {
-                    DrawTextStatus(dc, content, false, bytes_read, truncated, text_encoding,
-                                   text_brush.get());
+                    SetTextFooter(false, bytes_read, truncated, text_encoding);
                 }
             } else {
                 native_kind_ = NativeKind::Tree;
@@ -2082,25 +2356,43 @@ void QuickPreviewWindow::Render() {
                     marks.push_back({find_matches_[i], static_cast<uint32_t>(find_query_.size()),
                                      i == find_index_});
                 tree_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_, marks);
+                if (tree_.HasCurrent())
+                    AddFooterControl(kFooterCopyPath, pulse::l10n::Get(pulse::l10n::StringId::CopyPath).c_str());
+                AddFooterControl(kFooterFoldAll, pulse::l10n::Get(tree_.AnyCollapsed()
+                    ? pulse::l10n::StringId::PreviewExpandAll : pulse::l10n::StringId::PreviewCollapseAll).c_str());
                 auto parts = tree_.StatusParts();
                 std::wstring size = pulse::format::ByteSize(bytes_read, true);
-                if (truncated) size += pulse::l10n::Pick(L" \x00B7 \x5DF2\x622A\x65AD", L" \x00B7 truncated");
+                if (truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Truncated).c_str();
                 parts.push_back(std::move(size));
-                DrawStatusPill(dc, content, parts, text_brush.get());
+                SetFooterParts(std::move(parts));
             }
         } else if (result == PreviewDrawResult::Text || result == PreviewDrawResult::Hex ||
                    result == PreviewDrawResult::Archive) {
             native_kind_ = result == PreviewDrawResult::Hex ? NativeKind::Hex : NativeKind::Text;
+            bool reading = false;
+            if (result == PreviewDrawResult::Text && PlainTextCandidate()) {
+                markdown_shown_ = true;
+                toggle_kind_ = ToggleKind::TextReading;
+                reading = !ToggleSecond();
+            }
             EnsureTextLayout(text, result == PreviewDrawResult::Hex,
-                             (std::max)(1.0f, width - pad * 2.0f));
+                             (std::max)(1.0f, width - pad * 2.0f), reading);
             DrawTextPreview(dc, content, text_brush.get());
-            DrawTextStatus(dc, content, result == PreviewDrawResult::Hex, bytes_read, truncated,
-                           text_encoding, text_brush.get());
+            SetTextFooter(result == PreviewDrawResult::Hex, bytes_read, truncated, text_encoding, true);
+            if (text_layout_reading_) {
+                static constexpr pulse::l10n::StringId kWidths[] = {
+                    pulse::l10n::StringId::PreviewWidthNarrow, pulse::l10n::StringId::PreviewWidthMedium,
+                    pulse::l10n::StringId::PreviewWidthWide};
+                AddFooterControl(kFooterReadWidth,
+                                 pulse::l10n::Get(kWidths[std::clamp(reading_width_, 0, 2)]).c_str());
+            }
         } else if (TableFileKind(item_.path) == 2 && table_.HasData() &&
                    (result == PreviewDrawResult::Pending || result == PreviewDrawResult::Failed)) {
             native_kind_ = NativeKind::Table;
             if (result == PreviewDrawResult::Failed) table_.FailPendingSheetRequest(sheet_request_);
+            table_.SetFooterTabs(true);
             table_.Draw(dc, compositor_.DwriteFactory(), content, CurrentTheme(), dark_, scale_, background, {});
+            SetTableFooter(text_encoding);
         } else if (result == PreviewDrawResult::Pending && !animation_started_) {
             native_kind_ = NativeKind::None;
             status = pulse::l10n::Get(pulse::l10n::StringId::PreviewLoading);
@@ -2118,7 +2410,6 @@ void QuickPreviewWindow::Render() {
                 : pulse::l10n::StringId::PreviewCannotRender);
         }
         dc->PopAxisAlignedClip();
-        if (markdown_shown_) DrawMarkdownToggle(dc, text_brush.get());
         if (FindBarHeight() > 0.0f) {
             DrawFindBar(dc, FindBarRect());
         }
@@ -2132,7 +2423,24 @@ void QuickPreviewWindow::Render() {
         compositor_.TextFormat()->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         compositor_.TextFormat()->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     }
+    if (nav_layer) {
+        dc->PopLayer();
+        dc->SetTransform(nav_saved);
+    }
+    // The shell stays put while the content slides.
+    LayoutHeader();
+    DrawInfoDrawer(dc, palette);
+    DrawHeader(dc, palette);
+    DrawFooter(dc, palette);
     SchedulePreviewDeadline();
+    {
+        // Frame building only; EndDraw's flush and Present wait on the GPU and vsync.
+        LARGE_INTEGER now{}, freq{};
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&freq);
+        last_render_ms_ = static_cast<double>(now.QuadPart - render_start.QuadPart) * 1000.0 /
+                          static_cast<double>(freq.QuadPart);
+    }
     const HRESULT result = dc->EndDraw();
     if (result == D2DERR_RECREATE_TARGET || result == DXGI_ERROR_DEVICE_REMOVED ||
         result == DXGI_ERROR_DEVICE_RESET) compositor_.NotifyDeviceLost(result);
@@ -2193,12 +2501,11 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             if (top) return HTTOP;
             if (bottom) return HTBOTTOM;
         }
-        const int close_left = client.right - static_cast<int>(kCloseButtonWidth * scale_);
-        const int chrome_left = close_left - static_cast<int>(kChromeButtonWidth * 3.0f * scale_);
-        if (point.y >= 0 && point.y < static_cast<int>(kTitleBarHeight * scale_)) {
-            if (point.x >= close_left) return HTCLOSE;
-            if (point.x >= chrome_left) return HTCLIENT;  // prev / next / more buttons
-            if (HitMarkdownToggle(point) >= 0) return HTCLIENT;
+        if (point.y >= 0 && point.y < static_cast<int>(HeaderHeight())) {
+            // The whole header drags the window except its controls.
+            if (header_.close.right > header_.close.left && point.x >= static_cast<int>(header_.close.left))
+                return HTCLOSE;
+            if (HeaderInteractive(point)) return HTCLIENT;
             return HTCAPTION;
         }
         return HTCLIENT;
@@ -2220,6 +2527,8 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
         RecreateFormats();
         thumbnails_.SetDeviceContext(compositor_.Dc());
         thumbnails_.SetNotifyWindow(hwnd_);
+        open_icons_.SetDeviceContext(compositor_.Dc());
+        open_icons_.SetNotifyWindow(hwnd_);
         markdown_.SetNotifyWindow(hwnd_);
         handler_.SetNotifyWindow(hwnd_);
         return 0;
@@ -2294,10 +2603,18 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
     case WM_LBUTTONDOWN: {
         POINT point{};
         ClientPoint(lparam, point);
+        if (footer_focus_) {
+            footer_focus_ = 0;   // the pointer takes over from the keyboard
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         if (PlaybackMouseDown(point)) return 0;
         if (const ChromeButton button = HitChromeButton(point); button != ChromeButton::None) {
             if (GetFocus() != hwnd_) SetFocus(hwnd_);  // provider may hold focus
             ActivateChromeButton(button);
+            return 0;
+        }
+        if (const int control = HitFooterControl(point); control != 0) {
+            ActivateFooterControl(control);
             return 0;
         }
         if (CodecCardClick(point)) return 0;
@@ -2323,6 +2640,15 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             if (point.x >= bar.left && point.x < bar.right &&
                 point.y >= bar.top && point.y < bar.bottom) {
                 if (find_edit_) SetFocus(find_edit_);
+                return 0;
+            }
+        }
+        if (native_kind_ == NativeKind::Table && table_.IsSpreadsheet()) {
+            // Sheet tabs live in the footer.
+            const D2D1_RECT_F bar = FooterRect();
+            if (point.x >= bar.left && point.x < bar.right && point.y >= bar.top && point.y < bar.bottom) {
+                if (table_.TabClick(static_cast<float>(point.x), static_cast<float>(point.y)))
+                    InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
         }
@@ -2384,6 +2710,7 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             if (HitTestText(static_cast<float>(point.x), static_cast<float>(point.y), index)) {
                 selecting_ = true;
                 sel_anchor_ = sel_focus_ = index;
+                if (native_kind_ == NativeKind::Hex) hex_selected_ = HexByteAt(index);
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
         }
@@ -2443,6 +2770,11 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             chrome_hover_ = hover;
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        if (const int hover = (panning_ || selecting_) ? 0 : HitFooterControl(point);
+            hover != footer_hover_) {
+            footer_hover_ = hover;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         if (!mouse_tracking_) {
             TRACKMOUSEEVENT tracking{sizeof(tracking), TME_LEAVE, hwnd_, 0};
             mouse_tracking_ = TrackMouseEvent(&tracking) != FALSE;
@@ -2465,6 +2797,20 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             const float x = static_cast<float>(point.x), y = static_cast<float>(point.y);
             if (tree_.Dragging() ? tree_.MouseMove(x, y) : tree_.Hover(x, y))
                 InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        if (native_kind_ == NativeKind::Hex && !selecting_) {
+            const D2D1_RECT_F content = ContentRect();
+            const float x = static_cast<float>(point.x), y = static_cast<float>(point.y);
+            uint32_t index = 0;
+            int hover = -1;
+            if (x >= content.left && x < content.right &&
+                y >= content.top + 20.0f * scale_ + HexRulerHeight() && y < content.bottom &&
+                HitTestText(x, y, index))
+                hover = HexByteAt(index);
+            if (hover != hex_hover_) {
+                hex_hover_ = hover;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
         }
         if (panning_ && native_kind_ == NativeKind::Pages) {
             pages_pan_x_ = pan_start_x_ - static_cast<float>(point.x - pan_anchor_.x);
@@ -2492,9 +2838,14 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
         KillTimer(hwnd_, kTableTipTimer);
         if (table_.Leave()) InvalidateRect(hwnd_, nullptr, FALSE);
         if (tree_.Leave()) InvalidateRect(hwnd_, nullptr, FALSE);
+        if (hex_hover_ >= 0) {
+            hex_hover_ = -1;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         if (PlaybackHover(POINT{-1, -1})) InvalidateRect(hwnd_, nullptr, FALSE);
-        if (chrome_hover_ != ChromeButton::None) {
+        if (chrome_hover_ != ChromeButton::None || footer_hover_ != 0) {
             chrome_hover_ = ChromeButton::None;
+            footer_hover_ = 0;
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return 0;
@@ -2593,6 +2944,11 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             else KillTimer(hwnd_, kZoomCloseTimer);
             return 0;
         }
+        if (wparam == kNavSlideTimer) {
+            if (nav_dir_ != 0 && visible()) InvalidateRect(hwnd_, nullptr, FALSE);
+            else KillTimer(hwnd_, kNavSlideTimer);
+            return 0;
+        }
         if (wparam == 9) {
             TickPlaybackSeek();
             return 0;
@@ -2682,6 +3038,24 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
     case WM_KEYDOWN: {
         const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+        if (wparam == VK_TAB && !find_open_ && !ctrl) {
+            if (CycleFooterFocus(shift)) InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        if (footer_focus_ && !find_open_ &&
+            std::any_of(footer_controls_.begin(), footer_controls_.end(),
+                        [this](const FooterControl& c) { return c.id == footer_focus_; })) {
+            if (wparam == VK_RETURN || wparam == VK_SPACE) {
+                if (!(lparam & (1LL << 30))) ActivateFooterControl(footer_focus_);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+            if (wparam == VK_ESCAPE) {
+                footer_focus_ = 0;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+        }
         if (wparam == VK_ESCAPE) {
             if (find_open_) CloseFind();
             else Close();
@@ -2761,9 +3135,13 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
         if (native_kind_ == NativeKind::Markdown && !find_open_ && !ctrl &&
             (wparam == VK_PRIOR || wparam == VK_NEXT || wparam == VK_LEFT || wparam == VK_RIGHT ||
              ((wparam == VK_HOME || wparam == VK_END) && !HasPlayback()))) {
-            markdown_.Key(static_cast<UINT>(wparam));
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return 0;
+            // Left/Right scroll a wide document sideways; when there is
+            // nothing to scroll they keep stepping through files.
+            const bool moved = markdown_.Key(static_cast<UINT>(wparam));
+            if (moved || (wparam != VK_LEFT && wparam != VK_RIGHT)) {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
         }
         if (ctrl && wparam == 'F' &&
             (native_kind_ == NativeKind::Text || native_kind_ == NativeKind::Hex ||
@@ -2785,6 +3163,18 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
             FindNext(shift ? -1 : 1);
             return 0;
         }
+        if (!find_open_ && !ctrl && (native_kind_ == NativeKind::Text || native_kind_ == NativeKind::Hex) &&
+            (wparam == VK_PRIOR || wparam == VK_NEXT ||
+             ((wparam == VK_HOME || wparam == VK_END) && !HasPlayback()))) {
+            // Keyboard scrolling; the draw clamps to the document's end.
+            const D2D1_RECT_F content = ContentRect();
+            const float page = (std::max)(40.0f * scale_, (content.bottom - content.top) * 0.9f);
+            if (wparam == VK_PRIOR) text_scroll_ = (std::max)(0.0f, text_scroll_ - page);
+            else if (wparam == VK_NEXT) text_scroll_ += page;
+            else text_scroll_ = wparam == VK_HOME ? 0.0f : 1.0e9f;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
         if (!find_open_ && !ctrl && PagesKey(wparam)) {
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
@@ -2800,16 +3190,23 @@ LRESULT QuickPreviewWindow::HandleMessage(UINT message, WPARAM wparam, LPARAM lp
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
+            if (!ctrl && (wparam == 'I' || wparam == 'B' || wparam == 'R' || wparam == VK_OEM_PLUS ||
+                          wparam == VK_ADD || wparam == VK_OEM_MINUS || wparam == VK_SUBTRACT)) {
+                ActivateFooterControl(wparam == 'I' ? kFooterInfo : wparam == 'B' ? kFooterImageBg :
+                    wparam == 'R' ? kFooterRotate :
+                    (wparam == VK_OEM_PLUS || wparam == VK_ADD) ? kFooterZoomIn : kFooterZoomOut);
+                return 0;
+            }
         }
         if (wparam == VK_RETURN && native_kind_ == NativeKind::Archive && !find_open_ &&
             OpenListingSelection())
             return 0;
         if (wparam == VK_RETURN && owner_ && open_message_ && !find_open_)
             PostMessageW(owner_, open_message_, 0, 0);
-        else if ((wparam == VK_LEFT || wparam == VK_UP) && owner_ && navigate_message_)
-            PostMessageW(owner_, navigate_message_, static_cast<WPARAM>(-1), 0);
-        else if ((wparam == VK_RIGHT || wparam == VK_DOWN) && owner_ && navigate_message_)
-            PostMessageW(owner_, navigate_message_, 1, 0);
+        else if (wparam == VK_LEFT || wparam == VK_UP)
+            PostNavigate(-1);
+        else if (wparam == VK_RIGHT || wparam == VK_DOWN)
+            PostNavigate(1);
         return 0;
     }
     case WM_SYSKEYDOWN:

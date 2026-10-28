@@ -1,4 +1,6 @@
 #include "network_index.h"
+#include "../fs/drive_kind.h"
+#include "../fs/wsl_path.h"
 #include "network_crawl_schedule.h"
 #include "index_config.h"
 #include "index_query.h"
@@ -11,6 +13,8 @@
 #include <fstream>
 #include <queue>
 #include <sstream>
+#include <thread>
+#include <atomic>
 #include <unordered_map>
 #include <winnetwk.h>
 
@@ -567,6 +571,9 @@ bool LoadNetworkRootsFile(const std::wstring& path, std::vector<std::wstring>& r
             SetError(error, L"网络索引配置包含无效的服务器文件夹");
             return false;
         }
+        // A WSL root added before 1.0.57 is left out: crawling and watching it
+        // kept the distribution running and `wsl --shutdown` waiting (#360).
+        if (pulse::fs::IsWslPath(root)) continue;
         if (std::none_of(parsed.begin(), parsed.end(), [&](const auto& existing) {
                 return EqualPath(existing, root);
             })) parsed.push_back(std::move(root));
@@ -1106,6 +1113,10 @@ bool NetworkIndex::AddRoot(const std::wstring& raw, std::wstring* error) {
         SetError(error, L"请选择服务器共享中的文件夹（UNC 路径）");
         return false;
     }
+    if (pulse::fs::IsWslPath(path)) {
+        SetError(error, L"WSL 中的文件不能加入网络索引");
+        return false;
+    }
     std::lock_guard<std::mutex> lock(mu_);
     if (!ReloadConfigurationLocked(error)) return false;
     if (std::any_of(roots_.begin(), roots_.end(), [&](const RootState& root) {
@@ -1621,11 +1632,7 @@ void NetworkIndex::SearchLoop() {
         };
         const size_t wanted = query.offset > SIZE_MAX - query.limit
             ? SIZE_MAX : query.offset + query.limit;
-        std::priority_queue<Candidate, std::vector<Candidate>, decltype(better)> top(better);
-        std::vector<Candidate> in_order;
-        if (!query.rank && query.sort == ResultSort::Index)
-            in_order.reserve((std::min)(wanted, static_cast<size_t>(4096)));
-        size_t total = 0;
+        const bool index_order = !query.rank && query.sort == ResultSort::Index;
         // The most specific available root owns its descendants, including
         // its overlay and deletions. Unavailable children leave the parent
         // authoritative. Root directories themselves still belong to their
@@ -1642,25 +1649,43 @@ void NetworkIndex::SearchLoop() {
             }
             return owner;
         };
+        // Shards can hold millions of records, so the scan is split into
+        // fixed chunks matched in parallel. Each chunk keeps its own count
+        // plus either its first `wanted` hits (index order) or a local top
+        // list; merging in chunk order reproduces the sequential result.
+        struct Chunk {
+            size_t shard = 0, begin = 0, end = 0;
+            size_t total = 0;
+            std::vector<Candidate> hits;
+        };
+        constexpr size_t kChunkRecords = 1u << 16;
+        std::vector<Chunk> chunks;
+        size_t records = 0;
         for (size_t shard_index = 0; shard_index < shards.size(); ++shard_index) {
-            const auto& shard = shards[shard_index];
-            const OverlayView* overlay = overlays[shard_index].get();
-            for (size_t i = 0; i < shard->count; ++i) {
-                if ((i & 4095u) == 0 && latest_search_id_.load() != id) break;
+            const size_t count = shards[shard_index]->count;
+            records += count;
+            for (size_t begin = 0; begin < count; begin += kChunkRecords)
+                chunks.push_back({shard_index, begin, (std::min)(count, begin + kChunkRecords)});
+        }
+        const auto scan_chunk = [&](Chunk& chunk) {
+            const auto& shard = shards[chunk.shard];
+            const OverlayView* overlay = overlays[chunk.shard].get();
+            std::priority_queue<Candidate, std::vector<Candidate>, decltype(better)> top(better);
+            for (size_t i = chunk.begin; i < chunk.end; ++i) {
+                if ((i & 4095u) == 0 && latest_search_id_.load() != id) return;
                 const auto& record = shard->records[i];
                 const std::wstring_view path(shard->pool + record.path_off, record.path_len);
-                if (!StartsWithPath(path, query.path_prefix)) continue;
-                if (owner_of(path) != shard_owners[shard_index]) continue;
+                if (!query.path_prefix.empty() && !StartsWithPath(path, query.path_prefix)) continue;
                 const std::wstring_view name(path.data() + record.name_off, record.name_len);
                 if (!MatchNetworkRecord(record, path, name, compiled, query.folders_only)) continue;
+                if (owner_of(path) != shard_owners[chunk.shard]) continue;
                 if (overlay && overlay->Hides(path)) continue;
-                Candidate candidate{shard.get(), &record, shard_index, i,
+                Candidate candidate{shard.get(), &record, chunk.shard, i,
                     query.rank ? RankName(name.data(), static_cast<uint32_t>(name.size()),
                                           (record.flags & kRecordDirectory) != 0, compiled) : 0};
-                ++total;
-                if (!query.rank && query.sort == ResultSort::Index) {
-                    if (total > query.offset && in_order.size() < query.limit)
-                        in_order.push_back(candidate);
+                ++chunk.total;
+                if (index_order) {
+                    if (chunk.hits.size() < wanted) chunk.hits.push_back(candidate);
                 } else if (wanted) {
                     if (top.size() < wanted) top.push(candidate);
                     else if (better(candidate, top.top())) {
@@ -1669,12 +1694,62 @@ void NetworkIndex::SearchLoop() {
                     }
                 }
             }
-            if (latest_search_id_.load() != id) break;
+            if (!index_order) {
+                chunk.hits.reserve(top.size());
+                while (!top.empty()) {
+                    chunk.hits.push_back(top.top());
+                    top.pop();
+                }
+            }
+        };
+        const unsigned hardware = std::thread::hardware_concurrency();
+        unsigned workers = hardware < 2 ? 1u : (std::min)(hardware, 6u);
+        if (records < 200000 || chunks.size() < 2) workers = 1;
+        workers = (std::min)(workers, static_cast<unsigned>((std::max)(chunks.size(), size_t{1})));
+        if (workers <= 1) {
+            for (auto& chunk : chunks) {
+                scan_chunk(chunk);
+                if (latest_search_id_.load() != id) break;
+            }
+        } else {
+            std::atomic<size_t> next_chunk{0};
+            std::vector<std::thread> pool;
+            pool.reserve(workers);
+            for (unsigned w = 0; w < workers; ++w) {
+                pool.emplace_back([&] {
+                    for (size_t c = next_chunk.fetch_add(1); c < chunks.size(); c = next_chunk.fetch_add(1)) {
+                        if (latest_search_id_.load() != id) return;
+                        scan_chunk(chunks[c]);
+                    }
+                });
+            }
+            for (auto& thread : pool) thread.join();
+        }
+        size_t total = 0;
+        std::vector<Candidate> in_order;
+        std::priority_queue<Candidate, std::vector<Candidate>, decltype(better)> top(better);
+        if (index_order) in_order.reserve((std::min)(wanted, static_cast<size_t>(4096)));
+        for (const auto& chunk : chunks) {
+            if (index_order) {
+                for (size_t k = 0; k < chunk.hits.size(); ++k) {
+                    if (total + k + 1 > query.offset && in_order.size() < query.limit)
+                        in_order.push_back(chunk.hits[k]);
+                }
+            } else {
+                for (const auto& candidate : chunk.hits) {
+                    if (top.size() < wanted) top.push(candidate);
+                    else if (better(candidate, top.top())) {
+                        top.pop();
+                        top.push(candidate);
+                    }
+                }
+            }
+            total += chunk.total;
         }
         if (latest_search_id_.load() != id) continue;
         result.total = total;
         std::vector<Candidate> selected;
-        if (!query.rank && query.sort == ResultSort::Index) {
+        if (index_order) {
             selected = std::move(in_order);
         } else {
             std::vector<Candidate> ranked;
@@ -1725,7 +1800,7 @@ bool IsNetworkFolderPath(const std::wstring& raw) {
     else if (path.size() >= 3 && path[0] == L'\\' && path[1] == L'\\') return true;
     if (path.size() >= 2 && path[1] == L':' && iswalpha(path[0])) {
         const wchar_t root[4] = {path[0], L':', L'\\', 0};
-        return GetDriveTypeW(root) == DRIVE_REMOTE;
+        return ::pulse::fs::IsRemoteLikeDrive(root);  // mapped drive or cloud mount
     }
     return false;
 }

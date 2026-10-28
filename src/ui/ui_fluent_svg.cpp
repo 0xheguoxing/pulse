@@ -1,6 +1,7 @@
 // Unified command geometry, with the existing SVG loader retained for artwork.
 #include "ui_renderer.h"
 #include "command_icons.h"
+#include "fluent_color_svg.h"
 #include "../common/windows_compat.h"
 #include "../app/resource.h"
 #include <d2d1svg.h>
@@ -38,6 +39,10 @@ command_icons::Icon CommandIconForResource(int resource_id) noexcept {
     case IDR_FLUENT_ADD_SVG: return I::Add;
     case IDR_FLUENT_PC_SVG: return I::Computer;
     case IDR_FLUENT_TAG_SVG: return I::Tag;
+    case IDR_FLUENT_PICTURES_SVG: return I::Image;
+    case IDR_FLUENT_VIDEOS_SVG: return I::Video;
+    case IDR_FLUENT_MUSIC_SVG: return I::Music;
+    case IDR_FLUENT_DOCUMENTS_SVG: return I::File;
     default: return I::None;
     }
 }
@@ -190,30 +195,10 @@ bool MainRenderer::EnsureFluentSvg(int resource_id, bool colorful) {
         return false;
     }
 
-    const HMODULE module = GetModuleHandleW(nullptr);
-    const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(resource_id), RT_RCDATA);
-    if (!resource) {
-        fluent_svg_failed_.insert(resource_id);
-        return false;
-    }
-    const HGLOBAL loaded = LoadResource(module, resource);
-    const DWORD byte_count = SizeofResource(module, resource);
-    const void* bytes = loaded ? LockResource(loaded) : nullptr;
-    if (!bytes || byte_count == 0) {
-        fluent_svg_failed_.insert(resource_id);
-        return false;
-    }
-
     ComPtr<ID2D1SvgDocument> document;
-    if (!CreateSvgFromBytes(empty_state_svg_dc_.get(), bytes, byte_count, document)) {
-        const std::string simplified = SimplifySvgForD2d(
-            std::string_view(static_cast<const char*>(bytes), byte_count));
-        if (simplified.empty() ||
-            !CreateSvgFromBytes(empty_state_svg_dc_.get(), simplified.data(),
-                                static_cast<DWORD>(simplified.size()), document)) {
-            fluent_svg_failed_.insert(resource_id);
-            return false;
-        }
+    if (!LoadFluentSvg(empty_state_svg_dc_.get(), resource_id, document)) {
+        fluent_svg_failed_.insert(resource_id);
+        return false;
     }
 
     fluent_svgs_[resource_id] = std::move(document);
@@ -238,7 +223,102 @@ bool MainRenderer::DrawFluentSvg(int resource_id, const D2D1_RECT_F& bounds, flo
     const auto it = fluent_svgs_.find(resource_id);
     if (it == fluent_svgs_.end() || !it->second.get() || !empty_state_svg_dc_.get()) return false;
 
-    ID2D1SvgDocument* svg = it->second.get();
+    // Same placement as DrawFluentSvgFitted, from a cached bitmap copied to
+    // whole device pixels. Scaled or rotated transforms draw the vector art.
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    D2D1_MATRIX_3X2_F m{};
+    dc->GetTransform(&m);
+    float dpi_x = 0.0f, dpi_y = 0.0f;
+    dc->GetDpi(&dpi_x, &dpi_y);
+    const float art = std::min(std::max(0.0f, bounds.right - bounds.left),
+                               std::max(0.0f, bounds.bottom - bounds.top));
+    if (art > 1.0f && art <= 256.0f && m._11 == 1.0f && m._22 == 1.0f && m._12 == 0.0f &&
+        m._21 == 0.0f && dpi_x == 96.0f && dpi_y == 96.0f) {
+        const double left = (bounds.left + bounds.right - art) * 0.5 + m._31;
+        const double top = (bounds.top + bounds.bottom - art) * 0.5 + m._32;
+        const long long qx = std::llround(left * 4.0), qy = std::llround(top * 4.0);
+        const long long ix = qx >= 0 ? qx / 4 : -((3 - qx) / 4);
+        const long long iy = qy >= 0 ? qy / 4 : -((3 - qy) / 4);
+        if (ID2D1Bitmap1* bitmap = FluentSvgBitmap(resource_id, it->second.get(),
+                static_cast<int>(std::lround(art * 4.0f)), static_cast<int>(qx - ix * 4),
+                static_cast<int>(qy - iy * 4))) {
+            const D2D1_SIZE_U px = bitmap->GetPixelSize();
+            const float x = static_cast<float>(ix - 1) - m._31;
+            const float y = static_cast<float>(iy - 1) - m._32;
+            const D2D1_RECT_F dest = D2D1::RectF(x, y, x + static_cast<float>(px.width),
+                                                 y + static_cast<float>(px.height));
+            dc->DrawBitmap(bitmap, &dest, std::clamp(opacity, 0.0f, 1.0f),
+                           D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, nullptr);
+            return true;
+        }
+    }
+    return DrawFluentSvgFitted(empty_state_svg_dc_.get(), it->second.get(), bounds, opacity);
+}
+
+ID2D1Bitmap1* MainRenderer::FluentSvgBitmap(int resource_id, ID2D1SvgDocument* svg,
+                                            int size_q, int fx, int fy) {
+    const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(resource_id)) << 32) |
+                         (static_cast<uint64_t>(size_q & 0xfffff) << 4) |
+                         static_cast<uint64_t>((fx << 2) | fy);
+    if (const auto found = fluent_bitmaps_.find(key); found != fluent_bitmaps_.end())
+        return found->second.get();   // null: this one failed, draw the vector art
+    if (fluent_bitmaps_.size() >= 512) fluent_bitmaps_.clear();
+    ComPtr<ID2D1Bitmap1>& slot = fluent_bitmaps_[key];
+    ID2D1DeviceContext* dc = compositor_ ? compositor_->Dc() : nullptr;
+    if (!dc || !svg) return nullptr;
+    if (!fluent_raster_dc_.get()) {
+        ComPtr<ID2D1Device> device;
+        dc->GetDevice(&device);
+        if (!device.get() || FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                                                                &fluent_raster_dc_)))
+            return nullptr;
+    }
+    ComPtr<ID2D1DeviceContext5> raster;
+    if (FAILED(fluent_raster_dc_->QueryInterface(IID_PPV_ARGS(&raster))) || !raster.get()) return nullptr;
+    // One pixel of margin each side for the antialiased edge and the offset.
+    const float art = static_cast<float>(size_q) / 4.0f;
+    const UINT32 side = static_cast<UINT32>(std::ceil(art + 0.75f)) + 2;
+    ComPtr<ID2D1Bitmap1> bitmap;
+    const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+    if (FAILED(raster->CreateBitmap(D2D1::SizeU(side, side), nullptr, 0, props, &bitmap))) return nullptr;
+    ComPtr<ID2D1SvgElement> root;
+    svg->GetRoot(&root);
+    if (root.get()) root->SetAttributeValue(L"opacity", 1.0f);
+    svg->SetViewportSize(D2D1::SizeF(24.0f, 24.0f));
+    raster->SetTarget(bitmap.get());
+    raster->BeginDraw();
+    raster->Clear(D2D1::ColorF(0, 0.0f));
+    raster->SetTransform(D2D1::Matrix3x2F::Scale(art / 24.0f, art / 24.0f) *
+                         D2D1::Matrix3x2F::Translation(1.0f + fx * 0.25f, 1.0f + fy * 0.25f));
+    raster->DrawSvgDocument(svg);
+    const HRESULT hr = raster->EndDraw();
+    raster->SetTarget(nullptr);
+    if (FAILED(hr)) return nullptr;
+    slot = std::move(bitmap);
+    return slot.get();
+}
+
+bool LoadFluentSvg(ID2D1DeviceContext5* dc, int resource_id, ComPtr<ID2D1SvgDocument>& out) {
+    out.reset();
+    if (!dc) return false;
+    const HMODULE module = GetModuleHandleW(nullptr);
+    const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(resource_id), RT_RCDATA);
+    if (!resource) return false;
+    const HGLOBAL loaded = LoadResource(module, resource);
+    const DWORD byte_count = SizeofResource(module, resource);
+    const void* bytes = loaded ? LockResource(loaded) : nullptr;
+    if (!bytes || byte_count == 0) return false;
+    if (CreateSvgFromBytes(dc, bytes, byte_count, out)) return true;
+    const std::string simplified = SimplifySvgForD2d(
+        std::string_view(static_cast<const char*>(bytes), byte_count));
+    return !simplified.empty() &&
+           CreateSvgFromBytes(dc, simplified.data(), static_cast<DWORD>(simplified.size()), out);
+}
+
+bool DrawFluentSvgFitted(ID2D1DeviceContext5* dc, ID2D1SvgDocument* svg,
+                         const D2D1_RECT_F& bounds, float opacity) {
+    if (!dc || !svg) return false;
     ComPtr<ID2D1SvgElement> root;
     svg->GetRoot(&root);
     if (root.get())
@@ -253,12 +333,12 @@ bool MainRenderer::DrawFluentSvg(int resource_id, const D2D1_RECT_F& bounds, flo
 
     svg->SetViewportSize(D2D1::SizeF(24.0f, 24.0f));
     D2D1_MATRIX_3X2_F previous{};
-    empty_state_svg_dc_->GetTransform(&previous);
-    empty_state_svg_dc_->SetTransform(
+    dc->GetTransform(&previous);
+    dc->SetTransform(
         D2D1::Matrix3x2F::Scale(art / 24.0f, art / 24.0f) *
         D2D1::Matrix3x2F::Translation(left, top) * previous);
-    empty_state_svg_dc_->DrawSvgDocument(svg);
-    empty_state_svg_dc_->SetTransform(previous);
+    dc->DrawSvgDocument(svg);
+    dc->SetTransform(previous);
     return true;
 }
 
@@ -278,6 +358,12 @@ int FluentSvgIdForGlyph(std::wstring_view glyph) {
     if (glyph == L"\xE8EF") return IDR_FLUENT_COPY_SVG;
     if (glyph == L"\xE8A9") return IDR_FLUENT_APPS_SVG;
     if (glyph == L"\xE8EC") return IDR_FLUENT_TAG_SVG;
+    // The library folders in 快速访问, in the same color set as 下载 and 桌面
+    // (Fluent has no color music note: headphones stand for 音乐).
+    if (glyph == L"\xE91B") return IDR_FLUENT_PICTURES_SVG;
+    if (glyph == L"\xE714") return IDR_FLUENT_VIDEOS_SVG;
+    if (glyph == L"\xE8D6") return IDR_FLUENT_MUSIC_SVG;
+    if (glyph == L"\xE7C3") return IDR_FLUENT_DOCUMENTS_SVG;
     if (glyph == L"\xE8A0") return IDR_FLUENT_PANEL_SVG;
     if (glyph == L"\xE89F") return IDR_FLUENT_PANEL_CLOSE_SVG;
     return 0;

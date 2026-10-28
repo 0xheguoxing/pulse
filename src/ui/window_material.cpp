@@ -7,6 +7,7 @@
 // Tint recipes match WinUI MicaController / DesktopAcrylicController.
 #include "window_material.h"
 #include "../common/windows_compat.h"
+#include "../common/os_version.h"
 
 #include <d2d1_1.h>
 #include <d2d1effects.h>
@@ -42,6 +43,15 @@ constexpr GUID kBorderClsid = { 0x2a2d49c0, 0x4acf, 0x43c7,
 
 constexpr UINT kMaxSource = 2048;
 constexpr float kSampleLongEdge = 1024.0f;
+// Blurred covers and sampled materials draw at most kSampleLongEdge, so a
+// source of that size serves them (2048 px: ~9.3 MiB on the GPU, 1024 px:
+// ~2.3 MiB). Below this radius the blur would not hide the cover crop's
+// upscale, so the full source is decoded.
+constexpr UINT kSoftSource = 1024;
+constexpr float kSoftSourceMinBlurPx = 4.0f;
+UINT SourceEdgeForBlur(float blur_px) {
+    return blur_px >= kSoftSourceMinBlurPx ? kSoftSource : kMaxSource;
+}
 
 struct MaterialGraph {
     ComPtr<ID2D1Effect> blur;
@@ -134,19 +144,10 @@ IWICBitmapSource* ToDisplayPixels(IWICImagingFactory* wic, IWICBitmapFrameDecode
     return converter.get();
 }
 
+// The kernel's build: under a compatibility layer RtlGetVersion reports 7601 /
+// 9200 on Windows 11 and Mica / rounded corners were wrongly turned off.
 bool IsWindows11OrLater() noexcept {
-    using RtlGetVersionFn = LONG (WINAPI*)(OSVERSIONINFOW*);
-    static const bool value = []() noexcept {
-        HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-        if (!ntdll) return false;
-        auto fn = reinterpret_cast<RtlGetVersionFn>(GetProcAddress(ntdll, "RtlGetVersion"));
-        if (!fn) return false;
-        OSVERSIONINFOW info{};
-        info.dwOSVersionInfoSize = sizeof(info);
-        if (fn(&info) != 0) return false;
-        return info.dwMajorVersion > 10 ||
-               (info.dwMajorVersion == 10 && info.dwBuildNumber >= 22000);
-    }();
+    static const bool value = pulse::os::TrueWindowsBuild() >= 22000;
     return value;
 }
 
@@ -228,7 +229,7 @@ struct DecodedPixels {
     HRESULT result = E_FAIL;
 };
 
-DecodedPixels DecodeImageFile(const std::wstring& path) {
+DecodedPixels DecodeImageFile(const std::wstring& path, UINT max_edge) {
     DecodedPixels decoded;
     ComPtr<IWICImagingFactory> wic;
     ComPtr<IWICBitmapDecoder> decoder;
@@ -263,10 +264,10 @@ DecodedPixels DecodeImageFile(const std::wstring& path) {
     }
 
     IWICBitmapSource* source = pixels;
-    if (width > kMaxSource || height > kMaxSource) {
+    if (width > max_edge || height > max_edge) {
         const float scale = (std::min)(
-            static_cast<float>(kMaxSource) / static_cast<float>((std::max)(1u, width)),
-            static_cast<float>(kMaxSource) / static_cast<float>((std::max)(1u, height)));
+            static_cast<float>(max_edge) / static_cast<float>((std::max)(1u, width)),
+            static_cast<float>(max_edge) / static_cast<float>((std::max)(1u, height)));
         width = (std::max)(1u, static_cast<UINT>(width * scale));
         height = (std::max)(1u, static_cast<UINT>(height * scale));
         hr = wic->CreateBitmapScaler(&scaler);
@@ -315,6 +316,7 @@ struct WindowMaterial::DecodeWorker {
         std::wstring path;
         uint64_t generation = 0;
         HWND notify = nullptr;
+        UINT max_edge = kMaxSource;
     };
     struct Result {
         std::wstring path;
@@ -464,6 +466,82 @@ bool SystemAllowsPopupAcrylic() noexcept {
     if (GetSystemPowerStatus(&power) && power.SystemStatusFlag == 1) return false;
     return true;
 }
+
+bool BuildAcrylicPlate(ID2D1DeviceContext* dc, ID2D1Bitmap1* frame, POINT frame_origin, const RECT& card,
+                       float blur, bool dark, float luminosity, float tint, ComPtr<ID2D1Bitmap1>& out) noexcept {
+    out.reset();
+    const int pw = static_cast<int>(card.right - card.left);
+    const int ph = static_cast<int>(card.bottom - card.top);
+    if (!dc || !frame || pw <= 0 || ph <= 0) return false;
+    ComPtr<ID2D1Image> target;
+    dc->GetTarget(&target);
+    const D2D1_SIZE_U fs = frame->GetPixelSize();
+    const int margin = static_cast<int>(std::ceil(2.0f * blur));
+    const int sw = pw + margin * 2;
+    const int sh = ph + margin * 2;
+    const float fl = static_cast<float>(card.left - margin - frame_origin.x);
+    const float ft = static_cast<float>(card.top - margin - frame_origin.y);
+    const D2D1_RECT_F src{ (std::max)(fl, 0.0f), (std::max)(ft, 0.0f),
+                           (std::min)(fl + sw, static_cast<float>(fs.width)),
+                           (std::min)(ft + sh, static_cast<float>(fs.height)) };
+    if (!(src.right > src.left) || !(src.bottom > src.top)) return false;
+
+    const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+    ComPtr<ID2D1Bitmap1> sample;
+    ComPtr<ID2D1Bitmap1> plate;
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(sw, sh), nullptr, 0, props, &sample)) ||
+        FAILED(dc->CreateBitmap(D2D1::SizeU(pw, ph), nullptr, 0, props, &plate)))
+        return false;
+    dc->SetTarget(sample.get());
+    dc->Clear(dark ? HexColor(0x2B2B2B) : HexColor(0xF9F9F9));
+    const D2D1_RECT_F in{ src.left - fl, src.top - ft, src.right - fl, src.bottom - ft };
+    dc->DrawBitmap(frame, in, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
+    // Popups often hang past the window edge. Stretch the edge pixels of the
+    // frame over the part outside so the blur reads as one material instead
+    // of window acrylic next to a flat plate; capturing the desktop there
+    // costs 23-90 ms per popup.
+    const float sw_f = static_cast<float>(sw), sh_f = static_cast<float>(sh);
+    const float xs[3][2]{ { 0.0f, in.left }, { in.left, in.right }, { in.right, sw_f } };
+    const float ys[3][2]{ { 0.0f, in.top }, { in.top, in.bottom }, { in.bottom, sh_f } };
+    const float sx[3][2]{ { src.left, src.left + 1.0f }, { src.left, src.right },
+                          { src.right - 1.0f, src.right } };
+    const float sy[3][2]{ { src.top, src.top + 1.0f }, { src.top, src.bottom },
+                          { src.bottom - 1.0f, src.bottom } };
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            if (row == 1 && col == 1) continue;
+            if (!(xs[col][1] > xs[col][0]) || !(ys[row][1] > ys[row][0])) continue;
+            const D2D1_RECT_F from{ sx[col][0], sy[row][0], sx[col][1], sy[row][1] };
+            dc->DrawBitmap(frame, D2D1::RectF(xs[col][0], ys[row][0], xs[col][1], ys[row][1]),
+                           1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &from);
+        }
+    }
+    dc->SetTarget(plate.get());
+    dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+    TargetSample ts;
+    ts.bitmap = std::move(sample);
+    ts.origin = D2D1::Point2F(static_cast<float>(-margin), static_cast<float>(-margin));
+    const bool ok = DrawAcrylicSample(dc, ts, D2D1::RectF(0.0f, 0.0f, static_cast<float>(pw),
+                                      static_cast<float>(ph)), 0.0f, dark, blur, luminosity, tint);
+    dc->SetTarget(target.get());
+    if (!ok) return false;
+    out = std::move(plate);
+    return true;
+}
+
+namespace {
+// Dialogs take the menu recipe, so the two read as one material, and follow
+// the same system switches.
+bool BuildDialogAcrylicPlate(ID2D1DeviceContext* dc, ID2D1Bitmap1* frame, POINT frame_origin, const RECT& card,
+                             float scale, bool dark, ComPtr<ID2D1Bitmap1>& plate) {
+    if (!SystemAllowsPopupAcrylic()) return false;
+    return BuildAcrylicPlate(dc, frame, frame_origin, card, 16.0f * scale, dark,
+                             dark ? 0.80f : 0.72f, dark ? 0.20f : 0.05f, plate);
+}
+[[maybe_unused]] const bool kDialogAcrylicRegistered =
+    (Compositor::SetAcrylicPlateBuilder(&BuildDialogAcrylicPlate), true);
+} // namespace
 
 bool WindowEffectUsesBackdrop(WindowEffect effect) noexcept {
     return effect != WindowEffect::None;
@@ -748,6 +826,7 @@ void WindowMaterial::Invalidate() {
     source_stride_ = 0;
     source_failed_.clear();
     requested_path_.clear();
+    requested_edge_ = 0;
     if (decode_worker_) {
         std::lock_guard<std::mutex> lock(decode_worker_->mutex);
         requested_generation_ = ++decode_worker_->next_generation;
@@ -772,9 +851,10 @@ void WindowMaterial::EnsureDecodeWorker() {
     decode_worker_ = std::move(worker);
 }
 
-void WindowMaterial::QueueDecode(const std::wstring& path) {
+void WindowMaterial::QueueDecode(const std::wstring& path, UINT max_edge) {
     EnsureDecodeWorker();
     requested_path_ = path;
+    requested_edge_ = max_edge;
     if (!decode_worker_) {
         source_failed_ = path;
         return;
@@ -783,7 +863,7 @@ void WindowMaterial::QueueDecode(const std::wstring& path) {
         std::lock_guard<std::mutex> lock(decode_worker_->mutex);
         requested_generation_ = ++decode_worker_->next_generation;
         decode_worker_->request = {path, requested_generation_,
-            compositor_ ? compositor_->Hwnd() : nullptr};
+            compositor_ ? compositor_->Hwnd() : nullptr, max_edge};
         decode_worker_->completed.reset();
     }
     SetEvent(decode_worker_->wake);
@@ -848,7 +928,7 @@ DWORD WINAPI WindowMaterial::DecodeWorkerMain(void* parameter) {
         const DWORD delay = self->test_delay_ms.load(std::memory_order_relaxed);
         if (delay > 0) Sleep(delay);
         DecodedPixels decoded;
-        if (SUCCEEDED(com_result)) decoded = DecodeImageFile(request.path);
+        if (SUCCEEDED(com_result)) decoded = DecodeImageFile(request.path, request.max_edge);
         else decoded.result = com_result;
 
         HWND notify = nullptr;
@@ -893,12 +973,21 @@ WindowMaterial::Recipe WindowMaterial::RecipeFor(WindowEffect effect, bool dark)
 }
 
 ID2D1Bitmap* WindowMaterial::SourceBitmap(const std::wstring& path) {
+    return SourceBitmapAt(path, kMaxSource);
+}
+
+// max_edge is the long edge the caller draws from. A smaller decode keeps
+// drawing while a sharper one is requested (turning the blur off never shows
+// a frame without the image); a larger one serves smaller requests as is.
+ID2D1Bitmap* WindowMaterial::SourceBitmapAt(const std::wstring& path, UINT max_edge) {
     ID2D1DeviceContext* dc = compositor_ ? compositor_->Dc() : nullptr;
     TakeDecodeResult();
     if (!dc || path.empty()) {
         ResetGpuResources();
         return nullptr;
     }
+    if (requested_path_ == path && max_edge > requested_edge_ && source_failed_ != path)
+        QueueDecode(path, max_edge);
     if (source_.get() && source_dc_ == dc && source_path_ == path)
         return source_.get();
     if (source_failed_ == path)
@@ -924,7 +1013,18 @@ ID2D1Bitmap* WindowMaterial::SourceBitmap(const std::wstring& path) {
         source_ = std::move(uploaded);
         source_path_ = path;
         source_dc_ = dc;
+        // Everything is drawn from the GPU copy now; the CPU pixels (up to
+        // 2048 px, ~9 MiB) go. source_pixels_path_ stays to mark the upload.
+        std::vector<uint8_t>().swap(source_pixels_);
         return source_.get();
+    }
+    if (requested_path_ == path && source_pixels_path_ == path && source_pixels_.empty() &&
+        source_failed_ != path) {
+        // Uploaded and released, then the device was lost: decode once more
+        // (the mark clears, so this queues one decode, not one per frame).
+        source_pixels_path_.clear();
+        QueueDecode(path, requested_edge_);
+        return nullptr;
     }
 
     if (requested_path_ != path) {
@@ -935,7 +1035,7 @@ ID2D1Bitmap* WindowMaterial::SourceBitmap(const std::wstring& path) {
         source_height_ = 0;
         source_stride_ = 0;
         source_failed_.clear();
-        QueueDecode(path);
+        QueueDecode(path, max_edge);
     }
     return nullptr;
 }
@@ -962,6 +1062,10 @@ bool WindowMaterial::DecodeFailedForTesting(const std::wstring& path) {
 
 bool WindowMaterial::DrawSourceCover(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
                                      const std::wstring& path, float blur_px) {
+    // The fallback asks for the same size as the blur: while the decode is
+    // pending EnsureBlurred returns null, and a full-size request here would
+    // decode 2048 px on the first frame.
+    const UINT edge = SourceEdgeForBlur(blur_px);
     if (blur_px > 0.5f) {
         if (ID2D1Bitmap* blurred = EnsureBlurred(dc, dest, path, blur_px)) {
             dc->DrawBitmap(blurred, dest, 1.0f, D2D1_INTERPOLATION_MODE_LINEAR, nullptr, nullptr);
@@ -969,7 +1073,7 @@ bool WindowMaterial::DrawSourceCover(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
         }
         // Effect failure: fall through to the sharp cover rather than no wallpaper.
     }
-    ID2D1Bitmap* source = SourceBitmap(path);
+    ID2D1Bitmap* source = SourceBitmapAt(path, edge);
     if (!dc || !source) return false;
     const D2D1_SIZE_F size = source->GetSize();
     const D2D1_RECT_F cover = CoverRect(size.width, size.height, dest);
@@ -985,7 +1089,7 @@ bool WindowMaterial::DrawSourceCover(ID2D1DeviceContext* dc, const D2D1_RECT_F& 
 // pulling transparent pixels in at the window edges.
 ID2D1Bitmap* WindowMaterial::EnsureBlurred(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
                                            const std::wstring& path, float blur_px) {
-    ID2D1Bitmap* source = SourceBitmap(path);
+    ID2D1Bitmap* source = SourceBitmapAt(path, SourceEdgeForBlur(blur_px));
     if (!dc || !source) return nullptr;
 
     const float dw = dest.right - dest.left;
@@ -1061,7 +1165,7 @@ ID2D1Bitmap* WindowMaterial::EnsureBlurred(ID2D1DeviceContext* dc, const D2D1_RE
 ID2D1Bitmap* WindowMaterial::EnsureSampled(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
                                            WindowEffect effect, bool dark,
                                            const std::wstring& path) {
-    ID2D1Bitmap* source = SourceBitmap(path);
+    ID2D1Bitmap* source = SourceBitmapAt(path, kSoftSource);
     if (!dc || !source) return nullptr;
 
     const float dw = dest.right - dest.left;

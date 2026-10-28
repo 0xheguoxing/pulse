@@ -10,6 +10,12 @@
 #include <thread>
 #include <map>
 namespace pulse::index {
+// Finds Pulse.Content.exe when it is not beside the running exe: in releases
+// it comes with the content enhancement pack, which pulse.exe verifies. An
+// empty path means the pack is missing, outdated or failed verification, and
+// the search fails with ERROR_FILE_NOT_FOUND.
+using ContentAgentLocator = std::wstring (*)();
+void SetContentAgentLocator(ContentAgentLocator locator) noexcept;
 // A long-lived user-mode index agent serves cached TEXT queries. Explicit
 // transient scans and duplicate scans retain the isolated per-request agent.
 // Cancel/SearchAsync only signal and enqueue; neither joins a thread on the UI.
@@ -39,6 +45,7 @@ private:
     friend struct ContentRefreshTestPeer;
     struct Command { uint32_t type; std::vector<uint8_t> payload; };
     void Worker();
+    void EnsureWorker();
     struct ActiveQuery {
         uint64_t session_id = 0, generation = 0;
         HANDLE cancel = nullptr;
@@ -70,6 +77,7 @@ private:
     HANDLE job_ = nullptr;
     HANDLE cancel_event_ = nullptr;
     std::wstring persistent_token_;
+    std::mutex worker_mu_;  // guards worker_ (EnsureWorker, Stop)
     std::thread worker_;
     mutable std::mutex state_mu_;
     std::condition_variable wake_;

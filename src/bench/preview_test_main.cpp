@@ -160,7 +160,7 @@ std::vector<unsigned char> BuildPptStream(bool with_slide) {
 // [MS-XLS] BIFF8 "Workbook" stream: one worksheet whose cells exercise every
 // record the sheet reader handles; the second shared string continues in a
 // CONTINUE record that switches from 8-bit to 16-bit characters.
-std::vector<unsigned char> BuildXlsStream() {
+std::vector<unsigned char> BuildXlsStream(bool shared_formula = false) {
     using Bytes = std::vector<unsigned char>;
     const auto u16 = [](uint32_t v) { return Bytes{static_cast<unsigned char>(v), static_cast<unsigned char>(v >> 8)}; };
     const auto u32 = [&](uint32_t v) { Bytes b = u16(v & 0xFFFF); Bytes h = u16(v >> 16); b.insert(b.end(), h.begin(), h.end()); return b; };
@@ -180,6 +180,13 @@ std::vector<unsigned char> BuildXlsStream() {
     std::memcpy(number_bytes.data(), &number, 8);
     std::memcpy(formula_result.data(), &formula_marker, 8);
     formula_result[0] = 0; formula_result[6] = 0xFF; formula_result[7] = 0xFF;   // string result
+    // Optional: a string formula heading a shared range - its SHRFMLA record
+    // comes between the FORMULA and the STRING result.
+    const Bytes shared = shared_formula
+        ? cat({rec(0x0006, cat({cell(5, 2), formula_result, u16(0), u32(0), u16(0)})),
+               rec(0x04BC, Bytes(10, 0)),
+               rec(0x0207, cat({u16(6), Bytes{0}, narrow("shared")}))})
+        : Bytes{};
     const Bytes sheet = cat({
         bof(0x0010),
         rec(0x00FD, cat({cell(1, 1), u32(0)})),
@@ -191,6 +198,7 @@ std::vector<unsigned char> BuildXlsStream() {
         rec(0x0207, cat({u16(4), Bytes{0}, narrow("calc")})),
         rec(0x0205, cat({cell(4, 2), Bytes{1, 0}})),
         rec(0x0204, cat({cell(5, 1), u16(3), Bytes{0}, narrow("lbl")})),
+        shared,
         eof});
     const Bytes sst = rec(0x00FC, cat({u32(2), u32(2), u16(2), Bytes{1}, wide(L"\u540D\u79F0"),
                                        u16(8), Bytes{0}, narrow("Qty")}));
@@ -980,9 +988,11 @@ int wmain(int argc, wchar_t** argv) {
               psdResult.pixels[12] == 255 && psdResult.pixels[14] == 0,         // (3,0) blue
               L"psd decodes the RLE merged composite");
         // 2x1 16-bit gray with merged transparency (negative layer count), raw.
+        // Photoshop stores the colour over white: gray 128 at alpha 128 is
+        // kept as 191 (0xBF80), unmatted to premultiplied 64.
         std::vector<unsigned char> gray = psd(2, 2, 1, 16, 1, true, -1);
         be16(gray, 0);
-        be16(gray, 0x8000); be16(gray, 0x8000);   // gray
+        be16(gray, 0xBF80); be16(gray, 0x8000);   // gray, stored over white
         be16(gray, 0x8000); be16(gray, 0xFFFF);   // alpha
         Check(WriteBytes(path(L"gray.psd"), gray), L"create 16-bit PSD fixture");
         Result grayResult;
@@ -1909,6 +1919,13 @@ int wmain(int argc, wchar_t** argv) {
                   L"xls NUMBER, RK and MULRK values (integer and /100 forms)");
             Check(xlsOk && at(3, 0) == L"calc" && at(3, 1) == L"TRUE" && at(4, 0) == L"lbl" && at(1, 0).empty(),
                   L"xls formula string result via STRING, BOOLERR and LABEL; empty cells stay empty");
+            Check(WriteBytes(path(L"shared.xls"), BuildCompoundFile(L"Workbook", BuildXlsStream(true))),
+                  L"create BIFF8 fixture with a shared string formula");
+            preview::SheetModel sharedXls;
+            const bool sharedXlsOk = preview::ReadSheetModel(path(L"shared.xls"), 6, 4, sharedXls, &xlsError);
+            Check(sharedXlsOk && sharedXls.grid.size() > 4 && sharedXls.grid[4].size() > 1 &&
+                  sharedXls.grid[4][1] == L"shared" && sharedXls.grid[3][0] == L"calc",
+                  L"xls string result after a SHRFMLA record still reaches its formula cell");
             Result xlsGrid;
             Check(host.Request(path(L"sheet.xls"), xlsGrid, MAXDWORD, 256) && xlsGrid.response.status == 0 &&
                   xlsGrid.response.width == 256 && xlsGrid.response.height == 200 && HasInk(xlsGrid) &&

@@ -85,6 +85,17 @@ public:
                                const std::wstring& verb = {},
                                const std::wstring& text = {}, const Accepted& accepted = {});
     void CloseContextMenu(uint32_t session_id);
+    // One of Explorer's verbs on shell items (REQ_SHELL_VERB); empty verb =
+    // the default one. Completes via Callbacks::done.
+    uint32_t ShellVerb(const std::vector<std::wstring>& paths, uint32_t owner_hwnd, bool background,
+                       const std::wstring& verb, const Accepted& accepted = {});
+    // One shell-side file operation (REQ_SHELL_TRANSFER, op = STO_*) on shell
+    // parsing names or paths: a phone's copy, move, new item or delete. Its
+    // progress and completion come through Callbacks. Not retried after a
+    // host restart (a copy that was half done is reported as failed).
+    uint32_t ShellTransfer(uint32_t op, uint32_t flags, const std::wstring& dest,
+                           const std::vector<std::wstring>& sources,
+                           const std::vector<std::wstring>& names, const Accepted& accepted = {});
 
 private:
 #ifdef PULSE_SHELL_CLIENT_TEST
@@ -114,7 +125,9 @@ private:
         uint64_t generation = 0;
     };
 
-    uint32_t Submit(uint32_t type, const std::vector<uint8_t>& payload, const Accepted& accepted = {});
+    // retry = false: a host restart fails the request instead of resending it.
+    uint32_t Submit(uint32_t type, const std::vector<uint8_t>& payload, const Accepted& accepted = {},
+                    bool retry = true);
     bool EnsureConnected();
     bool SpawnChild();
     void KillChild();

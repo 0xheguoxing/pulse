@@ -7,20 +7,24 @@
 
 namespace pulse::ui {
 
-inline constexpr float kColumnStripDefaultDip = 200.0f;
-inline constexpr float kColumnStripChildDefaultDip = 220.0f;
+// Finder-style columns: every column, the current folder's list included,
+// has the same default width, so going one level deeper only adds a column
+// on the right and the ones already shown stay where they are.
+inline constexpr float kColumnStripDefaultDip = 240.0f;
+inline constexpr float kColumnStripChildDefaultDip = 240.0f;
 inline constexpr float kColumnStripMinDip = 120.0f;
 inline constexpr float kColumnStripMaxDip = 560.0f;
-// The current folder keeps at least this much room.
-inline constexpr float kColumnStripCurrentMinDip = 240.0f;
-// Largest fraction of the pane (after the child column) the ancestors use.
-inline constexpr float kColumnStripAncestorShare = 0.5f;
 // Column id of the trailing "contents of the selected folder" column.
 // Ancestor columns use their index into the root-to-parent chain.
 inline constexpr int kColumnStripChildId = 10000;
+// Divider id of the current folder's list (its right edge).
+inline constexpr int kColumnStripBodyId = 10001;
+// Width slot of the current folder's list (past every ancestor slot).
+inline constexpr size_t kColumnStripBodySlot = 16;
 
-// Width slot 0 is the child column, slot k (k >= 1) the k-th ancestor counted
-// from the current folder (1 = parent). Missing/zero entries use defaults.
+// Width slot 0 is the child column, slot k (1 <= k < kColumnStripBodySlot)
+// the k-th ancestor counted from the current folder (1 = parent) and
+// kColumnStripBodySlot the current folder. Missing/zero entries use defaults.
 float ColumnStripWidthDip(const std::vector<float>& widths_dip, size_t slot) noexcept;
 size_t ColumnStripWidthSlot(int column_id, size_t ancestor_count) noexcept;
 
@@ -40,13 +44,14 @@ struct ColumnStripLayout {
     float max_scroll_px = 0.0f;  // > 0: ancestors overflow the viewport
     float content_px = 0.0f;     // total ancestor width
     // Left to right: ancestors intersecting the viewport (rects may extend
-    // past it; clip to viewport), then the child column when present.
+    // past it; clip to viewport), then the child column.
     std::vector<ColumnStripSlot> columns;
 };
 
 // pane_bounds is the full pane rect; column rects span [top, pane bottom).
-// Ancestors never drop out: when they do not fit they scroll horizontally.
-// scroll_from_right_dip = 0 keeps the parent visible next to the list.
+// Columns line up from the left. Ancestors never drop out: when they do not fit they scroll
+// horizontally. scroll_from_right_dip = 0 keeps the parent visible next to
+// the list.
 ColumnStripLayout LayoutColumnStrip(const D2D1_RECT_F& pane_bounds, float top,
                                     size_t ancestor_count, bool child_slot,
                                     const std::vector<float>& widths_dip,

@@ -7,6 +7,7 @@
 #include "../ui/fluent_menu.h"
 #include "app_window_title.h"
 #include "window_identity.h"
+#include "keymap.h"
 #include "window_overview_ui.h"
 #include "window_registry.h"
 
@@ -196,7 +197,7 @@ void ShowWindowIdentityMenu(AppState& s, POINT screen) {
         overview.command = kCmdOverview;
         overview.text = l10n::Get(l10n::StringId::WindowOverviewTitle);
         overview.glyph = L"\uE8A9";  // ViewAll
-        overview.shortcut = L"Ctrl+Shift+O";
+        overview.shortcut = app::ShownShortcut(L"Ctrl+Shift+O");
         items.push_back(std::move(overview));
         return items;
     };

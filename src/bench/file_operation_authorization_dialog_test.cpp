@@ -10,8 +10,14 @@ namespace pulse::ui {
 struct FileOperationWindowTestAccess {
     static HWND Handle(FileOperationWindow& window) { return window.hwnd_; }
     static void Size(FileOperationWindow& window, UINT dpi) {
-        RECT rect{0, 0, MulDiv(460, dpi, 96), MulDiv(268, dpi, 96)};
+        RECT rect{0, 0, MulDiv(468, dpi, 96), MulDiv(348, dpi, 96)};
         SendMessageW(window.hwnd_, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&rect));
+        window.ResizeForDetails(false);   // the height the current state asks for
+    }
+    static int ClientHeight(FileOperationWindow& window) {
+        RECT client{};
+        GetClientRect(window.hwnd_, &client);
+        return client.bottom;
     }
     static POINT Button(FileOperationWindow& window, int id, int* pixels = nullptr) {
         const int y = static_cast<int>(window.compositor_.Height() - 26 * window.scale_);
@@ -87,13 +93,16 @@ int wmain(int argc, wchar_t** argv) {
                 for (bool dark : {false, true}) {
                     window.SetTheme(dark, ui::HexColor(0x0078D4));
                     window.Update(status);
+                    Check(std::abs(Access::ClientHeight(window) - MulDiv(196, dpi, 96)) <= 2,
+                        "the permission card is only as tall as its message (196 DIP)");
                     int retry_pixels = 0, skip_pixels = 0;
                     const auto retry_button = Access::Button(window, 6, &retry_pixels);
                     const auto skip_button = Access::Button(window, 7, &skip_pixels);
                     const auto cancel_button = Access::Button(window, 4);
-                    Check(retry_button.x >= 0 && retry_button.x < skip_button.x &&
-                        skip_button.x < cancel_button.x &&
-                        retry_pixels >= std::floor(Access::Width(window, l10n::StringId::OpRetryAuthorization, true)) &&
+                    // 跳过此项 on the left, then 重试授权 and 取消 on the right.
+                    Check(skip_button.x >= 0 && skip_button.x < retry_button.x &&
+                        retry_button.x < cancel_button.x &&
+                        retry_pixels >= std::floor(Access::Width(window, l10n::StringId::OpRetryAuthorization)) &&
                         skip_pixels >= std::floor(Access::Width(window, l10n::StringId::OpSkipAuthorization)),
                         "authorization buttons fit minimum width without overlap");
                     Check(Access::Button(window, 3).x < 0 && Access::Button(window, 5).x < 0,

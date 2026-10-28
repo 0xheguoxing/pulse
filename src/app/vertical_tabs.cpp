@@ -2,7 +2,9 @@
 #include "app_commands.h"
 #include "app_navigation.h"
 #include "last_tab_close.h"
+#include "favorites_bar.h"
 #include "../common/localization.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <utility>
 #include <cwchar>
@@ -336,6 +338,9 @@ bool HandleFolderMiddleClick(AppState& s, int x, int y) {
     const ui::HitTestResult hit =
         s.renderer.HitTest(vm, bounds, static_cast<float>(x), static_cast<float>(y));
     std::wstring path;
+    // A 收藏夹 group (the bar's button, the sidebar's row): all its folders.
+    if ((hit.region == R::FavoritesBarItem || hit.region == R::SidebarItem) && OpenFavoritesGroupTabs(s, hit.path))
+        return true;
     if (hit.region == R::Row && hit.index >= 0) {
         app::Pane* pane = PaneAtSlot(s, hit.pane_index);
         app::Tab* tab = pane ? pane->ActiveTab() : nullptr;
@@ -344,8 +349,13 @@ bool HandleFolderMiddleClick(AppState& s, int x, int y) {
         path = EntryFullPath(*tab, hit.index);
     } else if (hit.region == R::BreadcrumbSegment) {
         path = hit.path;
+    } else if (hit.region == R::FavoritesBarItem || hit.region == R::FavoritesBarChevron) {
+        path = FavoritesBarMiddleClickPath(s, hit);
+        if (path.empty()) return true;   // a starred file, or the bar's empty part
     } else if (hit.region == R::SidebarItem) {
         if (IsVerticalTabPath(hit.path) || hit.path.starts_with(kTabPrefix)) return false;
+        // Tag group headers and 所有标签 › are sidebar controls, not places.
+        if (app::IsTagGroupPath(hit.path) || hit.path == app::MakeTagManagerPath()) return true;
         path = hit.path;
         if (!path.empty() && !fs::IsVirtualPath(path)) {
             // Starred files and other non-folder places have nothing to browse.

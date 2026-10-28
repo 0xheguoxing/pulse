@@ -2,6 +2,7 @@
 // Formats Specification (header, color mode data, image resources, layer and
 // mask information, image data).
 #include "psd_raster.h"
+#include "icc_profile.h"
 
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -17,6 +18,13 @@ namespace {
 using Microsoft::WRL::ComPtr;
 
 constexpr ULONGLONG kDecodeBudgetMs = 4000;   // composite streaming deadline
+// Grid thumbnails decode the composite up to this size: the embedded JPEG is
+// white-matted, lossy and at most 160 px. Larger documents keep the JPEG.
+constexpr uint64_t kGridCompositePixels = 32ull * 1000 * 1000;
+// Documents up to this size always use the composite (a few milliseconds).
+constexpr uint64_t kGridSmallPixels = 1000ull * 1000;
+// Embedded ICC profiles beyond this are ignored (press CMYK runs ~0.5 MB).
+constexpr uint32_t kIccBudget = 4u * 1024u * 1024u;
 constexpr size_t kReadChunk = 1u << 20;
 
 // Sequential big-endian reader over a file with a 1 MB window.
@@ -103,12 +111,63 @@ struct Header {
     unsigned char palette[768]{};
     bool has_palette = false;
     std::vector<unsigned char> thumbnail;   // JFIF from resource 1036
+    uint32_t thumbnail_edge = 0;            // its long edge in pixels
+    std::vector<unsigned char> icc;         // ICC profile, resource 1039 (gray, CMYK; RGB unless sRGB)
     bool real_merged = true;                // resource 1057 hasRealMergedData
-    bool merged_alpha = false;              // negative layer count
+    bool merged_alpha = false;              // merged image carries transparency
     uint64_t image_data = 0;                // offset of the image data section
 };
 
 enum Mode : uint16_t { Bitmap = 0, Gray = 1, Indexed = 2, Rgb = 3, Cmyk = 4, Multichannel = 7, Duotone = 8, Lab = 9 };
+
+// Tagged blocks with an 8-byte length in PSB documents.
+bool LongTaggedBlock(const char* key) {
+    static const char* const kKeys[] = {"LMsk", "Lr16", "Lr32", "Layr", "Mt16", "Mt32", "Mtrn",
+                                        "Alph", "FMsk", "lnk2", "FEid", "FXid", "PxSD"};
+    for (const char* k : kKeys)
+        if (std::memcmp(key, k, 4) == 0) return true;
+    return false;
+}
+
+bool TaggedSignatureAt(Reader& r, uint64_t at, uint64_t end) {
+    char sig[4]{};
+    return at + 12 <= end && r.Seek(at) && r.Read(sig, 4) &&
+        (std::memcmp(sig, "8BIM", 4) == 0 || std::memcmp(sig, "8B64", 4) == 0);
+}
+
+// Additional layer information after the global layer mask: signature, key,
+// length, data. 16/32-bit documents keep their layers in "Lr16"/"Lr32" (the
+// 8-bit layer info is empty), so the merged-transparency sign is read there
+// too; "Mtrn"/"Mt16"/"Mt32" mark merged transparency outright.
+void ScanTaggedBlocks(Reader& r, Header& h, uint64_t at, uint64_t end) {
+    if (at > end || end - at < 4 || !r.Seek(at)) return;
+    const uint32_t mask_len = r.U32();
+    if (!r.ok() || mask_len > end - at - 4) return;
+    at += 4 + uint64_t{mask_len};
+    for (int blocks = 0; blocks < 256 && r.ok(); ++blocks) {
+        // Writers disagree on padding block data to 2 or 4 bytes.
+        uint64_t found = 0;
+        for (const uint64_t candidate : {at, (at + 1) & ~uint64_t{1}, (at + 3) & ~uint64_t{3}}) {
+            if (TaggedSignatureAt(r, candidate, end)) { found = candidate; break; }
+        }
+        if (!found) return;
+        char key[4]{};
+        if (!r.Read(key, 4)) return;
+        const bool wide = h.psb && LongTaggedBlock(key);
+        if (found + 12 + (wide ? 4u : 0u) > end) return;
+        const uint64_t len = wide ? r.U64() : r.U32();
+        const uint64_t data = r.tell();
+        if (!r.ok() || len > end - data) return;
+        if (std::memcmp(key, "Mtrn", 4) == 0 || std::memcmp(key, "Mt16", 4) == 0 ||
+            std::memcmp(key, "Mt32", 4) == 0) {
+            h.merged_alpha = true;
+        } else if (len >= 2 && (std::memcmp(key, "Lr16", 4) == 0 ||
+                   std::memcmp(key, "Lr32", 4) == 0 || std::memcmp(key, "Layr", 4) == 0)) {
+            if (static_cast<int16_t>(r.U16()) < 0) h.merged_alpha = true;
+        }
+        at = data + len;
+    }
+}
 
 bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
     auto fail = [&](const wchar_t* why) { if (error) *error = why; return false; };
@@ -139,7 +198,7 @@ bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
         r.Skip(color_len);
     }
 
-    // Image resources: embedded thumbnail and the merged-data flag.
+    // Image resources: embedded thumbnail, ICC profile and the merged-data flag.
     const uint32_t res_len = r.U32();
     const uint64_t res_end = r.tell() + res_len;
     while (r.ok() && r.tell() + 12 <= res_end) {
@@ -154,11 +213,19 @@ bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
         if (data_end > res_end) break;
         if (id == 1036 && size > 28) {
             const uint32_t format = r.U32();
-            r.Skip(24);
+            const uint32_t thumb_w = r.U32(), thumb_h = r.U32();
+            r.Skip(16);
             if (format == 1 && size - 28 < 8u * 1024u * 1024u) {
                 h.thumbnail.resize(size - 28);
                 if (!r.Read(h.thumbnail.data(), h.thumbnail.size())) h.thumbnail.clear();
+                else h.thumbnail_edge = (std::max)(thumb_w, thumb_h);
             }
+        } else if (id == 1039 && size >= 128 && size <= kIccBudget &&
+                   (h.mode == Gray || h.mode == Cmyk || (h.mode == Rgb && h.depth <= 16))) {
+            // 32-bit documents hold linear light, already encoded for display.
+            h.icc.resize(size);
+            if (!r.Read(h.icc.data(), size) || (h.mode == Rgb && icc::IsSrgb(h.icc.data(), h.icc.size())))
+                h.icc.clear();
         } else if (id == 1057 && size >= 5) {
             r.Skip(4);
             h.real_merged = r.U8() != 0;
@@ -167,13 +234,22 @@ bool ParseHeader(Reader& r, Header& h, std::wstring* error) {
     }
     if (!r.Seek(res_end)) return fail(L"psd-truncated");
 
-    // Layer and mask information: only the sign of the layer count matters -
-    // negative means the first alpha channel is the merged transparency.
+    // Layer and mask information. The first extra channel is the merged
+    // transparency when the layer count is negative, or when the tagged
+    // blocks after the layer info say so (see ScanTaggedBlocks): 16-bit
+    // documents with an empty 8-bit layer info otherwise read as opaque and
+    // their white-matted composite showed as a white sheet.
     const uint64_t lm_len = h.psb ? r.U64() : r.U32();
-    const uint64_t lm_end = r.tell() + lm_len;
-    if (lm_len >= (h.psb ? 10u : 6u)) {
+    const uint64_t lm_start = r.tell();
+    if (!r.ok() || lm_len > r.size() - (std::min)(r.size(), lm_start)) return fail(L"psd-truncated");
+    const uint64_t lm_end = lm_start + lm_len;
+    if (lm_len >= (h.psb ? 8u : 4u)) {
         const uint64_t layer_len = h.psb ? r.U64() : r.U32();
-        if (layer_len >= 2) h.merged_alpha = static_cast<int16_t>(r.U16()) < 0;
+        const uint64_t layer_start = r.tell();
+        if (r.ok() && layer_start <= lm_end && layer_len <= lm_end - layer_start) {
+            if (layer_len >= 2) h.merged_alpha = static_cast<int16_t>(r.U16()) < 0;
+            if (r.ok()) ScanTaggedBlocks(r, h, layer_start + layer_len, lm_end);
+        }
     }
     if (!r.Seek(lm_end) || !r.ok()) return fail(L"psd-truncated");
     h.image_data = lm_end;
@@ -208,6 +284,13 @@ bool PackBits(const unsigned char* src, size_t src_len, unsigned char* dst, size
     return o == dst_len;
 }
 
+// Linear coverage (32-bit alpha) -> byte; only colour takes the display curve.
+uint8_t LinearToByte(float f) {
+    if (!(f > 0.0f)) return 0;
+    if (f >= 1.0f) return 255;
+    return static_cast<uint8_t>(std::lround(f * 255.0f));
+}
+
 // Linear float (32-bit documents) -> display byte.
 uint8_t FloatToByte(float f) {
     static const auto lut = [] {
@@ -235,6 +318,66 @@ void LabToRgb(uint8_t l8, uint8_t a8, uint8_t b8, uint8_t& r, uint8_t& g, uint8_
         return static_cast<uint8_t>(std::lround(v * 255.0));
     };
     r = enc(lr); g = enc(lg); b = enc(lb);
+}
+
+// Gray and CMYK are converted to sRGB through the document's ICC profile:
+// Photoshop grays are dot-gain encoded and press CMYK is not RGB minus ink,
+// so plain values showed grays far too dark and CMYK far too saturated.
+// CMYK without a profile goes through the system's SWOP profile (RSWOP.icm),
+// as Photoshop falls back to a SWOP working space. RGB documents tagged with
+// another profile than sRGB (Adobe RGB, Display P3, ProPhoto) are converted
+// the same way. device holds one value (gray) or four (CMYK ink, 255 = full)
+// per pixel; RGB reads the pixels themselves. On success the colour bytes of
+// the BGRA pixels are replaced. Otherwise they keep the plain values.
+// Matrix/TRC RGB profiles skip the system transform (icc::MatrixToSrgb).
+bool ManageColour(const Header& h, std::vector<unsigned char>& device, UINT width, UINT height,
+                  std::vector<unsigned char>& pixels) {
+    const bool cmyk = h.mode == Cmyk;
+    const bool rgb = h.mode == Rgb;
+    if (rgb && pixels.size() >= size_t{width} * height * 4) {
+        icc::MatrixToSrgb matrix;
+        if (matrix.Init(h.icc.data(), h.icc.size())) {
+            matrix.Apply(pixels.data(), size_t{width} * height);
+            return true;
+        }
+    }
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICColorContext> source, target;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateColorContext(&source)) || FAILED(factory->CreateColorContext(&target)) ||
+        FAILED(target->InitializeFromExifColorSpace(1)))   // sRGB
+        return false;
+    HRESULT hr = E_FAIL;
+    if (!h.icc.empty())
+        hr = source->InitializeFromMemory(const_cast<BYTE*>(h.icc.data()), static_cast<UINT>(h.icc.size()));
+    if (FAILED(hr) && cmyk) {
+        wchar_t dir[MAX_PATH]{};
+        const UINT n = GetSystemDirectoryW(dir, MAX_PATH);
+        if (n && n < MAX_PATH)
+            hr = source->InitializeFromFilename((std::wstring(dir, n) + L"\\spool\\drivers\\color\\RSWOP.icm").c_str());
+    }
+    if (FAILED(hr)) return false;
+    // 32bppBGR reads the BGRA pixels and ignores their alpha byte.
+    std::vector<unsigned char>& input = rgb ? pixels : device;
+    const UINT channels = cmyk || rgb ? 4u : 1u;
+    const WICPixelFormatGUID format = rgb ? GUID_WICPixelFormat32bppBGR
+        : cmyk ? GUID_WICPixelFormat32bppCMYK : GUID_WICPixelFormat8bppGray;
+    ComPtr<IWICBitmap> bitmap;
+    ComPtr<IWICColorTransform> transform;
+    std::vector<unsigned char> bgrx(pixels.size());
+    if (FAILED(factory->CreateBitmapFromMemory(width, height, format, width * channels,
+                                               static_cast<UINT>(input.size()), input.data(), &bitmap)) ||
+        FAILED(factory->CreateColorTransformer(&transform)) ||
+        FAILED(transform->Initialize(bitmap.Get(), source.Get(), target.Get(), GUID_WICPixelFormat32bppBGR)) ||
+        FAILED(transform->CopyPixels(nullptr, width * 4, static_cast<UINT>(bgrx.size()), bgrx.data())))
+        return false;
+    for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        pixels[i] = bgrx[i];
+        pixels[i + 1] = bgrx[i + 1];
+        pixels[i + 2] = bgrx[i + 2];
+    }
+    return true;
 }
 
 bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsigned char>& pixels,
@@ -266,15 +409,14 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
         uint64_t packed_total = 0;
         for (size_t i = 0; i < rows_total; ++i) {
             counts[i] = h.psb ? r.U32() : r.U16();
-            // A preview does not allocate attacker-controlled multi-gigabyte
-            // rows, even when the file contains enough padding to hold them.
-            if (counts[i] > row_bytes * 2 + 1024) return fail(L"psd-rle-row-limit");
             packed_total += counts[i];
         }
         if (!r.ok()) return fail(L"psd-truncated");
         if (packed_total > r.size() - r.tell()) return fail(L"psd-truncated");
         // Bound even skipped channels before any row allocation. PackBits can
-        // contain arbitrary no-ops, so this is an explicit preview work budget.
+        // contain arbitrary no-ops, so this is an explicit preview work budget:
+        // a preview does not allocate attacker-controlled multi-gigabyte rows,
+        // even when the file contains enough padding to hold them.
         const size_t packed_limit = (std::max)(size_t{65536}, row_bytes * 2 + 1024);
         uint64_t remaining = r.size() - r.tell();
         for (uint32_t count : counts) {
@@ -337,7 +479,7 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
                     const uint32_t bits = uint32_t(raw[x * 4]) << 24 | uint32_t(raw[x * 4 + 1]) << 16 |
                                           uint32_t(raw[x * 4 + 2]) << 8 | raw[x * 4 + 3];
                     float f; std::memcpy(&f, &bits, 4);
-                    row8[x] = FloatToByte(f);
+                    row8[x] = alpha && c == color ? LinearToByte(f) : FloatToByte(f);
                 }
                 break;
             }
@@ -357,12 +499,18 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
 
     stride = out_w * 4;
     pixels.assign(static_cast<size_t>(stride) * out_h, 0);
+    // Gray and CMYK cells are also kept as device values for ManageColour;
+    // RGB with a profile is converted from the pixels themselves.
+    const bool device_values = h.mode == Gray || h.mode == Cmyk;
+    const bool managed = device_values || (h.mode == Rgb && !h.icc.empty());
+    const int device_channels = h.mode == Cmyk ? 4 : 1;
+    std::vector<unsigned char> device(device_values ? static_cast<size_t>(out_w) * out_h * device_channels : 0);
     for (UINT oy = 0; oy < out_h; ++oy) {
         for (UINT ox = 0; ox < out_w; ++ox) {
             const size_t i = static_cast<size_t>(oy) * out_w + ox;
             const uint64_t n = (std::max)(uint64_t{1}, uint64_t{rows_in[oy]} * cols_in[ox]);
             auto v = [&](int c) { return static_cast<uint8_t>((acc[c][i] + n / 2) / n); };
-            uint8_t R = 0, G = 0, B = 0, A = 255;
+            uint8_t R = 0, G = 0, B = 0;
             switch (h.mode) {
             case Rgb: R = v(0); G = v(1); B = v(2); break;
             case Cmyk: {
@@ -379,13 +527,25 @@ bool DecodeComposite(Reader& r, const Header& h, UINT max_edge, std::vector<unsi
             case Lab: LabToRgb(v(0), v(1), v(2), R, G, B); break;
             default: R = G = B = v(0); break;
             }
-            if (alpha) A = v(color);
-            unsigned char* px = pixels.data() + static_cast<size_t>(oy) * stride + ox * 4;
-            px[0] = static_cast<unsigned char>(B * A / 255);
-            px[1] = static_cast<unsigned char>(G * A / 255);
-            px[2] = static_cast<unsigned char>(R * A / 255);
-            px[3] = A;
+            if (device_values)
+                for (int c = 0; c < device_channels; ++c)
+                    device[i * device_channels + c] = h.mode == Cmyk ? static_cast<unsigned char>(255 - v(c)) : v(c);
+            unsigned char* px = pixels.data() + i * 4;
+            px[0] = B; px[1] = G; px[2] = R; px[3] = alpha ? v(color) : uint8_t{255};
         }
+    }
+    if (managed) ManageColour(h, device, out_w, out_h, pixels);
+    if (!alpha) return true;
+    // Photoshop stores the merged image of a transparent document composited
+    // over white: stored = colour * a + 255 * (1 - a), so the premultiplied
+    // colour is stored - (255 - a). The relation is linear and holds for
+    // box-averaged cells too. Scaling the matted colour by alpha kept the
+    // white in soft edges and clear areas. Managed colour maps paper white to
+    // sRGB white, so this follows ManageColour.
+    for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        const int a = pixels[i + 3];
+        for (size_t c = 0; c < 3; ++c)
+            pixels[i + c] = static_cast<unsigned char>((std::clamp)(int{pixels[i + c]} + a - 255, 0, a));
     }
     return true;
 }
@@ -446,7 +606,17 @@ bool RasterizePsdFile(const std::wstring& path, UINT max_edge, bool prefer_embed
     source_height = header.height;
     max_edge = (std::max)(16u, max_edge);
 
-    if (prefer_embedded && DecodeThumbnail(header.thumbnail, max_edge, pixels, width, height, stride))
+    // The embedded JPEG has no transparency (it is the white-matted image), is
+    // lossy and small. Grid thumbnails use it only for opaque documents too
+    // big to decode in a few milliseconds whose JPEG already covers the
+    // requested edge; otherwise the composite, while affordable.
+    const uint64_t document_pixels = static_cast<uint64_t>(header.width) * header.height;
+    const uint32_t wanted_edge = (std::min)(max_edge, (std::max)(header.width, header.height));
+    const bool jpeg_covers = header.thumbnail_edge >= wanted_edge;
+    const bool composite_first = header.real_merged && document_pixels <= kGridCompositePixels &&
+        (header.merged_alpha || !jpeg_covers || document_pixels <= kGridSmallPixels);
+    if (prefer_embedded && !composite_first &&
+        DecodeThumbnail(header.thumbnail, max_edge, pixels, width, height, stride))
         return true;
     if (header.real_merged &&
         DecodeComposite(reader, header, max_edge, pixels, width, height, stride, error))

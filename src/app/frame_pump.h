@@ -10,6 +10,7 @@
 #pragma once
 #include <windows.h>
 #include <atomic>
+#include <cstdint>
 #include <thread>
 
 namespace pulse::app {
@@ -28,8 +29,11 @@ public:
     void Stop();
 
     // Any thread. Frames keep coming until Disarm; at most one message is in
-    // the queue at a time.
-    void Arm() noexcept;
+    // the queue at a time. Arm follows the display; ArmPaced leaves at least
+    // min_frame_ms between frames (still on clock ticks) for motion that only
+    // decorates, such as loading shimmer. Whichever was called last applies.
+    void Arm() noexcept { ArmPaced(0.0); }
+    void ArmPaced(double min_frame_ms) noexcept;
     void Disarm() noexcept { armed_.store(false, std::memory_order_relaxed); }
     // UI thread, first thing when handling the message: allows the next post.
     void FrameConsumed() noexcept { posted_.store(false, std::memory_order_release); }
@@ -60,6 +64,7 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> armed_{false};
     std::atomic<bool> posted_{false};
+    std::atomic<uint32_t> min_frame_us_{0};
 };
 
 } // namespace pulse::app

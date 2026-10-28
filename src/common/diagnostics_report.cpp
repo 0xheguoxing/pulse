@@ -2,6 +2,7 @@
 #include "diagnostics_exporter.h"
 #include "json_utils.h"
 #include "utf8_file.h"
+#include "preview_packs.h"
 #include "pulse_version.h"
 #include <windows.h>
 #include <bcrypt.h>
@@ -199,8 +200,14 @@ bool WriteSupportReport(const ExportOptions& options, bool copied, bool flushed,
         report += "},\"service\":" + (options.collect_environment ? Service() : "{\"not_collected\":true}");
         report += ",\"fixed_drives\":" + (options.collect_environment ? Drives() : "[]");
         report += ",\"binaries\":["; bool first = true;
-        if (!options.install_directory.empty()) for (const wchar_t* name : {L"pulse.exe", L"Pulse.Index.exe", L"Pulse.Preview.exe", L"Pulse.Document.exe", L"pulse_shell.exe"}) {
-            const auto path = fs::path(options.install_directory) / name;
+        std::vector<std::pair<std::wstring, fs::path>> binaries;
+        if (!options.install_directory.empty()) for (const wchar_t* name : {L"pulse.exe", L"Pulse.Index.exe", L"Pulse.Preview.exe", L"pulse_shell.exe"})
+            binaries.emplace_back(name, fs::path(options.install_directory) / name);
+        // The content enhancement pack, when this user installed it.
+        const std::wstring content_pack = packs::InstalledPackDirectory(packs::PacksRoot().empty() ? std::wstring{} : packs::PacksRoot() + L"\\content");
+        if (!content_pack.empty()) for (const wchar_t* name : {L"Pulse.Content.exe", L"Pulse.Document.exe"})
+            binaries.emplace_back(std::wstring(L"packs/content/") + name, fs::path(content_pack) / name);
+        for (const auto& [name, path] : binaries) {
             const bool got = ReadPlain(path, contents, read_error);
             if (!first) report += ','; first = false;
             report += "{\"name\":\"" + Narrow(name) + "\",\"read_error\":" + std::to_string(read_error) + ",\"sha256\":\"" + (got ? Hash(contents) : "") + "\",\"file_version\":\"" + (got ? Version(path) : "") + "\"}";

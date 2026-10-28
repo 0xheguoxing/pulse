@@ -1,8 +1,10 @@
 #include "entry_order_hold.h"
 #include "entry_group.h"
+#include "entry_sort.h"
 #include <algorithm>
 #include <cstdint>
 #include <cwctype>
+#include <string_view>
 #include <unordered_map>
 
 namespace pulse::app {
@@ -17,17 +19,18 @@ int GroupOrder(const fs::DirEntry& a, const fs::DirEntry& b,
     return GroupCompare(a, b, grouping->by, grouping->clock, col, dir);
 }
 
-bool Grouped() noexcept {
-    const EntryGrouping* grouping = CurrentEntryGrouping();
-    return grouping && grouping->by != GroupBy::None;
+// towlower, without the CRT call for ASCII (most names are ASCII).
+wchar_t FoldChar(wchar_t c) noexcept {
+    if (c < 0x80) return (c >= L'A' && c <= L'Z') ? static_cast<wchar_t>(c + (L'a' - L'A')) : c;
+    return static_cast<wchar_t>(std::towlower(c));
 }
 
 // Case-insensitive name key, folded per character like _wcsicmp.
 struct FoldedNameHash {
-    size_t operator()(const std::wstring& name) const noexcept {
+    size_t operator()(std::wstring_view name) const noexcept {
         uint64_t hash = 1469598103934665603ull;
         for (wchar_t c : name) {
-            hash ^= static_cast<uint64_t>(std::towlower(c));
+            hash ^= static_cast<uint64_t>(FoldChar(c));
             hash *= 1099511628211ull;
         }
         return static_cast<size_t>(hash);
@@ -35,10 +38,10 @@ struct FoldedNameHash {
 };
 
 struct FoldedNameEqual {
-    bool operator()(const std::wstring& a, const std::wstring& b) const noexcept {
+    bool operator()(std::wstring_view a, std::wstring_view b) const noexcept {
         if (a.size() != b.size()) return false;
         for (size_t i = 0; i < a.size(); ++i)
-            if (std::towlower(a[i]) != std::towlower(b[i])) return false;
+            if (FoldChar(a[i]) != FoldChar(b[i])) return false;
         return true;
     }
 };
@@ -57,14 +60,11 @@ bool GroupBefore(const fs::DirEntry& a, const fs::DirEntry& b,
 
 void InsertAtGroupEnd(std::vector<fs::DirEntry>& entries, fs::DirEntry entry,
                       ui::SortColumn col, ui::SortDirection dir) {
-    if (!Grouped()) {
-        entries.push_back(std::move(entry));
-        return;
-    }
-    const auto it = std::upper_bound(entries.begin(), entries.end(), entry,
-        [col, dir](const fs::DirEntry& value, const fs::DirEntry& row) {
-            return GroupOrder(value, row, col, dir) < 0;
-        });
+    // Before the first row that sorts after it: its sort position in a sorted
+    // list, and a sensible one among rows held out of order.
+    const auto it = std::find_if(entries.begin(), entries.end(), [&](const fs::DirEntry& row) {
+        return EntryLess(entry, row, col, dir);
+    });
     entries.insert(it, std::move(entry));
 }
 
@@ -85,7 +85,8 @@ std::vector<fs::DirEntry> KeepEntryOrder(const std::vector<fs::DirEntry>& shown,
                                          const std::vector<fs::DirEntry>& fresh,
                                          const std::vector<EntryRename>& renames,
                                          ui::SortColumn col, ui::SortDirection dir) {
-    std::unordered_map<std::wstring, size_t, FoldedNameHash, FoldedNameEqual> fresh_at;
+    // Keys view the names in `fresh`, which outlives the map.
+    std::unordered_map<std::wstring_view, size_t, FoldedNameHash, FoldedNameEqual> fresh_at;
     fresh_at.reserve(fresh.size());
     for (size_t i = 0; i < fresh.size(); ++i) fresh_at.emplace(fresh[i].name, i);
     std::unordered_map<std::wstring, std::wstring, FoldedNameHash, FoldedNameEqual> renamed_to;
@@ -109,15 +110,15 @@ std::vector<fs::DirEntry> KeepEntryOrder(const std::vector<fs::DirEntry>& shown,
         kept.push_back(at);
     }
 
-    // Everything else is new to this view: fresh is in sort order, so each
-    // group's newcomers follow its kept rows in sort order.
+    // Everything else is new to this view: fresh is in sort order, so the
+    // newcomers merge in at their sort position among the kept rows.
     std::vector<fs::DirEntry> out;
     out.reserve(fresh.size());
     size_t next = 0;
     const auto skip_used = [&] { while (next < fresh.size() && used[next]) ++next; };
     skip_used();
     for (const size_t at : kept) {
-        while (next < fresh.size() && GroupOrder(fresh[next], fresh[at], col, dir) < 0) {
+        while (next < fresh.size() && EntryLess(fresh[next], fresh[at], col, dir)) {
             out.push_back(fresh[next++]);
             skip_used();
         }
@@ -128,11 +129,21 @@ std::vector<fs::DirEntry> KeepEntryOrder(const std::vector<fs::DirEntry>& shown,
     return out;
 }
 
+bool SameEntryOrder(const std::vector<fs::DirEntry>& shown,
+                    const std::vector<fs::DirEntry>& fresh,
+                    ui::SortColumn col, ui::SortDirection dir) {
+    if (shown.size() != fresh.size()) return false;
+    for (size_t i = 0; i < fresh.size(); ++i) {
+        if (shown[i].name != fresh[i].name || !SameEntryGroup(shown[i], fresh[i], col, dir)) return false;
+    }
+    return true;
+}
+
 void FollowHeldRenames(const std::vector<EntryRename>& renames,
                        const std::vector<fs::DirEntry>& fresh,
                        std::vector<std::wstring>& names, std::wstring& focus) {
     if (renames.empty()) return;
-    std::unordered_map<std::wstring, char, FoldedNameHash, FoldedNameEqual> present;
+    std::unordered_map<std::wstring_view, char, FoldedNameHash, FoldedNameEqual> present;
     present.reserve(fresh.size());
     for (const auto& entry : fresh) present.emplace(entry.name, char{});
     const auto follow = [&](std::wstring& name) {
@@ -150,7 +161,7 @@ void FollowHeldRenames(const std::vector<EntryRename>& renames,
 
 void PruneHeldRenames(std::vector<EntryRename>& renames, const std::vector<fs::DirEntry>& fresh) {
     if (renames.empty()) return;
-    std::unordered_map<std::wstring, char, FoldedNameHash, FoldedNameEqual> present;
+    std::unordered_map<std::wstring_view, char, FoldedNameHash, FoldedNameEqual> present;
     present.reserve(fresh.size());
     for (const auto& entry : fresh) present.emplace(entry.name, char{});
     // A rename still pending leaves its old name on disk.

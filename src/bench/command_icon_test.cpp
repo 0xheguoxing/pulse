@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <utility>
 
 namespace {
 template<class T> struct Ref {
@@ -64,16 +65,24 @@ void Gallery(IWICImagingFactory* wic, ID2D1Factory* factory, const wchar_t* file
         L"Paste",L"Rename",L"Sort",L"Filter",L"List",L"Grid",L"Split",L"Columns",
         L"Panel",L"Close panel",L"Check",L"Eye",L"Info",L"Home",L"Tray",L"Pin",
         L"Link",L"Palette",L"Sliders",L"Warning",L"Lock",L"External",L"Favourite",L"More",
-        L"Split 1",L"Split 2",L"Split 3",L"Split 4",L"Contrast",L"Swap LR",L"Swap TB"
+        L"Split 1",L"Split 2",L"Split 3",L"Split 4",L"Contrast",L"Swap LR",L"Swap TB",
+        L"Copy path",L"Batch rename",L"Wildcard",L"Compare",L"Apply all",L"Adv. search",L"Copy to pane",
+        L"Move to pane",L"Open path",L"New folder",L"Group",L"Dissolve",L"Folder size",L"Workspace",
+        L"Toolbar",L"Sidebar",L"Undo",L"Markdown",L"Zip",L"Select all",L"Invert",L"Hidden",L"Protected",
+        L"Compact",L"Zebra",L"Size bar",L"Smart date",L"Outline",L"Terminal",L"Search all",L"Map drive",
+        L"Keyboard",L"Pin badge",L"Pin favorites",L"Pin quick",L"Pin workspace",L"Pin network",L"Pin toolbar"
     };
     static_assert(std::size(names) == static_cast<size_t>(Icon::Count)-1);
+    constexpr int kRows = static_cast<int>((std::size(names) + 10) / 11);
+    constexpr float kPanel = 52.0f + static_cast<float>(kRows) * 98.0f;
     Ref<IWICBitmap> bitmap;
     Ref<ID2D1RenderTarget> target;
     Ref<ID2D1SolidColorBrush> brush;
     Ref<ID2D1StrokeStyle> stroke;
     Ref<IDWriteFactory> write;
     Ref<IDWriteTextFormat> format;
-    HRESULT hr = wic->CreateBitmap(1100,1280,GUID_WICPixelFormat32bppPBGRA,WICBitmapCacheOnLoad,bitmap.Put());
+    HRESULT hr = wic->CreateBitmap(1100,static_cast<UINT>(2*kPanel),GUID_WICPixelFormat32bppPBGRA,
+                                   WICBitmapCacheOnLoad,bitmap.Put());
     if (SUCCEEDED(hr)) hr = factory->CreateWicBitmapRenderTarget(bitmap.value,
         D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),96,96),target.Put());
@@ -89,9 +98,9 @@ void Gallery(IWICImagingFactory* wic, ID2D1Factory* factory, const wchar_t* file
     target->BeginDraw();
     for (int theme_index=0;theme_index<2;++theme_index) {
         const auto theme=MakeTheme(theme_index==0,HexColor(0x8265B2));
-        const float top=static_cast<float>(theme_index)*640;
+        const float top=static_cast<float>(theme_index)*kPanel;
         brush->SetColor(theme.surface_card);
-        target->FillRectangle({0,top,1100,top+640},brush.value);
+        target->FillRectangle({0,top,1100,top+kPanel},brush.value);
         brush->SetColor(theme.text_secondary);
         const wchar_t* title=theme_index==0 ? L"PULSE  /  DARK  /  18, 24 & 32 px" : L"PULSE  /  LIGHT  /  18, 24 & 32 px";
         target->DrawText(title,static_cast<UINT32>(wcslen(title)),format.value,{0,top+12,1100,top+36},brush.value);
@@ -164,6 +173,29 @@ int wmain(int argc, wchar_t** argv) {
           "filled favourite state is not reduced to a color-only cue");
     Check(FromGlyph(L"ordinary text")==Icon::None && FromGlyph(L"A")==Icon::None,
           "normal text retains the original text renderer");
+    // One command, one shape (pulse_toolbar_redesign §7): the pairs that
+    // used to share a glyph now differ.
+    {
+        const std::pair<const wchar_t*,const wchar_t*> pairs[] = {
+            {kGlyphCopyPath,L"\xE71B"}, {kGlyphPinNetwork,L"\xE71B"}, {kGlyphOpenPath,L"\xE8B7"},
+            {kGlyphPinWorkspace,L"\xE8B7"}, {kGlyphBatchRename,L"\xE8AC"}, {kGlyphSelectWild,L"\xE71C"},
+            {kGlyphCompare,L"\xE8A0"}, {kGlyphApplyAll,L"\xE80A"}, {kGlyphAdvSearch,L"\xE721"},
+            {kGlyphCopyToPane,L"\xE8C8"}, {kGlyphMoveToPane,L"\xE8C6"}, {kGlyphGroupFolder,L"\xE8F4"},
+            {kGlyphPinQuickAccess,L"\xE718"}, {kGlyphPinFavorites,L"\xE734"},
+        };
+        for (const auto& [mine, other] : pairs) {
+            Check(FromGlyph(mine)!=Icon::None && FromGlyph(mine)!=FromGlyph(other),
+                  "a command no longer shares its shape with another");
+        }
+        const wchar_t* glyphs[] = {kGlyphCopyPath,kGlyphBatchRename,kGlyphSelectWild,kGlyphCompare,kGlyphApplyAll,
+            kGlyphAdvSearch,kGlyphCopyToPane,kGlyphMoveToPane,kGlyphOpenPath,kGlyphGroupFolder,kGlyphPinFavorites,
+            kGlyphPinQuickAccess,kGlyphPinWorkspace,kGlyphPinNetwork,kGlyphPinToolbar};
+        for (size_t i = 0; i < std::size(glyphs); ++i)
+            for (size_t j = i + 1; j < std::size(glyphs); ++j)
+                Check(FromGlyph(glyphs[i])!=FromGlyph(glyphs[j]),"private glyph ids map to distinct shapes");
+        Check(FromGlyph(L"\xE7A7")==Icon::Undo && FromGlyph(L"\xE756")==Icon::Terminal &&
+              FromGlyph(L"\xF012")==Icon::Zip,"toolbar tools draw on the vector grid, not the font");
+    }
 
     int renderings=0;
     for(const auto& theme:{light,dark}) for(const float size:{16.0f,20.0f,24.0f,32.0f,48.0f}) {

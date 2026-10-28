@@ -8,10 +8,12 @@
 #include "../common/localization.h"
 #include "../common/utf8_file.h"
 #include "../common/runtime_log.h"
+#include "../common/path_utils.h"
 #include <algorithm>
 #include <chrono>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <objbase.h>
 #include <cwctype>
@@ -90,6 +92,12 @@ static std::wstring TagKey(const std::wstring& p) {
     std::wstring key = Norm(p);
     for (auto& c : key) c = static_cast<wchar_t>(std::towlower(c));
     return key;
+}
+
+// Comparison form of a quick-access layout key: built-in keys as they are,
+// paths normalized and case-folded like the pin list.
+static std::wstring QuickAccessKeyId(const std::wstring& key) {
+    return IsBuiltinQuickAccessKey(key) ? key : TagKey(key);
 }
 
 static TagId NewTagId() {
@@ -200,7 +208,7 @@ bool PlacesCatalog::SaveTagFile(const std::vector<ColorTag>& snapshot, uint64_t 
         }
         file << L"]";
     };
-    file << L"{\n  \"version\":2,\n  \"tags_generation\":\"" << generation << L"\",\n  \"tags\":[\n";
+    file << L"{\n  \"version\":3,\n  \"tags_generation\":\"" << generation << L"\",\n  \"tags\":[\n";
     for (size_t i = 0; i < snapshot.size(); ++i) {
         std::wstring id, name;
         pulse::json::Escape(snapshot[i].id, id);
@@ -208,7 +216,15 @@ bool PlacesCatalog::SaveTagFile(const std::vector<ColorTag>& snapshot, uint64_t 
         wchar_t rgb[16]{};
         swprintf_s(rgb, L"0x%06X", snapshot[i].rgb & 0xFFFFFFu);
         file << L"    {\"id\":\"" << id << L"\",\"name\":\"" << name
-             << L"\",\"rgb\":" << rgb << L",\"paths\":";
+             << L"\",\"rgb\":" << rgb;
+        // v3: optional favorite slot; older versions ignore the field.
+        if (snapshot[i].favorite > 0) file << L",\"fav\":" << snapshot[i].favorite;
+        if (!snapshot[i].group.empty()) {
+            std::wstring group;
+            pulse::json::Escape(snapshot[i].group, group);
+            file << L",\"group\":\"" << group << L"\"";
+        }
+        file << L",\"paths\":";
         write_array(snapshot[i].paths);
         file << L"}" << (i + 1 < snapshot.size() ? L"," : L"") << L"\n";
     }
@@ -356,6 +372,7 @@ void PlacesCatalog::EnsureDefaults() {
         t.id = d.id;
         t.name = l10n::Pick(d.name, d.english);  // seeded once in the UI language, then user data
         t.rgb = d.rgb;
+        t.favorite = static_cast<int>(tags.size()) + 1;
         tags.push_back(std::move(t));
     }
     RebuildTagIndex();
@@ -396,9 +413,13 @@ bool PlacesCatalog::Load() {
     if (!ReadTagsGeneration(tag_json, tag_generation)) { load_failed = true; return false; }
     workspaces.clear();
     tags.clear();
+    tag_groups.clear();
+    tag_sidebar_mode = TagSidebarMode::FavoritesAndGroups;
     networks.clear();
     quick_access_paths.clear();
+    quick_access_order.clear();
     starred_items.clear();
+    starred_groups.clear();
     quick_access_badges.clear();
     recent_items.clear();
     starred_index_.clear();
@@ -441,7 +462,23 @@ bool PlacesCatalog::Load() {
         t.name = pulse::json::ExtractString(block, L"name");
         t.rgb = ExtractRgb(block);
         t.paths = pulse::json::ExtractStringArray(block, L"paths");
+        t.favorite = pulse::json::ExtractInt(block, L"fav");
+        t.group = pulse::json::ExtractString(block, L"group");
         if (!t.name.empty()) tags.push_back(std::move(t));
+    }
+
+    for (const auto& block : ExtractObjectArray(json, L"tag_groups")) {
+        TagGroup group;
+        group.id = pulse::json::ExtractString(block, L"id");
+        group.name = TrimTagName(pulse::json::ExtractString(block, L"name"));
+        group.collapsed = pulse::json::ExtractBool(block, L"collapsed", false);
+        if (!group.id.empty() && !group.name.empty() && !FindTagGroup(group.id))
+            tag_groups.push_back(std::move(group));
+    }
+    {
+        const int mode = pulse::json::ExtractInt(json, L"tag_sidebar_mode");
+        tag_sidebar_mode = mode >= 0 && mode <= 2 ? static_cast<TagSidebarMode>(mode)
+                                                  : TagSidebarMode::FavoritesAndGroups;
     }
 
     for (const auto& block : ExtractObjectArray(json, L"networks")) {
@@ -456,6 +493,16 @@ bool PlacesCatalog::Load() {
         if (!normalized.empty() && !fs::IsVirtualPath(normalized) &&
             !IsQuickAccessPinned(normalized)) quick_access_paths.push_back(normalized);
     }
+    {
+        std::unordered_set<std::wstring> order_seen;
+        for (const auto& key : pulse::json::ExtractStringArray(json, L"quick_access_order")) {
+            const bool builtin = IsBuiltinQuickAccessKey(key);
+            std::wstring value = builtin ? key : Norm(key);
+            if (value.empty() || (!builtin && fs::IsVirtualPath(value))) continue;
+            if (order_seen.insert(QuickAccessKeyId(value)).second)
+                quick_access_order.push_back(std::move(value));
+        }
+    }
 
     const bool has_starred_items = pulse::json::ValuePosition(
         json, L"starred_items") != std::wstring::npos;
@@ -465,6 +512,9 @@ bool PlacesCatalog::Load() {
         item.kind = ParseKind(pulse::json::ExtractString(block, L"kind"));
         item.badge = TrimBadge(pulse::json::ExtractString(block, L"badge"));
         item.badge_rgb = ExtractRgb(block);
+        item.group = pulse::json::ExtractString(block, L"group");
+        item.separator_after = pulse::json::ExtractBool(block, L"sep", false);
+        if (item.kind == PlaceItemKind::File) item.group.clear();
         if (!item.path.empty() && !fs::IsVirtualPath(item.path) &&
             std::none_of(starred_items.begin(), starred_items.end(), [&](const StarredItem& old) {
                 return EqualI(old.path, item.path);
@@ -479,6 +529,17 @@ bool PlacesCatalog::Load() {
                 starred_items.push_back({ normalized });
         }
     }
+    for (const auto& block : ExtractObjectArray(json, L"starred_groups")) {
+        StarredGroup group;
+        group.id = pulse::json::ExtractString(block, L"id");
+        group.name = TrimTagName(pulse::json::ExtractString(block, L"name"));
+        group.collapsed = pulse::json::ExtractBool(block, L"collapsed", false);
+        group.separator_after = pulse::json::ExtractBool(block, L"sep", false);
+        if (!group.id.empty() && !group.name.empty() && !FindStarredGroup(group.id))
+            starred_groups.push_back(std::move(group));
+    }
+    for (auto& item : starred_items)
+        if (!item.group.empty() && !FindStarredGroup(item.group)) item.group.clear();
     for (const auto& block : ExtractObjectArray(json, L"quick_access_badges")) {
         QuickAccessBadge item;
         item.path = Norm(pulse::json::ExtractString(block, L"path"));
@@ -515,6 +576,8 @@ bool PlacesCatalog::Load() {
             tag.name = pulse::json::ExtractString(block, L"name");
             tag.rgb = ExtractRgb(block);
             tag.paths = pulse::json::ExtractStringArray(block, L"paths");
+            tag.favorite = pulse::json::ExtractInt(block, L"fav");
+            tag.group = pulse::json::ExtractString(block, L"group");
             if (!tag.id.empty() && !tag.name.empty()) loaded.push_back(std::move(tag));
         }
         const auto position = pulse::json::ValuePosition(tag_json, L"tags");
@@ -535,10 +598,23 @@ bool PlacesCatalog::Load() {
         pending_tag_save_.reset();
         tag_save_error_ = ERROR_SUCCESS;
     }
-    EnsureDefaults();
+    // Defaults only seed a catalog that has no saved tags yet: a saved empty
+    // list means the user deleted them, and they stay deleted.
+    if (!tags_loaded) EnsureDefaults();
+    // Before tags file v3 Alt+N meant "the Nth tag": the first seven become
+    // the favorites, so the keys keep doing what they did.
+    const bool favorites_migrated = tags_loaded
+        ? pulse::json::ExtractInt(tag_json, L"version") < 3
+        : places_loaded && std::none_of(tags.begin(), tags.end(),
+                                        [](const ColorTag& tag) { return tag.favorite > 0; });
+    if (favorites_migrated) {
+        for (size_t i = 0; i < tags.size(); ++i)
+            tags[i].favorite = i < 7 ? static_cast<int>(i) + 1 : 0;
+    }
+    NormalizeFavoriteSlots();
     RebuildTagIndex();
     RebuildStarIndex();
-    if (recovered || (places_loaded && !tags_loaded)) QueueTagSave();
+    if (recovered || favorites_migrated || (places_loaded && !tags_loaded)) QueueTagSave();
     return places_loaded || tags_loaded;
 }
 
@@ -561,13 +637,22 @@ PlacesCatalog::SaveSnapshot PlacesCatalog::CaptureSaveSnapshot() const {
     SaveSnapshot snapshot;
     snapshot.workspaces = workspaces;
     snapshot.tags = tags;
+    snapshot.tag_groups = tag_groups;
+    snapshot.tag_sidebar_mode = tag_sidebar_mode;
     {
         std::lock_guard lock(tag_save_mutex_);
         snapshot.tags_generation = tags_generation_;
     }
     snapshot.networks = networks;
     snapshot.quick_access_paths = quick_access_paths;
+    snapshot.quick_access_order = quick_access_order;
     snapshot.starred_items = starred_items;
+    // A group outlives its last member in memory (the snack's undo brings
+    // the member back into it) but is not saved.
+    for (const auto& group : starred_groups)
+        if (std::any_of(starred_items.begin(), starred_items.end(),
+                        [&](const StarredItem& item) { return item.group == group.id; }))
+            snapshot.starred_groups.push_back(group);
     snapshot.quick_access_badges = quick_access_badges;
     snapshot.recent_items = recent_items;
     snapshot.active_workspace = active_workspace;
@@ -716,13 +801,32 @@ bool PlacesCatalog::SaveSnapshotFile(const SaveSnapshot& snapshot) {
         wchar_t rgb[16];
         swprintf_s(rgb, L"0x%06X", t.rgb & 0xFFFFFFu);
         f << L"    {\"id\":\"" << id << L"\",\"name\":\"" << name
-          << L"\",\"rgb\":" << rgb << L",\"paths\":";
+          << L"\",\"rgb\":" << rgb;
+        if (t.favorite > 0) f << L",\"fav\":" << t.favorite;
+        if (!t.group.empty()) {
+            std::wstring group;
+            pulse::json::Escape(t.group, group);
+            f << L",\"group\":\"" << group << L"\"";
+        }
+        f << L",\"paths\":";
         writeArr(t.paths);
         f << L"}";
         if (i + 1 < snapshot.tags.size()) f << L",";
         f << L"\n";
     }
-    f << L"  ],\n  \"networks\":[\n";
+    f << L"  ],\n  \"tag_groups\":[\n";
+    for (size_t i = 0; i < snapshot.tag_groups.size(); ++i) {
+        const auto& g = snapshot.tag_groups[i];
+        std::wstring id, name;
+        pulse::json::Escape(g.id, id);
+        pulse::json::Escape(g.name, name);
+        f << L"    {\"id\":\"" << id << L"\",\"name\":\"" << name << L"\",\"collapsed\":"
+          << (g.collapsed ? L"true" : L"false") << L"}";
+        if (i + 1 < snapshot.tag_groups.size()) f << L",";
+        f << L"\n";
+    }
+    f << L"  ],\n  \"tag_sidebar_mode\":" << static_cast<int>(snapshot.tag_sidebar_mode);
+    f << L",\n  \"networks\":[\n";
     for (size_t i = 0; i < snapshot.networks.size(); ++i) {
         const auto& n = snapshot.networks[i];
         std::wstring name, unc;
@@ -739,6 +843,8 @@ bool PlacesCatalog::SaveSnapshotFile(const SaveSnapshot& snapshot) {
     writeArr(legacy_starred);
     f << L",\n  \"quick_access_paths\":";
     writeArr(snapshot.quick_access_paths);
+    f << L",\n  \"quick_access_order\":";
+    writeArr(snapshot.quick_access_order);
     f << L",\n  \"starred_items\":[\n";
     for (size_t i = 0; i < snapshot.starred_items.size(); ++i) {
         const auto& item = snapshot.starred_items[i];
@@ -749,8 +855,27 @@ bool PlacesCatalog::SaveSnapshotFile(const SaveSnapshot& snapshot) {
         swprintf_s(rgb, L"0x%06X", item.badge_rgb & 0xFFFFFFu);
         f << L"    {\"path\":\"" << path << L"\",\"kind\":\""
           << KindName(item.kind) << L"\",\"badge\":\"" << badge
-          << L"\",\"rgb\":" << rgb << L"}";
+          << L"\",\"rgb\":" << rgb;
+        if (!item.group.empty()) {
+            std::wstring group;
+            pulse::json::Escape(item.group, group);
+            f << L",\"group\":\"" << group << L"\"";
+        }
+        if (item.separator_after) f << L",\"sep\":true";
+        f << L"}";
         if (i + 1 < snapshot.starred_items.size()) f << L",";
+        f << L"\n";
+    }
+    f << L"  ],\n  \"starred_groups\":[\n";
+    for (size_t i = 0; i < snapshot.starred_groups.size(); ++i) {
+        const auto& g = snapshot.starred_groups[i];
+        std::wstring id, name;
+        pulse::json::Escape(g.id, id);
+        pulse::json::Escape(g.name, name);
+        f << L"    {\"id\":\"" << id << L"\",\"name\":\"" << name << L"\",\"collapsed\":"
+          << (g.collapsed ? L"true" : L"false") << L",\"sep\":" << (g.separator_after ? L"true" : L"false")
+          << L"}";
+        if (i + 1 < snapshot.starred_groups.size()) f << L",";
         f << L"\n";
     }
     f << L"  ],\n  \"quick_access_badges\":[\n";
@@ -881,6 +1006,17 @@ bool PlacesCatalog::UnpinNetwork(const std::wstring& unc) {
     return true;
 }
 
+bool PlacesCatalog::RenameNetwork(const std::wstring& unc, const std::wstring& name) {
+    const int index = FindNetwork(unc);
+    if (index < 0) return false;
+    auto& place = networks[static_cast<size_t>(index)];
+    const std::wstring next = name.empty() ? FolderTitle(place.unc) : name;
+    if (next == place.name) return false;
+    place.name = next;
+    Save();
+    return true;
+}
+
 void PlacesCatalog::SetNetworkStatus(const std::wstring& unc, fs::NetStatus status, DWORD rtt_ms) {
     const std::wstring n = Norm(unc);
     for (auto& net : networks) {
@@ -974,6 +1110,8 @@ TagId PlacesCatalog::CreateTag(const std::wstring& raw_name, uint32_t rgb) {
     tag.id = NewTagId();
     tag.name = name;
     tag.rgb = rgb & 0xFFFFFFu;
+    // While a favorite slot is free, a new tag gets the next Alt+N key.
+    tag.favorite = FreeFavoriteSlot();
     const TagId id = tag.id;
     tags.push_back(std::move(tag));
     RebuildTagIndex();
@@ -1167,6 +1305,18 @@ bool PlacesCatalog::ReorderStarredFolder(const std::wstring& path, size_t folder
     return true;
 }
 
+bool PlacesCatalog::MoveStarredItem(size_t from, size_t to) {
+    if (from >= starred_items.size() || to >= starred_items.size() || from == to) return false;
+    const bool folder = starred_items[from].kind != PlaceItemKind::File;
+    if ((starred_items[to].kind != PlaceItemKind::File) != folder) return false;
+    StarredItem moved = std::move(starred_items[from]);
+    starred_items.erase(starred_items.begin() + static_cast<std::ptrdiff_t>(from));
+    starred_items.insert(starred_items.begin() + static_cast<std::ptrdiff_t>(to), std::move(moved));
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
 std::vector<std::wstring> PlacesCatalog::StarredPaths() const {
     std::vector<std::wstring> out;
     out.reserve(starred_items.size());
@@ -1175,6 +1325,177 @@ std::vector<std::wstring> PlacesCatalog::StarredPaths() const {
     for (const auto& item : starred_items)
         if (item.kind != PlaceItemKind::Folder) out.push_back(item.path);
     return out;
+}
+
+const StarredGroup* PlacesCatalog::FindStarredGroup(const std::wstring& id) const {
+    if (id.empty()) return nullptr;
+    const auto it = std::find_if(starred_groups.begin(), starred_groups.end(),
+                                 [&](const StarredGroup& group) { return group.id == id; });
+    return it == starred_groups.end() ? nullptr : &*it;
+}
+
+std::wstring PlacesCatalog::CreateStarredGroup(const std::wstring& raw_name,
+                                               const std::wstring& first_path) {
+    const std::wstring name = TrimTagName(raw_name);
+    const StarredItem* first = FindStarred(first_path);
+    if (name.empty() || !first || first->kind == PlaceItemKind::File) return {};
+    StarredGroup group;
+    group.id = NewTagId();
+    group.name = name;
+    starred_groups.push_back(group);
+    SetStarredItemGroup(first_path, group.id, false);
+    return group.id;
+}
+
+bool PlacesCatalog::SetStarredItemGroup(const std::wstring& path, const std::wstring& group_id,
+                                        bool gather) {
+    StarredItem* item = FindStarred(path);
+    if (!item || item->kind == PlaceItemKind::File) return false;
+    if (!group_id.empty() && !FindStarredGroup(group_id)) return false;
+    if (item->group == group_id) return false;
+    item->group = group_id;
+    if (gather && !group_id.empty()) {
+        // After the group's last member, so the group stays one run.
+        const auto self = std::find_if(starred_items.begin(), starred_items.end(),
+                                       [&](const StarredItem& candidate) { return &candidate == item; });
+        StarredItem moved = std::move(*self);
+        starred_items.erase(self);
+        size_t at = starred_items.size();
+        bool found = false;
+        for (size_t i = starred_items.size(); i-- > 0;)
+            if (starred_items[i].group == group_id) { at = i + 1; found = true; break; }
+        if (!found) {
+            at = static_cast<size_t>(std::find_if(starred_items.begin(), starred_items.end(),
+                [](const StarredItem& candidate) { return candidate.kind == PlaceItemKind::File; }) -
+                starred_items.begin());
+        }
+        starred_items.insert(starred_items.begin() + static_cast<std::ptrdiff_t>(at), std::move(moved));
+    }
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
+bool PlacesCatalog::RenameStarredGroup(const std::wstring& id, const std::wstring& raw_name) {
+    const std::wstring name = TrimTagName(raw_name);
+    if (name.empty()) return false;
+    for (auto& group : starred_groups) {
+        if (group.id != id || group.name == name) continue;
+        group.name = name;
+        ++tag_revision_;
+        Save();
+        return true;
+    }
+    return false;
+}
+
+bool PlacesCatalog::SetStarredGroupCollapsed(const std::wstring& id, bool collapsed) {
+    for (auto& group : starred_groups) {
+        if (group.id != id || group.collapsed == collapsed) continue;
+        group.collapsed = collapsed;
+        Save();
+        return true;
+    }
+    return false;
+}
+
+bool PlacesCatalog::UngroupStarred(const std::wstring& id) {
+    const auto found = std::find_if(starred_groups.begin(), starred_groups.end(),
+                                    [&](const StarredGroup& group) { return group.id == id; });
+    if (found == starred_groups.end()) return false;
+    // The group's separator stays with its last member.
+    const bool separator = found->separator_after;
+    starred_groups.erase(found);
+    StarredItem* last = nullptr;
+    for (auto& item : starred_items)
+        if (item.group == id) { item.group.clear(); last = &item; }
+    if (separator && last) last->separator_after = true;
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
+bool PlacesCatalog::SetStarredSeparator(const std::wstring& path_or_group, bool on) {
+    for (auto& group : starred_groups) {
+        if (group.id != path_or_group) continue;
+        if (group.separator_after == on) return false;
+        group.separator_after = on;
+        ++tag_revision_;
+        Save();
+        return true;
+    }
+    StarredItem* item = FindStarred(path_or_group);
+    if (!item || item->separator_after == on) return false;
+    item->separator_after = on;
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
+bool PlacesCatalog::ReorderStarred(const std::vector<size_t>& order) {
+    if (order.size() != starred_items.size()) return false;
+    std::vector<bool> seen(order.size(), false);
+    for (size_t index : order) {
+        if (index >= order.size() || seen[index]) return false;
+        seen[index] = true;
+    }
+    bool same = true;
+    for (size_t i = 0; i < order.size() && same; ++i) same = order[i] == i;
+    if (same) return false;
+    std::vector<StarredItem> reordered;
+    reordered.reserve(order.size());
+    for (size_t index : order) reordered.push_back(std::move(starred_items[index]));
+    starred_items = std::move(reordered);
+    // Folders stay ahead of files.
+    std::stable_partition(starred_items.begin(), starred_items.end(),
+        [](const StarredItem& item) { return item.kind != PlaceItemKind::File; });
+    ++tag_revision_;
+    Save();
+    return true;
+}
+
+std::vector<StarredRow> MakeStarredRows(const std::vector<StarredItem>& items,
+                                        const std::vector<StarredGroup>& groups,
+                                        bool folders_only) {
+    std::vector<StarredRow> rows;
+    rows.reserve(items.size());
+    const auto group_of = [&](const StarredItem& item) -> const StarredGroup* {
+        if (item.group.empty() || item.kind == PlaceItemKind::File) return nullptr;
+        const auto it = std::find_if(groups.begin(), groups.end(),
+                                     [&](const StarredGroup& group) { return group.id == item.group; });
+        return it == groups.end() ? nullptr : &*it;
+    };
+    std::vector<std::wstring> placed;
+    for (size_t i = 0; i < items.size(); ++i) {
+        const StarredItem& item = items[i];
+        if (folders_only && item.kind == PlaceItemKind::File) continue;
+        bool separator = item.separator_after;
+        if (const StarredGroup* group = group_of(item)) {
+            if (std::find(placed.begin(), placed.end(), group->id) != placed.end()) continue;
+            placed.push_back(group->id);
+            StarredRow row;
+            row.kind = StarredRow::Kind::Group;
+            row.index = i;
+            row.group = group->id;
+            for (size_t j = i; j < items.size(); ++j)
+                if (group_of(items[j]) == group) row.members.push_back(j);
+            rows.push_back(std::move(row));
+            separator = group->separator_after;
+        } else {
+            StarredRow row;
+            row.index = i;
+            rows.push_back(std::move(row));
+        }
+        if (separator) {
+            StarredRow line;
+            line.kind = StarredRow::Kind::Separator;
+            line.index = i;
+            rows.push_back(std::move(line));
+        }
+    }
+    // A trailing line separates nothing.
+    if (!rows.empty() && rows.back().kind == StarredRow::Kind::Separator) rows.pop_back();
+    return rows;
 }
 
 std::vector<std::wstring> PlacesCatalog::StarredFolderPaths() const {
@@ -1259,6 +1580,149 @@ std::vector<std::wstring> PlacesCatalog::RecentFolderPaths(size_t limit) const {
 void PlacesCatalog::TagsReordered() {
     RebuildTagIndex();
     QueueTagSave();
+}
+
+int PlacesCatalog::FavoriteTagIndex(int slot) const {
+    if (slot < 1 || slot > kMaxFavoriteTags) return -1;
+    for (size_t i = 0; i < tags.size(); ++i)
+        if (tags[i].favorite == slot) return static_cast<int>(i);
+    return -1;
+}
+
+int PlacesCatalog::FreeFavoriteSlot() const {
+    for (int slot = 1; slot <= kMaxFavoriteTags; ++slot)
+        if (FavoriteTagIndex(slot) < 0) return slot;
+    return 0;
+}
+
+// Out-of-range or duplicate slots (hand edits, merged files) are dropped;
+// the first tag keeps a contested slot.
+void PlacesCatalog::NormalizeFavoriteSlots() {
+    bool used[kMaxFavoriteTags + 1]{};
+    for (auto& tag : tags) {
+        if (tag.favorite < 1 || tag.favorite > kMaxFavoriteTags || used[tag.favorite]) {
+            tag.favorite = 0;
+            continue;
+        }
+        used[tag.favorite] = true;
+    }
+}
+
+void PlacesCatalog::ReorderFavoriteTags(const std::vector<TagId>& order) {
+    std::vector<int> slots;
+    std::vector<size_t> members;
+    for (const auto& id : order) {
+        const int index = FindTagIndex(id);
+        if (index < 0 || tags[static_cast<size_t>(index)].favorite <= 0) continue;
+        slots.push_back(tags[static_cast<size_t>(index)].favorite);
+        members.push_back(static_cast<size_t>(index));
+    }
+    std::sort(slots.begin(), slots.end());
+    bool changed = false;
+    for (size_t i = 0; i < members.size(); ++i) {
+        changed = changed || tags[members[i]].favorite != slots[i];
+        tags[members[i]].favorite = slots[i];
+    }
+    if (!changed) return;
+    ++tag_revision_;
+    QueueTagSave();
+}
+
+const TagGroup* PlacesCatalog::FindTagGroup(const std::wstring& id) const {
+    if (id.empty()) return nullptr;
+    for (const auto& group : tag_groups)
+        if (group.id == id) return &group;
+    return nullptr;
+}
+
+std::wstring PlacesCatalog::TagGroupOf(const ColorTag& tag) const {
+    return FindTagGroup(tag.group) ? tag.group : std::wstring{};
+}
+
+std::wstring PlacesCatalog::CreateTagGroup(const std::wstring& raw_name) {
+    const std::wstring name = TrimTagName(raw_name);
+    if (name.empty()) return {};
+    for (const auto& group : tag_groups)
+        if (EqualI(group.name, name)) return group.id;
+    TagGroup group;
+    group.id = NewTagId();
+    group.name = name;
+    tag_groups.push_back(group);
+    ++tag_revision_;
+    Save();
+    return group.id;
+}
+
+bool PlacesCatalog::RenameTagGroup(const std::wstring& id, const std::wstring& raw_name) {
+    const std::wstring name = TrimTagName(raw_name);
+    if (name.empty()) return false;
+    for (auto& group : tag_groups) {
+        if (group.id != id) continue;
+        if (group.name == name) return false;
+        group.name = name;
+        ++tag_revision_;
+        Save();
+        return true;
+    }
+    return false;
+}
+
+bool PlacesCatalog::DeleteTagGroup(const std::wstring& id) {
+    const auto found = std::find_if(tag_groups.begin(), tag_groups.end(),
+        [&](const TagGroup& group) { return group.id == id; });
+    if (found == tag_groups.end()) return false;
+    tag_groups.erase(found);
+    bool members = false;
+    for (auto& tag : tags) {
+        if (tag.group != id) continue;
+        tag.group.clear();
+        members = true;
+    }
+    ++tag_revision_;
+    Save();
+    if (members) QueueTagSave();
+    return true;
+}
+
+bool PlacesCatalog::SetTagGroup(const TagId& id, const std::wstring& group_id) {
+    const int index = FindTagIndex(id);
+    if (index < 0 || (!group_id.empty() && !FindTagGroup(group_id))) return false;
+    ColorTag& tag = tags[static_cast<size_t>(index)];
+    if (TagGroupOf(tag) == group_id) return false;
+    tag.group = group_id;
+    ++tag_revision_;
+    QueueTagSave();
+    return true;
+}
+
+bool PlacesCatalog::SetTagGroupCollapsed(const std::wstring& id, bool collapsed) {
+    for (auto& group : tag_groups) {
+        if (group.id != id || group.collapsed == collapsed) continue;
+        group.collapsed = collapsed;
+        MarkPlacesDirty();
+        return true;
+    }
+    return false;
+}
+
+void PlacesCatalog::SetTagSidebarMode(TagSidebarMode mode) {
+    if (tag_sidebar_mode == mode) return;
+    tag_sidebar_mode = mode;
+    ++tag_revision_;
+    MarkPlacesDirty();
+}
+
+bool PlacesCatalog::SetTagFavorite(const TagId& id, bool favorite) {
+    const int index = FindTagIndex(id);
+    if (index < 0) return false;
+    ColorTag& tag = tags[static_cast<size_t>(index)];
+    if ((tag.favorite > 0) == favorite) return false;
+    const int slot = favorite ? FreeFavoriteSlot() : 0;
+    if (favorite && slot == 0) return false;
+    tag.favorite = slot;
+    ++tag_revision_;
+    QueueTagSave();
+    return true;
 }
 
 void PlacesCatalog::CommitTagChanges(const std::vector<std::wstring>& paths,
@@ -1381,6 +1845,115 @@ bool PlacesCatalog::ReorderQuickAccessPinned(const std::wstring& path, size_t po
     return true;
 }
 
+bool IsBuiltinQuickAccessKey(std::wstring_view key) noexcept {
+    return key.starts_with(L"builtin:");
+}
+
+std::vector<std::wstring> MergeQuickAccessOrder(const std::vector<std::wstring>& order,
+                                                const std::vector<std::wstring>& defaults) {
+    if (order.empty()) return defaults;
+    std::unordered_map<std::wstring, size_t> default_index;
+    default_index.reserve(defaults.size());
+    for (size_t i = 0; i < defaults.size(); ++i)
+        default_index.emplace(QuickAccessKeyId(defaults[i]), i);
+    std::vector<bool> placed(defaults.size(), false);
+    std::vector<size_t> merged;  // indices into defaults
+    merged.reserve(defaults.size());
+    for (const auto& key : order) {
+        const auto found = default_index.find(QuickAccessKeyId(key));
+        if (found == default_index.end() || placed[found->second]) continue;
+        placed[found->second] = true;
+        merged.push_back(found->second);
+    }
+    for (size_t i = 0; i < defaults.size(); ++i) {
+        if (placed[i]) continue;
+        placed[i] = true;
+        if (!IsBuiltinQuickAccessKey(defaults[i])) {
+            merged.push_back(i);
+            continue;
+        }
+        // Right after the nearest earlier default row, or first.
+        size_t at = 0;
+        for (size_t j = i; j-- > 0;) {
+            const auto pos = std::find(merged.begin(), merged.end(), j);
+            if (pos != merged.end()) {
+                at = static_cast<size_t>(pos - merged.begin()) + 1;
+                break;
+            }
+        }
+        merged.insert(merged.begin() + static_cast<std::ptrdiff_t>(at), i);
+    }
+    std::vector<std::wstring> keys;
+    keys.reserve(merged.size());
+    for (size_t index : merged) keys.push_back(defaults[index]);
+    return keys;
+}
+
+std::vector<std::wstring> MoveQuickAccessKey(std::vector<std::wstring> keys,
+                                             const std::vector<std::wstring>& visible,
+                                             const std::wstring& key, size_t gap) {
+    const std::wstring id = QuickAccessKeyId(key);
+    const auto same = [&](const std::wstring& candidate) { return QuickAccessKeyId(candidate) == id; };
+    const auto found = std::find_if(keys.begin(), keys.end(), same);
+    if (found == keys.end()) return keys;
+    std::wstring moved = std::move(*found);
+    keys.erase(found);
+    const auto index_of = [&](const std::wstring& value) {
+        const std::wstring value_id = QuickAccessKeyId(value);
+        const auto at = std::find_if(keys.begin(), keys.end(),
+            [&](const std::wstring& candidate) { return QuickAccessKeyId(candidate) == value_id; });
+        return static_cast<size_t>(at - keys.begin());
+    };
+    gap = (std::min)(gap, visible.size());
+    // Before the first visible row at or after the gap, skipping the dragged
+    // row (its own two gaps leave the order as it was); the end gap goes after
+    // the last visible row.
+    size_t at = keys.size();
+    bool placed = false;
+    for (size_t i = gap; i < visible.size() && !placed; ++i) {
+        if (same(visible[i])) continue;
+        at = index_of(visible[i]);
+        placed = true;
+    }
+    for (size_t i = visible.size(); !placed && i-- > 0;) {
+        if (same(visible[i])) continue;
+        at = (std::min)(index_of(visible[i]) + 1, keys.size());
+        placed = true;
+    }
+    keys.insert(keys.begin() + static_cast<std::ptrdiff_t>((std::min)(at, keys.size())),
+                std::move(moved));
+    return keys;
+}
+
+bool PlacesCatalog::SetQuickAccessLayout(const std::vector<std::wstring>& keys,
+                                         const std::vector<std::wstring>& builtin_defaults) {
+    std::vector<std::wstring> pins;
+    std::vector<std::wstring> builtins;
+    std::vector<std::wstring> layout;
+    std::unordered_set<std::wstring> seen;
+    for (const auto& key : keys) {
+        const bool builtin = IsBuiltinQuickAccessKey(key);
+        std::wstring value = builtin ? key : Norm(key);
+        if (value.empty() || (!builtin && fs::IsVirtualPath(value))) continue;
+        if (!seen.insert(QuickAccessKeyId(value)).second) continue;
+        (builtin ? builtins : pins).push_back(value);
+        layout.push_back(std::move(value));
+    }
+    std::vector<std::wstring> fallback;
+    fallback.reserve(layout.size());
+    for (const auto& key : builtin_defaults) {
+        if (std::find(builtins.begin(), builtins.end(), key) != builtins.end())
+            fallback.push_back(key);
+    }
+    fallback.insert(fallback.end(), pins.begin(), pins.end());
+    if (fallback == layout) layout.clear();
+    if (pins == quick_access_paths && layout == quick_access_order) return false;
+    quick_access_paths = std::move(pins);
+    quick_access_order = std::move(layout);
+    Save();
+    return true;
+}
+
 bool PlacesCatalog::SetQuickAccessPinned(const std::vector<std::wstring>& paths, bool pinned) {
     bool changed = false;
     for (const auto& path : paths) {
@@ -1396,53 +1969,125 @@ bool PlacesCatalog::SetQuickAccessPinned(const std::vector<std::wstring>& paths,
             const auto key = TagKey(normalized);
             changed |= std::erase_if(quick_access_paths,
                 [&](const auto& value) { return TagKey(value) == key; }) != 0;
+            std::erase_if(quick_access_order, [&](const std::wstring& value) {
+                return !IsBuiltinQuickAccessKey(value) && TagKey(value) == key;
+            });
         }
     }
     if (changed) Save();
     return changed;
 }
 
-void PlacesCatalog::RemapPaths(const std::wstring& old_path, const std::wstring& new_path) {
-    const std::wstring old_norm = Norm(old_path);
-    const std::wstring new_norm = Norm(new_path);
-    if (old_norm.empty() || new_norm.empty() || EqualI(old_norm, new_norm)) return;
-    bool changed = false;
-    for (auto& tag : tags) {
-        for (auto& path : tag.paths) {
-            if (!PathIsOrDescendant(path, old_norm)) continue;
-            path = new_norm + path.substr(old_norm.size());
-            changed = true;
+namespace {
+// Roots found from a path's own ancestors: PathIsOrDescendant against every
+// root at once instead of one comparison per root.
+class PathRoots {
+public:
+    // False when an equal root is already there.
+    bool Add(const std::wstring& root, size_t index) {
+        return roots_.emplace(pulse::path::FoldedKey(root), index).second;
+    }
+    bool Empty() const { return roots_.empty(); }
+    bool Contains(const std::wstring& path) const {
+        return !roots_.empty() && roots_.contains(pulse::path::FoldedKey(path));
+    }
+    // A root the path is or lies under, npos when none. Without `self`, only
+    // roots strictly above the path count.
+    size_t Find(const std::wstring& path, bool self = true) const {
+        if (roots_.empty() || path.empty()) return std::wstring::npos;
+        const std::wstring key = pulse::path::FoldedKey(path);
+        if (self)
+            if (const auto found = roots_.find(key); found != roots_.end()) return found->second;
+        for (size_t i = key.size(); i-- > 0;) {
+            if (key[i] != L'\\' && key[i] != L'/') continue;
+            // A root ending in a separator ("C:\") covers whatever follows it;
+            // any other root needs a separator right after it.
+            if (key[i] == L'\\' && i + 1 < key.size())
+                if (const auto found = roots_.find(key.substr(0, i + 1)); found != roots_.end())
+                    return found->second;
+            if (i)
+                if (const auto found = roots_.find(key.substr(0, i)); found != roots_.end())
+                    return found->second;
         }
-        std::sort(tag.paths.begin(), tag.paths.end());
-        tag.paths.erase(std::unique(tag.paths.begin(), tag.paths.end()), tag.paths.end());
+        return std::wstring::npos;
     }
-    std::unordered_set<std::wstring> quick_seen;
-    for (auto& path : quick_access_paths) {
-        if (!PathIsOrDescendant(path, old_norm)) continue;
-        path = new_norm + path.substr(old_norm.size());
-        changed = true;
+
+private:
+    std::unordered_map<std::wstring, size_t> roots_;
+};
+}  // namespace
+
+void PlacesCatalog::RemapPaths(const std::wstring& old_path, const std::wstring& new_path) {
+    RemapPaths(std::vector<std::pair<std::wstring, std::wstring>>{{old_path, new_path}});
+}
+
+void PlacesCatalog::RemapPaths(const std::vector<std::pair<std::wstring, std::wstring>>& moves) {
+    std::vector<std::pair<std::wstring, std::wstring>> valid;
+    valid.reserve(moves.size());
+    for (const auto& [old_path, new_path] : moves) {
+        std::wstring old_norm = Norm(old_path);
+        std::wstring new_norm = Norm(new_path);
+        if (old_norm.empty() || new_norm.empty() || EqualI(old_norm, new_norm)) continue;
+        valid.emplace_back(std::move(old_norm), std::move(new_norm));
     }
-    std::erase_if(quick_access_paths, [&](const auto& path) {
-        return !quick_seen.insert(TagKey(path)).second;
-    });
-    for (auto& item : starred_items) {
-        if (!PathIsOrDescendant(item.path, old_norm)) continue;
-        item.path = new_norm + item.path.substr(old_norm.size());
-        changed = true;
-    }
-    std::unordered_set<std::wstring> badge_seen;
-    for (auto& item : quick_access_badges) {
-        if (!PathIsOrDescendant(item.path, old_norm)) continue;
-        item.path = new_norm + item.path.substr(old_norm.size());
-        changed = true;
-    }
-    std::erase_if(quick_access_badges, [&](const QuickAccessBadge& item) {
-        return !badge_seen.insert(TagKey(item.path)).second;
-    });
-    for (auto& item : recent_items) {
-        if (!PathIsOrDescendant(item.path, old_norm)) continue;
-        item.path = new_norm + item.path.substr(old_norm.size());
-        changed = true;
+    if (valid.empty()) return;
+    // Every path follows the move whose source it is or lies under.
+    const auto apply = [&](const PathRoots& roots) {
+        bool changed = false;
+        const auto remap = [&](std::wstring& path) {
+            const size_t index = roots.Find(path);
+            if (index == std::wstring::npos) return;
+            path = valid[index].second + path.substr(valid[index].first.size());
+            changed = true;
+        };
+        for (auto& tag : tags) {
+            for (auto& path : tag.paths) remap(path);
+            std::sort(tag.paths.begin(), tag.paths.end());
+            tag.paths.erase(std::unique(tag.paths.begin(), tag.paths.end()), tag.paths.end());
+        }
+        std::unordered_set<std::wstring> quick_seen;
+        for (auto& path : quick_access_paths) remap(path);
+        std::erase_if(quick_access_paths, [&](const auto& path) {
+            return !quick_seen.insert(TagKey(path)).second;
+        });
+        for (auto& key : quick_access_order)
+            if (!IsBuiltinQuickAccessKey(key)) remap(key);
+        std::unordered_set<std::wstring> order_seen;
+        std::erase_if(quick_access_order, [&](const std::wstring& key) {
+            return !order_seen.insert(QuickAccessKeyId(key)).second;
+        });
+        for (auto& item : starred_items) remap(item.path);
+        std::unordered_set<std::wstring> badge_seen;
+        for (auto& item : quick_access_badges) remap(item.path);
+        std::erase_if(quick_access_badges, [&](const QuickAccessBadge& item) {
+            return !badge_seen.insert(TagKey(item.path)).second;
+        });
+        for (auto& item : recent_items) remap(item.path);
+        return changed;
+    };
+    // One pass serves every move when no path can meet two of them: no source
+    // inside another, and no source and target inside each other (a move of
+    // many items into one folder). Otherwise each move applies in turn, as
+    // separate calls did. A move of thousands of items sorted every tag and
+    // saved the catalog once per item.
+    PathRoots sources;
+    PathRoots targets;
+    bool independent = true;
+    for (size_t i = 0; i < valid.size() && independent; ++i)
+        independent = sources.Add(valid[i].first, i) && targets.Add(valid[i].second, i);
+    for (size_t i = 0; i < valid.size() && independent; ++i)
+        independent = sources.Find(valid[i].first, false) == std::wstring::npos &&
+                      targets.Find(valid[i].first) == std::wstring::npos &&
+                      sources.Find(valid[i].second) == std::wstring::npos;
+    bool changed = false;
+    if (independent) {
+        changed = apply(sources);
+    } else {
+        for (size_t i = 0; i < valid.size(); ++i) {
+            PathRoots one;
+            one.Add(valid[i].first, i);
+            changed = apply(one) || changed;
+        }
     }
     if (changed) {
         RebuildTagIndex();
@@ -1475,6 +2120,7 @@ void PlacesCatalog::CloneAssignments(const std::wstring& source,
         if (!PathIsOrDescendant(item.path, src)) continue;
         StarredItem clone = item;
         clone.path = dst + item.path.substr(src.size());
+        clone.separator_after = false;
         star_clones.push_back(std::move(clone));
     }
     for (auto& clone : star_clones) {
@@ -1492,28 +2138,32 @@ void PlacesCatalog::CloneAssignments(const std::wstring& source,
 }
 
 void PlacesCatalog::RemoveAssignments(const std::wstring& path, bool include_descendants) {
-    const std::wstring normalized = Norm(path);
-    if (normalized.empty()) return;
+    RemoveAssignments(std::vector<std::wstring>{path}, include_descendants);
+}
+
+void PlacesCatalog::RemoveAssignments(const std::vector<std::wstring>& paths,
+                                      bool include_descendants) {
+    PathRoots removed;
+    for (size_t i = 0; i < paths.size(); ++i) {
+        const std::wstring normalized = Norm(paths[i]);
+        if (!normalized.empty()) removed.Add(normalized, i);
+    }
+    if (removed.Empty()) return;
+    const auto gone = [&](const std::wstring& candidate) {
+        return include_descendants ? removed.Find(candidate) != std::wstring::npos
+                                   : removed.Contains(candidate);
+    };
     bool changed = false;
     for (auto& tag : tags) {
         const size_t before = tag.paths.size();
-        std::erase_if(tag.paths, [&](const std::wstring& candidate) {
-            return include_descendants ? PathIsOrDescendant(candidate, normalized)
-                                       : EqualI(candidate, normalized);
-        });
+        std::erase_if(tag.paths, gone);
         changed = changed || before != tag.paths.size();
     }
     const size_t starred_before = starred_items.size();
-    std::erase_if(starred_items, [&](const StarredItem& item) {
-        return include_descendants ? PathIsOrDescendant(item.path, normalized)
-                                   : EqualI(item.path, normalized);
-    });
+    std::erase_if(starred_items, [&](const StarredItem& item) { return gone(item.path); });
     changed = changed || starred_before != starred_items.size();
     const size_t recent_before = recent_items.size();
-    std::erase_if(recent_items, [&](const RecentItem& item) {
-        return include_descendants ? PathIsOrDescendant(item.path, normalized)
-                                   : EqualI(item.path, normalized);
-    });
+    std::erase_if(recent_items, [&](const RecentItem& item) { return gone(item.path); });
     changed = changed || recent_before != recent_items.size();
     if (changed) {
         RebuildTagIndex();
@@ -1545,7 +2195,7 @@ void PlacesCatalog::MergeAdsRecords(const std::wstring& path,
                 if (index < 0) {
                     ColorTag tag;
                     tag.id = record.id.empty() ? NewTagId() : record.id;
-                    tag.name = imported_name.empty() ? std::wstring(l10n::Pick(L"导入的标签", L"Imported tag")) : imported_name;
+                    tag.name = imported_name.empty() ? std::wstring(l10n::Get(l10n::StringId::ImportedTag).c_str()) : imported_name;
                     tag.rgb = record.rgb;
                     tags.push_back(std::move(tag));
                     index = static_cast<int>(tags.size()) - 1;
@@ -1589,9 +2239,37 @@ void PlacesCatalog::ReadAdsIntoCatalog(const std::wstring& path) {
     MergeAdsRecords(n, records, records.empty() ? ReadTagAds(n) : std::vector<std::wstring>{});
 }
 
+namespace {
+// Tags are metadata: writing or deleting the stream must not change the
+// file's modified time (NTFS updates it for any stream). Restored when the
+// guard goes, after the stream handle is closed; the last error survives.
+class KeepFileTimes {
+public:
+    explicit KeepFileTimes(const std::wstring& path) {
+        file_ = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                            FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        have_ = file_ != INVALID_HANDLE_VALUE && GetFileTime(file_, nullptr, &access_, &write_);
+    }
+    ~KeepFileTimes() {
+        const DWORD error = GetLastError();
+        if (have_) SetFileTime(file_, nullptr, &access_, &write_);
+        if (file_ != INVALID_HANDLE_VALUE) CloseHandle(file_);
+        SetLastError(error);
+    }
+    KeepFileTimes(const KeepFileTimes&) = delete;
+    KeepFileTimes& operator=(const KeepFileTimes&) = delete;
+private:
+    HANDLE file_ = INVALID_HANDLE_VALUE;
+    FILETIME access_{}, write_{};
+    bool have_ = false;
+};
+} // namespace
+
 bool WriteTagAdsV2(const std::wstring& path, const std::vector<TagAdsRecord>& tags) {
     std::wstring n = Norm(path);
     if (n.empty() || fs::IsVirtualPath(n)) return false;
+    const KeepFileTimes keep_times(n);
     if (tags.empty()) {
         if (DeleteFileW((n + kAdsSuffix).c_str())) return true;
         const DWORD error = GetLastError();

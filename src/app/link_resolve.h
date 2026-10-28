@@ -13,7 +13,14 @@ namespace pulse::app {
 // currently exists. Clears prior target metadata before reading, returns false
 // otherwise. link_destination records a readable
 // shortcut's saved path even when the target is missing; it is presentation only.
+// MSI advertised shortcuts (Office, Visual Studio, ...) resolve through
+// Windows Installer to the installed program; GetPath would report the product
+// icon cached in %windir%\Installer, which only carries an .exe name.
 bool ResolveLink(const std::wstring& lnk_path, fs::DirEntry& e);
+
+// True for files in Windows Installer's cache (<windows_dir>\Installer\...):
+// product icons and cached packages, never what a shortcut is meant to start.
+bool IsInstallerCachePath(const std::wstring& path, const std::wstring& windows_dir);
 
 // Read immediate display destinations for .lnk, .url, symlink and junction entries,
 // and preserve existing .lnk penetration behavior. No recursive resolution or UI.

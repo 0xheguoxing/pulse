@@ -5,6 +5,7 @@
 #include "folder_size_store.h"
 #include "../ui/view_layout.h"
 #include "../common/text_format.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <cstdio>
 #include <map>

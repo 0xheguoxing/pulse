@@ -5,6 +5,7 @@
 #include "index_paths.h"
 #include "index_shard.h"
 #include <algorithm>
+#include <cstring>
 #include <cwctype>
 
 namespace pulse::index {
@@ -221,33 +222,55 @@ bool DeltaLog::Replay(const std::wstring& path, uint64_t expected_built, ReplayF
     const uint64_t total = static_cast<uint64_t>(sz.QuadPart);
     uint64_t pos = sizeof(hdr);
     std::vector<wchar_t> name;
+    // Records are a few bytes each; one ReadFile per field made a large WAL
+    // cost tens of millions of syscalls per replay pass. Read 1 MiB chunks.
+    std::vector<BYTE> buffer(1u << 20);
+    size_t buffer_pos = 0, buffer_len = 0;
+    auto read_bytes = [&](void* out, size_t count) {
+        BYTE* dst = static_cast<BYTE*>(out);
+        while (count) {
+            if (buffer_pos == buffer_len) {
+                DWORD got = 0;
+                if (!ReadFile(h, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr) || got == 0)
+                    return false;
+                buffer_pos = 0;
+                buffer_len = got;
+            }
+            const size_t take = (std::min)(count, buffer_len - buffer_pos);
+            memcpy(dst, buffer.data() + buffer_pos, take);
+            dst += take;
+            buffer_pos += take;
+            count -= take;
+        }
+        return true;
+    };
     auto read_u8 = [&](uint8_t& v) {
         if (pos + 1 > total) return false;
-        if (!ReadAll(h, &v, 1)) return false;
+        if (!read_bytes(&v, 1)) return false;
         ++pos;
         return true;
     };
     auto read_u16 = [&](uint16_t& v) {
         if (pos + 2 > total) return false;
-        if (!ReadAll(h, &v, 2)) return false;
+        if (!read_bytes(&v, 2)) return false;
         pos += 2;
         return true;
     };
     auto read_i32 = [&](int32_t& v) {
         if (pos + 4 > total) return false;
-        if (!ReadAll(h, &v, 4)) return false;
+        if (!read_bytes(&v, 4)) return false;
         pos += 4;
         return true;
     };
     auto read_u32 = [&](uint32_t& v) {
         if (pos + 4 > total) return false;
-        if (!ReadAll(h, &v, 4)) return false;
+        if (!read_bytes(&v, 4)) return false;
         pos += 4;
         return true;
     };
     auto read_u64 = [&](uint64_t& v) {
         if (pos + 8 > total) return false;
-        if (!ReadAll(h, &v, 8)) return false;
+        if (!read_bytes(&v, 8)) return false;
         pos += 8;
         return true;
     };
@@ -267,7 +290,7 @@ bool DeltaLog::Replay(const std::wstring& path, uint64_t expected_built, ReplayF
                 !read_u16(nlen)) { ok = false; break; }
             name.resize(nlen);
             if (nlen) {
-                if (pos + nlen * 2 > total || !ReadAll(h, name.data(), nlen * 2)) { ok = false; break; }
+                if (pos + nlen * 2 > total || !read_bytes(name.data(), nlen * 2)) { ok = false; break; }
                 pos += nlen * 2ull;
             }
             if (!read_u64(frn)) { ok = false; break; }
@@ -286,7 +309,7 @@ bool DeltaLog::Replay(const std::wstring& path, uint64_t expected_built, ReplayF
                 if (!read_u16(nlen)) { ok = false; break; }
                 name.resize(nlen);
                 if (nlen) {
-                    if (pos + nlen * 2 > total || !ReadAll(h, name.data(), nlen * 2)) {
+                    if (pos + nlen * 2 > total || !read_bytes(name.data(), nlen * 2)) {
                         ok = false; break;
                     }
                     pos += nlen * 2ull;

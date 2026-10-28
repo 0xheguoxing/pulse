@@ -1,5 +1,9 @@
 // app_model.cpp
 #include "app_model.h"
+#include "git_status.h"
+#include "cloud_roots.h"
+#include "../fs/device_source.h"
+#include "folder_alias.h"
 #include "selection_caps.h"
 #include "split_tree_shape.h"
 #include "layout_pane_selection.h"
@@ -8,6 +12,7 @@
 #include "../common/config_json.h"
 #include "search_query.h"
 #include "entry_group.h"
+#include "tag_query.h"
 #include "../common/json_utils.h"
 #include "../common/localization.h"
 #include "../common/path_utils.h"
@@ -15,6 +20,7 @@
 #include "../common/text_format.h"
 #include "../fs/drive_label.h"
 #include "../ops/clipboard.h"
+#include "../ops/source_listing.h"
 #include <commctrl.h>
 #include <prsht.h>
 #include <shlobj.h>
@@ -22,8 +28,10 @@
 #define SECURITY_WIN32 1
 #include <security.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cwctype>
+#include <unordered_set>
 #include <utility>
 
 namespace pulse::app {
@@ -103,6 +111,7 @@ void Tab::NavigateTo(const std::wstring& path) {
     scroll_x = 0.0f;
     filter_text.clear();
     virtual_title.clear();
+    virtual_header_note.clear();
     banner_title.clear();
     banner_message.clear();
     net_readonly = false;
@@ -118,10 +127,39 @@ fs::DirEntry Tab::EntryAt(size_t index) const {
         if(content_results->Get(index,row)) return row.entry;
         fs::DirEntry pending; pending.change_record_only=true; return pending;
     }
+    if (const auto* combined = TreeEntries()) return index < combined->size() ? (*combined)[index] : fs::DirEntry{};
     return snapshot && index<snapshot->size() ? (*snapshot)[index] : fs::DirEntry{};
 }
 
+void Tab::StashTreeSelection() {
+    const auto* combined = TreeEntries();
+    if (!combined || all_selected) return;
+    DetailsTree& t = *tree;
+    const auto child = [&](int index) {
+        return index >= 0 && static_cast<size_t>(index) >= t.base_size &&
+               static_cast<size_t>(index) < combined->size();
+    };
+    bool moved = false;
+    for (auto it = selected.begin(); it != selected.end();) {
+        if (!child(*it)) { ++it; continue; }
+        if (!t.IsPlaceholder(static_cast<size_t>(*it)))
+            t.stash_selected.push_back((*combined)[static_cast<size_t>(*it)].full_path);
+        it = selected.erase(it);
+        moved = true;
+    }
+    if (child(selected_index)) {
+        if (!t.IsPlaceholder(static_cast<size_t>(selected_index)))
+            t.stash_focus = (*combined)[static_cast<size_t>(selected_index)].full_path;
+        selected_index = selected.empty() ? -1 : *selected.begin();
+        moved = true;
+    }
+    if (child(selection_anchor)) selection_anchor = selected_index;
+    if (moved) ++selection_revision;
+}
+
 void Tab::SetSnapshot(fs::SnapshotPtr value) {
+    // Child rows sit past the end of the old snapshot; keep them by path.
+    if (value != snapshot) StashTreeSelection();
     snapshot = std::move(value);
     view_cache_snapshot.reset();
     view_cache_places = nullptr;
@@ -151,6 +189,12 @@ void Tab::SetSnapshot(fs::SnapshotPtr value) {
 bool Tab::EntryVisible(int index) const {
     if(index < 0 || static_cast<size_t>(index) >= EntryCount()) return false;
     if(content_results) return true;
+    if (const auto* combined = TreeEntries()) {
+        // Only the "more" row takes focus (Enter shows more); loading,
+        // empty and failed rows are skipped.
+        if (tree->IsPlaceholder(static_cast<size_t>(index))) return tree->IsMoreRow(static_cast<size_t>(index));
+        return AllowsAttributes((*combined)[static_cast<size_t>(index)].attrs);
+    }
     return AllowsAttributes((*snapshot)[static_cast<size_t>(index)].attrs);
 }
 
@@ -261,8 +305,11 @@ void Tab::ToggleSelect(int index) {
     } else {
         selected.insert(index);
         selected_index = index;
-        if (selection_anchor < 0) selection_anchor = index;
     }
+    // As in File Explorer, the toggled item becomes the anchor for a later
+    // Shift-click and keeps keyboard focus even when it was deselected.
+    selection_anchor = index;
+    SetCaret(index);
 }
 
 void Tab::SelectRange(int from, int to, const ui::PaneViewModel* view) {
@@ -321,9 +368,11 @@ void Tab::SelectRange(int from, int to, const ui::PaneViewModel* view) {
 void Tab::SelectAll() {
     RememberSelection remember{*this};
     ++selection_revision;
-    if (!content_results && !ShowsEveryEntry()) {
+    // Tree placeholders never count as selected, so list the real rows.
+    if (!content_results && (!ShowsEveryEntry() || TreeEntries())) {
         std::vector<int> visible;
-        for (int i = 0; i < CountBound(); ++i) if (EntryVisible(i)) visible.push_back(i);
+        for (int i = 0; i < CountBound(); ++i)
+            if (EntryVisible(i) && !(TreeEntries() && tree->IsPlaceholder(static_cast<size_t>(i)))) visible.push_back(i);
         SelectIndices(visible);
         return;
     }
@@ -352,6 +401,8 @@ void Tab::SelectIndices(const std::vector<int>& indices) {
     int focus = -1;
     for (int index : indices) {
         if (index < 0 || index >= n || !EntryVisible(index)) continue;
+        // Details tree "more" rows take focus alone, never in a group.
+        if (TreeEntries() && tree->IsPlaceholder(static_cast<size_t>(index))) continue;
         if (selected.insert(index).second && focus < 0) focus = index;
     }
     if (selected.empty()) {
@@ -380,7 +431,8 @@ void Tab::InvertIndices(const std::vector<int>& universe) {
     std::unordered_set<int> uni;
     uni.reserve(universe.size());
     for (int index : universe) {
-        if (index >= 0 && index < n && EntryVisible(index)) uni.insert(index);
+        if (index >= 0 && index < n && EntryVisible(index) &&
+            !(TreeEntries() && tree->IsPlaceholder(static_cast<size_t>(index)))) uni.insert(index);
     }
     if (uni.empty()) return;
     std::unordered_set<int> next;
@@ -408,6 +460,26 @@ void Tab::InvertIndices(const std::vector<int>& universe) {
         selected_index = *selected.begin();
         selection_anchor = selected_index;
     }
+}
+
+void Tab::AddRange(int from, int to, const ui::PaneViewModel* view) {
+    RememberSelection remember{*this};
+    const int n = CountBound();
+    if (n <= 0) {
+        ClearSelection();
+        return;
+    }
+    MaterializeSelection();
+    std::unordered_set<int> base = std::move(selected);
+    SelectRange(from, to, view);
+    for (int index : base) selected.insert(index);
+    if (static_cast<int>(selected.size()) == n) {
+        all_selected = true;
+        selected.clear();
+    }
+    to = std::clamp(to, 0, n - 1);
+    if (IsSelected(to)) selected_index = to;
+    else if (selected_index < 0 && !selected.empty()) selected_index = *selected.begin();
 }
 
 void Tab::MoveFocus(int index, bool extend, const ui::PaneViewModel* view) {
@@ -454,19 +526,21 @@ void Tab::SelectionSizeSummary(uint64_t* bytes, int* files, int* folders) const 
     auto& c = selection_size_cache;
     const int count = SelectedCount();
     const size_t entries = EntryCount();
-    if (c.revision != selection_revision || c.snapshot != snapshot.get() ||
+    const auto* tree_entries = TreeEntries();
+    const std::vector<fs::DirEntry>* list = tree_entries ? tree_entries : snapshot.get();
+    if (c.revision != selection_revision || c.snapshot != list ||
         c.entry_count != entries || c.selected_count != count) {
         c.revision = selection_revision;
-        c.snapshot = snapshot.get();
+        c.snapshot = list;
         c.entry_count = entries;
         c.selected_count = count;
         c.bytes = 0;
         c.files = 0;
         c.folders = 0;
-        if (snapshot && !content_results) {
+        if (list && !content_results) {
             const auto add = [&](int index) {
-                if (index < 0 || static_cast<size_t>(index) >= snapshot->size()) return;
-                const fs::DirEntry& entry = (*snapshot)[static_cast<size_t>(index)];
+                if (index < 0 || static_cast<size_t>(index) >= list->size()) return;
+                const fs::DirEntry& entry = (*list)[static_cast<size_t>(index)];
                 if (entry.change_record_only) return;
                 if (entry.is_dir) ++c.folders;
                 else { ++c.files; c.bytes += entry.size; }
@@ -525,6 +599,7 @@ std::wstring Tab::GoBack() {
     scroll_x = 0.0f;
     filter_text.clear();
     virtual_title.clear();
+    virtual_header_note.clear();
     loading = true;
     return current_path;
 }
@@ -545,6 +620,7 @@ std::wstring Tab::GoForward() {
     scroll_x = 0.0f;
     filter_text.clear();
     virtual_title.clear();
+    virtual_header_note.clear();
     loading = true;
     return current_path;
 }
@@ -866,7 +942,10 @@ std::wstring TabTitle(const std::wstring& path) {
         if (kind == L"recycle") return l10n::Get(l10n::StringId::RecycleBin);
         if (kind == L"search") return l10n::Get(l10n::StringId::Search);
         if (kind == L"tag") return rest.empty() ? l10n::Get(l10n::StringId::Tag) : rest;
+        if (kind == L"tags") return l10n::Get(l10n::StringId::Tag);
     }
+    // 别名: tabs, the sidebar and window lists show the folder's alias.
+    if (std::wstring alias = AliasStore::Instance().Shown(path); !alias.empty()) return alias;
     std::wstring_view v = path;
     if (v.size() > 1 && v.back() == L'\\') v.remove_suffix(1);
     auto pos = v.find_last_of(L"\\/");
@@ -891,13 +970,24 @@ void StagingTray::Collect(const std::vector<std::wstring>& paths, bool move_inte
     batch.id = next_id_++;
     batch.move_intent = move_intent;
     batch.total_size = 0;
-    for (const auto& p : paths) {
+    std::vector<std::wstring> normalized;
+    normalized.reserve(paths.size());
+    for (const auto& p : paths) normalized.push_back(fs::NormalizePath(p));
+    // Thousands of items from one folder come from one listing of it.
+    const ops::SourceListing listing(normalized);
+    for (auto& path : normalized) {
         TrayItem it;
         it.id = next_id_++;
-        it.path = fs::NormalizePath(p);
+        it.path = std::move(path);
         // One probe covers existence, icon attrs and the rough size sum.
         WIN32_FILE_ATTRIBUTE_DATA fad{};
-        if (GetFileAttributesExW(it.path.c_str(), GetFileExInfoStandard, &fad)) {
+        const ops::ListedSource* listed = listing.Find(it.path);
+        if (listed) {
+            fad.dwFileAttributes = listed->attributes;
+            fad.nFileSizeLow = static_cast<DWORD>(listed->bytes);
+            fad.nFileSizeHigh = static_cast<DWORD>(listed->bytes >> 32);
+        }
+        if (listed || GetFileAttributesExW(it.path.c_str(), GetFileExInfoStandard, &fad)) {
             it.exists = true;
             it.attrs = fad.dwFileAttributes;
             it.is_dir = (fad.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -944,12 +1034,13 @@ void StagingTray::ReplacePath(const std::wstring& from, const std::wstring& to) 
 void StagingTray::MarkPendingMove(uint64_t task_id, const std::vector<std::wstring>& paths,
                                   std::optional<size_t> batch) {
     std::vector<uint64_t> ids;
+    std::unordered_set<std::wstring> wanted;
+    wanted.reserve(paths.size());
+    for (const auto& path : paths) wanted.insert(pulse::path::FoldedKey(fs::NormalizePath(path)));
     for (size_t b = 0; b < batches_.size(); ++b) {
         if (batch && b != *batch) continue;
         for (const auto& item : batches_[b].items)
-            if (std::any_of(paths.begin(), paths.end(), [&](const auto& path) {
-                return _wcsicmp(item.path.c_str(), fs::NormalizePath(path).c_str()) == 0;
-            })) ids.push_back(item.id);
+            if (wanted.contains(pulse::path::FoldedKey(item.path))) ids.push_back(item.id);
     }
     MarkInFlight(task_id, ids, true);
 }
@@ -1027,64 +1118,91 @@ void StagingTray::Clear() { batches_.clear(); }
 
 void StagingTray::MarkInFlight(uint64_t task_id, const std::vector<uint64_t>& item_ids, bool move) {
     if (!task_id) return;
+    const std::unordered_set<uint64_t> wanted(item_ids.begin(), item_ids.end());
     for (auto& batch : batches_)
         for (auto& item : batch.items)
-            if (!item.inflight_task && std::find(item_ids.begin(), item_ids.end(), item.id) != item_ids.end()) {
+            if (!item.inflight_task && wanted.contains(item.id)) {
                 item.inflight_task = task_id;
                 item.inflight_move = move;
                 item.inflight_source = item.path;
                 inflight_sources_[task_id].push_back(item.path);
+                ++inflight_keys_[pulse::path::FoldedKey(item.path)];
             }
 }
 
 void StagingTray::CompleteTask(uint64_t task_id, const std::vector<std::wstring>& moved_sources) {
     if (!task_id) return;
-    inflight_sources_.erase(task_id);
+    if (const auto task = inflight_sources_.find(task_id); task != inflight_sources_.end()) {
+        for (const auto& source : task->second) {
+            const auto key = inflight_keys_.find(pulse::path::FoldedKey(source));
+            if (key != inflight_keys_.end() && !--key->second) inflight_keys_.erase(key);
+        }
+        inflight_sources_.erase(task);
+    }
+    std::unordered_set<std::wstring> moved;
+    moved.reserve(moved_sources.size());
+    for (const auto& source : moved_sources) moved.insert(pulse::path::FoldedKey(fs::NormalizePath(source)));
     for (size_t b = batches_.size(); b-- > 0;) {
         auto& batch = batches_[b];
-        for (size_t i = batch.items.size(); i-- > 0;) {
+        // Kept items close up in one pass; erasing each consumed one would
+        // shift the rest every time.
+        size_t kept = 0;
+        for (size_t i = 0; i < batch.items.size(); ++i) {
             auto& item = batch.items[i];
-            if (item.inflight_task != task_id) continue;
-            const bool consume = item.inflight_move && std::any_of(moved_sources.begin(), moved_sources.end(),
-                [&](const auto& source) {
-                    return _wcsicmp(fs::NormalizePath(source).c_str(), item.inflight_source.c_str()) == 0;
-                });
-            item.inflight_task = 0;
-            item.inflight_move = false;
-            item.inflight_source.clear();
-            if (consume) {
-                batch.total_size -= std::min(batch.total_size, item.size);
-                batch.items.erase(batch.items.begin() + static_cast<std::ptrdiff_t>(i));
+            bool consume = false;
+            if (item.inflight_task == task_id) {
+                consume = item.inflight_move && moved.contains(pulse::path::FoldedKey(item.inflight_source));
+                item.inflight_task = 0;
+                item.inflight_move = false;
+                item.inflight_source.clear();
+                if (consume) batch.total_size -= std::min(batch.total_size, item.size);
             }
+            if (consume) continue;
+            if (kept != i) batch.items[kept] = std::move(item);
+            ++kept;
         }
+        batch.items.erase(batch.items.begin() + static_cast<std::ptrdiff_t>(kept), batch.items.end());
         if (batch.items.empty()) batches_.erase(batches_.begin() + static_cast<std::ptrdiff_t>(b));
     }
 }
 
 bool StagingTray::IsInFlight(const std::wstring& path) const {
-    const auto normalized = fs::NormalizePath(path);
-    for (const auto& [task, sources] : inflight_sources_) {
-        (void)task;
-        for (const auto& source : sources)
-            if (_wcsicmp(source.c_str(), normalized.c_str()) == 0) return true;
-    }
-    return false;
+    return !inflight_keys_.empty() && inflight_keys_.contains(pulse::path::FoldedKey(fs::NormalizePath(path)));
 }
 
 void StagingTray::RemoveDeleted(const std::vector<std::wstring>& paths) {
-    for (const auto& path : paths) {
-        if (path.empty()) continue;
-        const std::wstring deleted = fs::NormalizePath(path);
-        for (size_t b = batches_.size(); b-- > 0;) {
-            for (size_t i = batches_[b].items.size(); i-- > 0;) {
-                const auto& candidate = batches_[b].items[i].path;
-                const bool same = _wcsicmp(candidate.c_str(), deleted.c_str()) == 0;
-                const bool child = candidate.size() > deleted.size() &&
-                    _wcsnicmp(candidate.c_str(), deleted.c_str(), deleted.size()) == 0 &&
-                    (deleted.back() == L'\\' || candidate[deleted.size()] == L'\\');
-                if (same || child) RemoveItem(b, i);
-            }
+    if (batches_.empty()) return;
+    std::unordered_set<std::wstring> deleted;
+    deleted.reserve(paths.size());
+    for (const auto& path : paths)
+        if (!path.empty()) deleted.insert(pulse::path::FoldedKey(fs::NormalizePath(path)));
+    if (deleted.empty()) return;
+    // An item goes when it or a folder above it was deleted: look its own path
+    // and each parent up (with and without the separator) instead of
+    // comparing every item with every deleted path.
+    const auto gone = [&](const std::wstring& path) {
+        const std::wstring key = pulse::path::FoldedKey(path);
+        if (deleted.contains(key)) return true;
+        for (size_t i = key.size(); i-- > 0;) {
+            if (key[i] != L'\\') continue;
+            if (deleted.contains(key.substr(0, i + 1)) || (i && deleted.contains(key.substr(0, i)))) return true;
         }
+        return false;
+    };
+    for (size_t b = batches_.size(); b-- > 0;) {
+        auto& batch = batches_[b];
+        size_t kept = 0;
+        for (size_t i = 0; i < batch.items.size(); ++i) {
+            if (gone(batch.items[i].path)) {
+                batch.total_size -= std::min(batch.total_size, batch.items[i].size);
+                continue;
+            }
+            if (kept != i) batch.items[kept] = std::move(batch.items[i]);
+            ++kept;
+        }
+        if (kept == batch.items.size()) continue;
+        batch.items.erase(batch.items.begin() + static_cast<std::ptrdiff_t>(kept), batch.items.end());
+        if (batch.items.empty()) batches_.erase(batches_.begin() + static_cast<std::ptrdiff_t>(b));
     }
 }
 
@@ -1231,6 +1349,48 @@ std::vector<SidebarEntry> BuildOneDriveEntries() {
     return out;
 }
 
+// Other cloud folders Explorer pins to its navigation pane (WPS网盘, 百度网盘
+// 同步空间, Dropbox, ...) and Cloud Files sync roots, after the OneDrive rows.
+// Runs on the sidebar refresh thread with the rest of the model; a folder that
+// no longer exists is left out, the same as Explorer does.
+void AppendOtherCloudEntries(std::vector<SidebarEntry>& cloud) {
+    CloudRegistry registry = CloudRegistry::System();
+    // Isolated test instances only: a private HKCU subtree stands in for the
+    // machine's registration, so tests never touch Explorer's own keys.
+    if (GetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", nullptr, 0) > 0) {
+        wchar_t prefix[512]{};
+        const DWORD n = GetEnvironmentVariableW(L"PULSE_TEST_CLOUD_REG", prefix, ARRAYSIZE(prefix));
+        if (n > 0 && n < ARRAYSIZE(prefix)) registry = CloudRegistry::Fixture(prefix, L"S-1-5-21-pulse-test");
+    }
+    std::vector<CloudRoot> roots;
+    for (const auto& entry : cloud) roots.push_back({entry.path, entry.label, {}, CloudRootSource::Seed});
+    const size_t seeded = roots.size();
+    const auto is_directory = [](const std::wstring& path) {
+        const DWORD attrs = GetFileAttributesW(path.c_str());
+        return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    };
+    auto sync_roots = ReadSyncRootCloudRoots(registry);
+    std::vector<std::wstring> cloud_files_roots;
+    for (const auto& root : sync_roots) cloud_files_roots.push_back(root.path);
+    PublishCloudFilesRoots(std::move(cloud_files_roots));
+    MergeCloudRoots(roots, ReadNavigationPaneCloudRoots(registry), is_directory);
+    MergeCloudRoots(roots, std::move(sync_roots), is_directory);
+    PublishCloudRootLabels(roots);  // 下载并预览 names the provider
+    for (size_t i = seeded; i < roots.size(); ++i) {
+        SidebarEntry entry;
+        entry.glyph = L"\xE753";
+        entry.fallback = L"Cloud";
+        entry.color = ui::HexColor(CloudRootColor(roots[i]));
+        entry.path = fs::NormalizePath(roots[i].path);
+        entry.label = roots[i].label;
+        // Explorer's navigation pane shows the program's own icon for its
+        // CLSID (WPS网盘, 百度网盘); the tinted cloud stays as the fallback.
+        if (roots[i].source == CloudRootSource::NavigationPane && !roots[i].id.empty())
+            entry.icon_path = L"::" + roots[i].id;
+        if (!entry.path.empty()) cloud.push_back(std::move(entry));
+    }
+}
+
 std::vector<int> DefaultSidebarOrder() {
     // Mirrors Explorer's navigation pane: the OneDrive accounts lead, the starred
     // root follows next to quick access, and the drive list sits near the bottom
@@ -1321,6 +1481,35 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
         ui::HexColor(0xC084FC), l10n::Get(l10n::StringId::Downloads).c_str());
     downloads.builtin = static_cast<int>(BuiltinQuickAccess::Downloads);
     m.quick_access.push_back(std::move(downloads));
+    // The library folders Explorer lists next to them, in Explorer's order.
+    // Documents and Music start hidden (kDefaultQuickAccessHiddenMask); a
+    // folder the profile does not have is left out, section menu included.
+    const struct {
+        REFKNOWNFOLDERID id;
+        const wchar_t* glyph;
+        const wchar_t* fallback;
+        uint32_t rgb;
+        l10n::StringId label;
+        BuiltinQuickAccess builtin;
+    } libraries[] = {
+        // Documents: \xE7C3 (Page), not the file glyph, so the sidebar gives it
+        // its color document icon (FluentSvgIdForGlyph).
+        {FOLDERID_Documents, L"\xE7C3", L"Docs", 0x60A5FA, l10n::StringId::PickerDocuments,
+         BuiltinQuickAccess::Documents},
+        {FOLDERID_Pictures, L"\xE91B", L"Pics", 0x34D399, l10n::StringId::PickerPictures,
+         BuiltinQuickAccess::Pictures},
+        {FOLDERID_Music, L"\xE8D6", L"Music", 0xF472B6, l10n::StringId::Music,
+         BuiltinQuickAccess::Music},
+        {FOLDERID_Videos, L"\xE714", L"Video", 0xF59E0B, l10n::StringId::Videos,
+         BuiltinQuickAccess::Videos},
+    };
+    for (const auto& library : libraries) {
+        SidebarEntry entry = MakeKnownEntry(library.id, library.glyph, library.fallback,
+            ui::HexColor(library.rgb), l10n::Get(library.label).c_str());
+        if (entry.path.empty()) continue;
+        entry.builtin = static_cast<int>(library.builtin);
+        m.quick_access.push_back(std::move(entry));
+    }
     // OneDrive leads its own section: one row per signed-in account, the way
     // Explorer lists them. The known folder only resolves for the primary
     // account, so it stays as the fallback when the registry has nothing.
@@ -1345,6 +1534,7 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
             m.cloud.push_back(std::move(onedrive));
         }
     }
+    AppendOtherCloudEntries(m.cloud);
     SidebarEntry recycle_bin;
     recycle_bin.glyph = L"\xE75C";
     recycle_bin.fallback = L"Bin";
@@ -1387,7 +1577,10 @@ SidebarModel BuildSidebarModel(const fs::RecycleBinInfo* recycle) {
 // Build window view-model
 // ---------------------------------------------------------------------------
 static std::wstring PaneHeaderText(const Tab& tab) {
-    return tab.virtual_title.empty() ? TabTitle(tab.current_path) : tab.virtual_title;
+    std::wstring text = tab.virtual_title.empty() ? TabTitle(tab.current_path) : tab.virtual_title;
+    // 网络位置: the network it lists devices for ("Home-5G · 专用网络").
+    if (!tab.virtual_header_note.empty()) text += L"  \u00B7  " + tab.virtual_header_note;
+    return text;
 }
 
 static std::wstring StatusText(const Tab& tab) {
@@ -1397,6 +1590,29 @@ static std::wstring StatusText(const Tab& tab) {
         return count;
     }
     if (tab.loading || !tab.snapshot) return L"";
+    if (tab.current_path == L"pulse:networks" && !tab.virtual_status.empty()) return tab.virtual_status;
+    if (tab.current_path.empty()) {
+        // This PC: what is there (2 个磁盘 · 1 个网络盘 · 1 个设备), not
+        // folders and files: phones and program icons are neither.
+        size_t counts[4]{};
+        for (size_t i = 0; i < tab.EntryCount(); ++i) {
+            const fs::DirEntry& e = tab.EntryAt(i);
+            if (e.drive_type) ++counts[e.drive_remote_like ? 1 : 0];
+            else if (e.pc_device & fs::kPcDevicePhone) ++counts[2];
+            else if (e.pc_launcher) ++counts[3];
+        }
+        const l10n::StringId ids[4] = {l10n::StringId::ThisPcStatusDrives, l10n::StringId::ThisPcStatusMounted,
+                                       l10n::StringId::ThisPcStatusDevices, l10n::StringId::ThisPcStatusLaunchers};
+        std::wstring text;
+        for (int k = 0; k < 4; ++k) {
+            if (counts[k] == 0 && k != 0) continue;
+            wchar_t part[96]{};
+            swprintf_s(part, l10n::Get(ids[k]).c_str(), counts[k]);
+            if (!text.empty()) text += L" \u00B7 ";
+            text += part;
+        }
+        return text;
+    }
     wchar_t buf[128];
     swprintf_s(buf, l10n::Get(l10n::StringId::StatusItemsFormat).c_str(),
         tab.directory_count + tab.file_count, tab.directory_count, tab.file_count);
@@ -1406,12 +1622,26 @@ static std::wstring StatusText(const Tab& tab) {
 static std::wstring SelectionText(const Tab& tab) {
     const int count = tab.SelectedCount();
     if (count <= 0) return l10n::Get(l10n::StringId::NotSelected);
+    // Only the details tree's "more" row: it is not an item.
+    if (count == 1 && tab.TreeEntries() && tab.selected_index >= 0 &&
+        tab.tree->IsPlaceholder(static_cast<size_t>(tab.selected_index)))
+        return l10n::Get(l10n::StringId::NotSelected);
     if (count == 1 && tab.snapshot && tab.selected_index >= 0 &&
         tab.selected_index < static_cast<int>(tab.EntryCount())) {
         const auto& e = tab.EntryAt(tab.selected_index);
         wchar_t buf[256];
         swprintf_s(buf, l10n::Get(l10n::StringId::SelectedOneFormat).c_str(), e.name.c_str(),
                    pulse::format::ByteSize(e.size, true).c_str());
+        // A row inside an expanded folder: where it is, from the current folder.
+        const size_t slash = e.full_path.find_last_of(L'\\');
+        const size_t base = tab.current_path.size() + (tab.current_path.ends_with(L'\\') ? 0 : 1);
+        if (tab.TreeEntries() && slash != std::wstring::npos && slash > base &&
+            _wcsnicmp(e.full_path.c_str(), tab.current_path.c_str(), tab.current_path.size()) == 0) {
+            wchar_t where[300];
+            swprintf_s(where, l10n::Get(l10n::StringId::SelectedInFolderFormat).c_str(),
+                       e.full_path.substr(base, slash - base).c_str());
+            return std::wstring(buf) + L"  \u00B7  " + where;
+        }
         return buf;
     }
     wchar_t buf[64];
@@ -1436,6 +1666,7 @@ static ui::SidebarGroup ConvertGroup(const std::wstring& header, const std::vect
         it.label = e.label;
         it.detail = e.detail;
         it.icon_glyph = e.glyph;
+        it.icon_path = e.icon_path;
         it.fallback_text = e.fallback;
         it.icon_color = e.color;
         it.danger = e.danger;
@@ -1452,6 +1683,58 @@ static ui::SidebarGroup ConvertGroup(const std::wstring& header, const std::vect
         g.items.push_back(std::move(it));
     }
     return g;
+}
+
+// Stored in places.json: a name never changes, new links get new names.
+constexpr const wchar_t* kBuiltinQuickAccessNames[] = {
+    L"recent", L"desktop", L"downloads", L"recycle_bin",
+    L"pictures", L"videos", L"documents", L"music",
+};
+static_assert(sizeof(kBuiltinQuickAccessNames) / sizeof(kBuiltinQuickAccessNames[0]) ==
+              static_cast<size_t>(BuiltinQuickAccess::Count));
+constexpr std::wstring_view kBuiltinQuickAccessPrefix = L"builtin:";  // IsBuiltinQuickAccessKey
+
+std::wstring BuiltinQuickAccessKey(int builtin) {
+    if (builtin < 0 || builtin >= static_cast<int>(BuiltinQuickAccess::Count)) return {};
+    return std::wstring(kBuiltinQuickAccessPrefix) + kBuiltinQuickAccessNames[builtin];
+}
+
+int BuiltinQuickAccessFromKey(const std::wstring& key) {
+    std::wstring_view name = key;
+    if (!name.starts_with(kBuiltinQuickAccessPrefix)) return -1;
+    name.remove_prefix(kBuiltinQuickAccessPrefix.size());
+    for (int i = 0; i < static_cast<int>(BuiltinQuickAccess::Count); ++i) {
+        if (name == kBuiltinQuickAccessNames[i]) return i;
+    }
+    return -1;
+}
+
+std::vector<std::wstring> BuiltinQuickAccessDefaultKeys(const std::vector<SidebarEntry>& quick_access) {
+    std::vector<std::wstring> keys;
+    keys.reserve(quick_access.size());
+    for (const auto& entry : quick_access) {
+        std::wstring key = BuiltinQuickAccessKey(entry.builtin);
+        if (!key.empty()) keys.push_back(std::move(key));
+    }
+    return keys;
+}
+
+std::vector<std::wstring> QuickAccessDisplayKeys(const std::vector<SidebarEntry>& quick_access,
+                                                 const PlacesCatalog* places,
+                                                 uint32_t hidden_mask, bool include_hidden) {
+    std::vector<std::wstring> keys = BuiltinQuickAccessDefaultKeys(quick_access);
+    if (places) {
+        keys.insert(keys.end(), places->quick_access_paths.begin(),
+                    places->quick_access_paths.end());
+        keys = MergeQuickAccessOrder(places->quick_access_order, keys);
+    }
+    if (!include_hidden) {
+        std::erase_if(keys, [&](const std::wstring& key) {
+            const int builtin = BuiltinQuickAccessFromKey(key);
+            return builtin >= 0 && ((hidden_mask >> builtin) & 1u) != 0;
+        });
+    }
+    return keys;
 }
 
 static std::wstring EntryPathOf(const Tab& tab, const fs::DirEntry& e) {
@@ -1501,19 +1784,54 @@ bool NameMatchesPattern(std::wstring_view name, std::wstring_view needle) {
     return folded_name.find(folded_pat) != std::wstring::npos;
 }
 
+// Filter box tag syntax (pulse_tag_redesign §7): "#a #b" = both, "#a|b" =
+// either, "-#a" = without; #"two words" quotes a name with spaces.
+struct FilterTagTerm {
+    std::vector<std::wstring> alternatives;  // lowercase needles, any may match
+    bool exclude = false;
+};
+
+static std::wstring UnquoteTagNeedle(std::wstring value) {
+    if (!value.empty() && value[0] == L'#') value.erase(0, 1);
+    if (value.size() >= 2 && value.front() == L'"' && value.back() == L'"')
+        value = value.substr(1, value.size() - 2);
+    else if (!value.empty() && value.front() == L'"')
+        value.erase(0, 1);  // still typing the closing quote
+    return ToLowerCopy(value);
+}
+
 static void ParseFilterText(const std::wstring& text, std::wstring& name_needle,
-                            std::vector<std::wstring>& tag_needles) {
+                            std::vector<FilterTagTerm>& tag_terms) {
     name_needle.clear();
-    tag_needles.clear();
+    tag_terms.clear();
     size_t i = 0;
     while (i < text.size()) {
         while (i < text.size() && std::iswspace(text[i])) ++i;
         if (i >= text.size()) break;
         const size_t start = i;
-        while (i < text.size() && !std::iswspace(text[i])) ++i;
+        bool quoted = false;
+        while (i < text.size() && (quoted || !std::iswspace(text[i]))) {
+            if (text[i] == L'"') quoted = !quoted;
+            ++i;
+        }
         std::wstring tok = text.substr(start, i - start);
-        if (!tok.empty() && tok[0] == L'#' && tok.size() > 1) {
-            tag_needles.push_back(ToLowerCopy(tok.substr(1)));
+        const bool exclude = tok.size() > 2 && tok[0] == L'-' && tok[1] == L'#';
+        FilterTagTerm term;
+        term.exclude = exclude;
+        if (exclude || (tok.size() > 1 && tok[0] == L'#')) {
+            size_t part = exclude ? 2 : 1;
+            bool in_quotes = false;
+            for (size_t k = part; k <= tok.size(); ++k) {
+                if (k < tok.size() && tok[k] == L'"') in_quotes = !in_quotes;
+                if (k == tok.size() || (tok[k] == L'|' && !in_quotes)) {
+                    std::wstring needle = UnquoteTagNeedle(tok.substr(part, k - part));
+                    if (!needle.empty()) term.alternatives.push_back(std::move(needle));
+                    part = k + 1;
+                }
+            }
+        }
+        if (!term.alternatives.empty()) {
+            tag_terms.push_back(std::move(term));
         } else if (!tok.empty()) {
             if (!name_needle.empty()) name_needle += L' ';
             name_needle += tok;
@@ -1522,28 +1840,146 @@ static void ParseFilterText(const std::wstring& text, std::wstring& name_needle,
     name_needle = ToLowerCopy(name_needle);
 }
 
-static bool TagMatchesNeedle(const ColorTag& tag, int index, const std::wstring& needle) {
+// The color family of a tag's actual color (HSV hue; low saturation is gray),
+// so #红 finds every reddish tag whatever its position or name.
+enum class TagHue { Red, Orange, Yellow, Green, Cyan, Blue, Purple, Pink, Gray };
+
+// The condition bar of a tag view: the terms (且 / 或 / 不含) in TagQueryTerms
+// order, the 位置 chip, ＋ 条件, 保存视图; then the 细分 chips counted at load time.
+// tag_view.cpp maps clicks back by the same order.
+static void FillTagQueryBar(const PlacesCatalog& places, const Tab& tab, ui::PaneViewModel& out) {
+    TagQuery query;
+    if (!TagQueryFromPath(places, tab.current_path, &query)) return;
+    using Chip = ui::TagQueryChipView;
+    for (const auto& term : TagQueryTerms(query)) {
+        Chip chip;
+        const ColorTag* tag = places.FindTag(term.id);
+        chip.label = tag ? tag->name : l10n::Get(l10n::StringId::TagDeleted);
+        chip.color = tag ? ui::HexColor(tag->rgb) : ui::HexColor(0x8E8E93);
+        chip.kind = term.kind == TagTermKind::All ? Chip::All
+                  : term.kind == TagTermKind::Any ? Chip::Any : Chip::Not;
+        out.tag_query_chips.push_back(std::move(chip));
+    }
+    if (!query.in.empty()) {
+        Chip chip;
+        chip.label = TagQueryFolderLabel(query.in);
+        chip.kind = Chip::Location;
+        out.tag_query_chips.push_back(std::move(chip));
+    }
+    Chip add;
+    add.label = l10n::Get(l10n::StringId::TagAddCondition);
+    add.kind = Chip::Add;
+    out.tag_query_chips.push_back(std::move(add));
+    if (!query.Empty()) {
+        Chip save;
+        save.label = l10n::Get(l10n::StringId::TagSaveView);
+        save.kind = Chip::Save;
+        out.tag_query_chips.push_back(std::move(save));
+    }
+    for (const auto& [id, count] : tab.tag_refine) {
+        const ColorTag* tag = places.FindTag(id);
+        if (!tag) continue;
+        Chip chip;
+        chip.label = tag->name;
+        chip.color = ui::HexColor(tag->rgb);
+        chip.kind = Chip::RefineTag;
+        chip.count = count;
+        out.tag_query_refine.push_back(std::move(chip));
+    }
+    for (const auto& [folder, count] : tab.tag_locations) {
+        Chip chip;
+        chip.label = TagQueryFolderLabel(folder);
+        chip.kind = Chip::RefineLocation;
+        chip.count = count;
+        out.tag_query_refine.push_back(std::move(chip));
+    }
+}
+
+static TagHue TagHueOf(uint32_t rgb) {
+    const float r = static_cast<float>((rgb >> 16) & 0xFF) / 255.0f;
+    const float g = static_cast<float>((rgb >> 8) & 0xFF) / 255.0f;
+    const float b = static_cast<float>(rgb & 0xFF) / 255.0f;
+    const float hi = (std::max)({r, g, b});
+    const float lo = (std::min)({r, g, b});
+    const float delta = hi - lo;
+    if (hi <= 0.0f || delta / hi < 0.25f) return TagHue::Gray;
+    float hue;
+    if (hi == r) hue = 60.0f * std::fmod((g - b) / delta + 6.0f, 6.0f);
+    else if (hi == g) hue = 60.0f * ((b - r) / delta + 2.0f);
+    else hue = 60.0f * ((r - g) / delta + 4.0f);
+    if (hue < 15.0f || hue >= 345.0f) return TagHue::Red;
+    if (hue < 40.0f) return TagHue::Orange;
+    if (hue < 70.0f) return TagHue::Yellow;
+    if (hue < 165.0f) return TagHue::Green;
+    if (hue < 195.0f) return TagHue::Cyan;
+    if (hue < 255.0f) return TagHue::Blue;
+    if (hue < 300.0f) return TagHue::Purple;
+    return TagHue::Pink;
+}
+
+static bool TagMatchesNeedle(const ColorTag& tag, const std::wstring& needle) {
     if (needle.empty()) return true;
     if (ToLowerCopy(tag.name).find(needle) != std::wstring::npos) return true;
-    static const wchar_t* kNicks[] = { L"红", L"橙", L"绿", L"青", L"紫", L"蓝", L"灰" };
-    static const wchar_t* kNicksHant[] = { L"紅", L"橙", L"綠", L"青", L"紫", L"藍", L"灰" };
-    if (index >= 0 && index < 7 && (needle == kNicks[index] || needle == kNicksHant[index])) return true;
-    if (index == 1 && (needle == L"黄" || needle == L"黃")) return true;
+    struct Nick { TagHue hue; const wchar_t* names[4]; };
+    static const Nick kNicks[] = {
+        {TagHue::Red, {L"红", L"紅", L"red", nullptr}},
+        {TagHue::Orange, {L"橙", L"orange", nullptr, nullptr}},
+        {TagHue::Yellow, {L"黄", L"黃", L"yellow", nullptr}},
+        {TagHue::Green, {L"绿", L"綠", L"green", nullptr}},
+        {TagHue::Cyan, {L"青", L"cyan", nullptr, nullptr}},
+        {TagHue::Blue, {L"蓝", L"藍", L"blue", nullptr}},
+        {TagHue::Purple, {L"紫", L"purple", nullptr, nullptr}},
+        {TagHue::Pink, {L"粉", L"pink", nullptr, nullptr}},
+        {TagHue::Gray, {L"灰", L"gray", L"grey", nullptr}},
+    };
+    for (const Nick& nick : kNicks) {
+        for (const wchar_t* name : nick.names) {
+            if (name && needle == name) return TagHueOf(tag.rgb) == nick.hue;
+        }
+    }
     return false;
+}
+
+// Whether the tags on one item (indices into places.tags) satisfy every term.
+static bool TagTermsMatch(const PlacesCatalog& places, const std::vector<int>& ids,
+                          const std::vector<FilterTagTerm>& terms) {
+    for (const auto& term : terms) {
+        bool hit = false;
+        for (int id : ids) {
+            if (id < 0 || id >= static_cast<int>(places.tags.size())) continue;
+            for (const auto& needle : term.alternatives) {
+                if (TagMatchesNeedle(places.tags[static_cast<size_t>(id)], needle)) { hit = true; break; }
+            }
+            if (hit) break;
+        }
+        if (hit == term.exclude) return false;
+    }
+    return true;
 }
 
 index::ContentResultStore::Filter ContentFilter(const std::wstring& text, const PlacesCatalog& places) {
     if(text.empty()) return {};
-    std::wstring name; std::vector<std::wstring> tags;
-    ParseFilterText(text,name,tags);
-    if(name.empty() && tags.empty()) name=ToLowerCopy(text);
-    std::unordered_set<std::wstring> paths;
-    for(size_t id=0;id<places.tags.size();++id) for(const auto& needle:tags) {
-        if(TagMatchesNeedle(places.tags[id],static_cast<int>(id),needle))
-            for(const auto& path:places.tags[id].paths) paths.insert(ToLowerCopy(path));
+    std::wstring name; std::vector<FilterTagTerm> terms;
+    ParseFilterText(text,name,terms);
+    if(name.empty() && terms.empty()) name=ToLowerCopy(text);
+    // Per term: the lowercase paths carrying a matching tag.
+    struct TermPaths { std::unordered_set<std::wstring> paths; bool exclude = false; };
+    std::vector<TermPaths> sets;
+    for(const auto& term:terms) {
+        TermPaths set; set.exclude=term.exclude;
+        for(const auto& tag:places.tags) {
+            bool hit=false;
+            for(const auto& needle:term.alternatives) hit = hit || TagMatchesNeedle(tag,needle);
+            if(hit) for(const auto& path:tag.paths) set.paths.insert(ToLowerCopy(path));
+        }
+        sets.push_back(std::move(set));
     }
-    return [name=std::move(name),has_tags=!tags.empty(),paths=std::move(paths)](const fs::DirEntry& entry) {
-        return NameMatchesPattern(entry.name,name) && (!has_tags || paths.contains(ToLowerCopy(entry.full_path)));
+    return [name=std::move(name),sets=std::move(sets)](const fs::DirEntry& entry) {
+        if(!NameMatchesPattern(entry.name,name)) return false;
+        if(sets.empty()) return true;
+        const std::wstring key=ToLowerCopy(entry.full_path);
+        for(const auto& set:sets) if(set.paths.contains(key)==set.exclude) return false;
+        return true;
     };
 }
 
@@ -1558,30 +1994,23 @@ void CollectFilterMatches(const Tab& tab, const PlacesCatalog* places, std::vect
         return;
     }
     std::wstring name_needle;
-    std::vector<std::wstring> tag_needles;
-    ParseFilterText(tab.filter_text, name_needle, tag_needles);
-    if (name_needle.empty() && tag_needles.empty())
+    std::vector<FilterTagTerm> tag_terms;
+    ParseFilterText(tab.filter_text, name_needle, tag_terms);
+    if (name_needle.empty() && tag_terms.empty())
         name_needle = ToLowerCopy(tab.filter_text);
     out.reserve(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) {
         const auto& e = tab.EntryAt(static_cast<size_t>(i));
         if (!tab.EntryVisible(i)) continue;
-        const bool name_ok = NameMatchesPattern(e.name, name_needle);
-        bool tag_ok = tag_needles.empty();
-        if (!tag_ok && places) {
-            const std::wstring full = EntryPathOf(tab, e);
-            const auto ids = places->TagsForPath(full);
-            for (int id : ids) {
-                if (id < 0 || id >= static_cast<int>(places->tags.size())) continue;
-                for (const auto& needle : tag_needles) {
-                    if (TagMatchesNeedle(places->tags[static_cast<size_t>(id)], id, needle)) {
-                        tag_ok = true;
-                        break;
-                    }
-                }
-                if (tag_ok) break;
-            }
+        bool name_ok = NameMatchesPattern(e.name, name_needle);
+        // 别名: the filter also finds an item by its alias, or its pinyin.
+        if (!name_ok && !name_needle.empty() && !AliasStore::Instance().Empty()) {
+            const std::wstring alias = AliasStore::Instance().Find(EntryPathOf(tab, e));
+            name_ok = AliasStore::AliasMatches(alias, name_needle);
         }
+        bool tag_ok = tag_terms.empty();
+        if (!tag_ok && places && name_ok)
+            tag_ok = TagTermsMatch(*places, places->TagsForPath(EntryPathOf(tab, e)), tag_terms);
         if (name_ok && tag_ok) out.push_back(i);
     }
 }
@@ -1594,6 +2023,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.filter_text = tab->filter_text;
     out.filter_expand = pane.filter_expand;
     out.header_controls_opacity = pane.header_animation.opacity;
+    out.size_control = true;
+    out.size_slider_open = pane.size_slider_open;
     out.banner_title = tab->banner_title;
     out.banner_message = tab->banner_message;
     out.banner_kind = tab->net_readonly ? 2 : 0;  // refined below, once the view kind is known
@@ -1605,17 +2036,26 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.can_go_forward = tab->CanGoForward();
     std::wstring virtual_kind;
     ParsePulsePath(tab->current_path, &virtual_kind, nullptr);
-    out.can_go_up = virtual_kind == L"recycle"
+    out.can_go_up = virtual_kind == L"recycle" || virtual_kind == L"device"
         ? true
         : (fs::IsVirtualPath(tab->current_path) ? tab->CanGoBack() : !tab->current_path.empty());
     out.is_file_system = !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path);
+    out.cloud_status_column = out.is_file_system && IsUnderCloudFilesRoot(tab->current_path);
     out.can_create = out.is_file_system && !tab->net_readonly && !IsUncServerRoot(tab->current_path);
-    out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes";
+    out.can_create_folder = out.can_create;  // the app adds a writable phone folder
+    // The network page and a server's share list: 连接服务器 takes 新建's slot.
+    out.connect_server = tab->current_path == L"pulse:networks" || IsUncServerRoot(tab->current_path);
+    out.curated_order = virtual_kind == L"starred" || virtual_kind == L"recent" || virtual_kind == L"changes" ||
+                        virtual_kind == L"ai-list";
     out.is_starred = virtual_kind == L"starred";
     out.is_recent = virtual_kind == L"recent";
     out.is_recycle = virtual_kind == L"recycle";
+    // Tag views list items from many folders too: they get the 路径 column.
     out.is_search = virtual_kind == L"search" || virtual_kind == L"saved-search"
-        || virtual_kind == L"recycle" || virtual_kind == L"changes";
+        || virtual_kind == L"recycle" || virtual_kind == L"changes" || virtual_kind == L"ai-list"
+        || IsTagViewKind(virtual_kind);
+    out.is_tag_query = places && IsTagViewKind(virtual_kind);
+    if (out.is_tag_query) FillTagQueryBar(*places, *tab, out);
     out.is_query_search = virtual_kind == L"search";
     if (out.is_query_search) {
         std::wstring rest;
@@ -1655,6 +2095,8 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
     out.search_snippets = tab->search_snippets;
     out.recent_filter = tab->recent_filter;
     out.recent_total = out.is_recent && places ? places->recent_items.size() : 0;
+    // Phones: the breadcrumb splits the pulse:device: path (此电脑 › 手机 › …).
+    if (virtual_kind == L"device") out.path = tab->current_path;
     if (virtual_kind == L"recycle") {
         out.path = MakeRecyclePath();
         out.date_column_label = l10n::Get(l10n::StringId::ColumnDeleted);
@@ -1662,14 +2104,26 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
         out.date_column_label = l10n::Get(out.is_recent
             ? l10n::StringId::ColumnRecentOpened : l10n::StringId::ColumnModified);
     }
+    // The assistant's cleanup lists (查看): each row's reason in the 类型 column.
+    // The duplicates list names it 状态 (保留 / 副本).
+    if (virtual_kind == L"ai-list")
+        out.type_column_label = tab->virtual_type_column.empty() ? l10n::Get(l10n::StringId::AiClReasonColumn)
+                                                                 : tab->virtual_type_column;
     out.selected_index = tab->selected_index;
     out.selected_count = tab->SelectedCount();
+    // A lone details-tree "more" row is keyboard focus, not a selection.
+    if (out.selected_count == 1 && tab->TreeEntries() && tab->selected_index >= 0 &&
+        tab->tree->IsPlaceholder(static_cast<size_t>(tab->selected_index)))
+        out.selected_count = 0;
     out.all_selected = tab->all_selected;
     out.selected_indices = tab->all_selected ? nullptr : &tab->selected;
     out.focus_first_hint = tab->HasFocusHint();
+    out.focus_ring_source = tab->HasCaret() && !tab->IsSelected(tab->caret_index) ? tab->caret_index : -1;
     out.scroll_y = tab->scroll_y;
     out.scroll_x = tab->scroll_x;
     out.view_mode = tab->view_mode;
+    out.icon_dip = tab->icon_dip;
+    out.wall = tab->wall;
     out.view_generation = tab->view_generation;
     out.sort_column = tab->sort_column;
     out.sort_direction = tab->sort_direction;
@@ -1799,6 +2253,7 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
                         g.color_rgb = tag_catalog->tags[static_cast<size_t>(g.rank)].rgb;
                     }
                     if (by == GroupBy::Location) g.label = GroupLocationLabel(e);
+                    if (by == GroupBy::AiDup) g.label = e.change_old_path;
                     if (!seen.insert(g.key).second) {
                         contiguous = false;
                         break;
@@ -1820,6 +2275,28 @@ void FillPaneViewModel(ui::PaneViewModel& out, const Pane& pane, const PlacesCat
             tab->view_groups_rev = tab->group_collapse_rev;
         }
         out.groups = tab->view_groups;
+    }
+    // Details tree: children follow their folder, so the view rows come from
+    // the tree (app_details_tree.cpp) instead of the sorted filter map.
+    if (tab->TreeEntries() && tab->tree->rows && tab->tree->map) {
+        out.snapshot = tab->tree->combined;
+        out.filter_map = tab->tree->map;
+        out.tree = tab->tree->rows;
+        out.groups.reset();
+        // One child row selected: the breadcrumb continues to its folder.
+        if (tab->SelectedCount() == 1 && tab->selected_index >= 0 &&
+            tab->selected_index < static_cast<int>(tab->EntryCount()) &&
+            !tab->tree->IsPlaceholder(static_cast<size_t>(tab->selected_index))) {
+            const std::wstring full = tab->EntryAt(tab->selected_index).full_path;
+            const size_t slash = full.find_last_of(L'\\');
+            const std::wstring& here = tab->current_path;
+            const size_t base = here.size() + (here.ends_with(L'\\') ? 0 : 1);
+            if (slash != std::wstring::npos && slash > base &&
+                _wcsnicmp(full.c_str(), here.c_str(), here.size()) == 0) {
+                out.tree_selection_dir = full.substr(0, slash);
+                out.tree_selection_rel = full.substr(base, slash - base);
+            }
+        }
     }
 }
 
@@ -1914,6 +2391,7 @@ void FillWindowTabStrip(ui::WindowViewModel& vm, const WindowTabs& tabs) {
         tv.active = i == tabs.active;
         tv.pinned = tabs.items[i]->pinned;
         tv.marker_rgb = tabs.items[i]->marker_rgb;
+        tv.id = reinterpret_cast<uintptr_t>(tabs.items[i].get());
         if (tabs.items[i]->tab_group != 0) {
             for (size_t gi = 0; gi < tabs.tab_groups.size(); ++gi) {
                 if (tabs.tab_groups[gi].id == tabs.items[i]->tab_group) {
@@ -1927,6 +2405,75 @@ void FillWindowTabStrip(ui::WindowViewModel& vm, const WindowTabs& tabs) {
         vm.tabs.push_back(std::move(tv));
     }
     vm.active_tab = static_cast<int>(tabs.active);
+}
+
+// Sidebar 标签 (pulse_tag_redesign §4): the favorites in slot order, then the
+// other tags under their groups (or every tag by group, or favorites only),
+// and 所有标签 › last. A group header row folds its tags; without groups the
+// tags list flat as before.
+static void AppendSidebarTags(ui::SidebarGroup& out, const PlacesCatalog& places) {
+    const auto tag_row = [&](size_t index, int indent) {
+        const auto& t = places.tags[index];
+        ui::SidebarItem tag;
+        tag.label = t.name;
+        tag.path = MakeTagPath(t.id);
+        tag.is_tag = true;
+        tag.show_count = true;
+        tag.count = static_cast<int>(t.paths.size());
+        tag.tag_dot = ui::HexColor(t.rgb);
+        tag.indent = indent;
+        return tag;
+    };
+    const auto header_row = [](const std::wstring& id, const std::wstring& name,
+                               bool expandable, bool expanded, int count) {
+        ui::SidebarItem item;
+        item.label = name;
+        item.path = MakeTagGroupPath(id);
+        item.icon_glyph = L"\xE8B7";
+        item.expandable = expandable;
+        item.expanded = expanded;
+        item.show_count = true;
+        item.count = count;
+        return item;
+    };
+    const TagSidebarMode mode = places.tag_sidebar_mode;
+    if (mode != TagSidebarMode::AllByGroup) {
+        for (int slot = 1; slot <= kMaxFavoriteTags; ++slot) {
+            if (const int index = places.FavoriteTagIndex(slot); index >= 0)
+                out.items.push_back(tag_row(static_cast<size_t>(index), 0));
+        }
+    }
+    if (mode != TagSidebarMode::FavoritesOnly) {
+        const bool skip_favorites = mode == TagSidebarMode::FavoritesAndGroups;
+        std::vector<size_t> loose;
+        for (size_t i = 0; i < places.tags.size(); ++i) {
+            const auto& t = places.tags[i];
+            if (!(skip_favorites && t.favorite > 0) && places.TagGroupOf(t).empty()) loose.push_back(i);
+        }
+        for (const auto& group : places.tag_groups) {
+            std::vector<size_t> members;
+            for (size_t i = 0; i < places.tags.size(); ++i) {
+                const auto& t = places.tags[i];
+                if (!(skip_favorites && t.favorite > 0) && places.TagGroupOf(t) == group.id)
+                    members.push_back(i);
+            }
+            out.items.push_back(header_row(group.id, group.name, true, !group.collapsed,
+                                           static_cast<int>(members.size())));
+            if (group.collapsed) continue;
+            for (size_t i : members) out.items.push_back(tag_row(i, 1));
+        }
+        const bool grouped = !places.tag_groups.empty();
+        if (grouped && !loose.empty()) {
+            out.items.push_back(header_row(L"", l10n::Get(l10n::StringId::TagUngrouped), false, true,
+                                           static_cast<int>(loose.size())));
+        }
+        for (size_t i : loose) out.items.push_back(tag_row(i, grouped ? 1 : 0));
+    }
+    ui::SidebarItem all;
+    all.label = l10n::Get(l10n::StringId::TagAllTags);
+    all.path = MakeTagManagerPath();
+    all.icon_glyph = L"\xE8FD";
+    out.items.push_back(std::move(all));
 }
 
 ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
@@ -2041,17 +2588,32 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
         }
     }
 
-    // Built-in quick-access links the user switched off in the section menu.
-    std::vector<SidebarEntry> quick_access_visible;
-    quick_access_visible.reserve(sidebar.quick_access.size());
-    for (const auto& entry : sidebar.quick_access) {
-        if (entry.builtin >= 0 &&
-            ((quick_access_hidden_mask >> entry.builtin) & 1u) != 0) continue;
-        quick_access_visible.push_back(entry);
-    }
-    access = ConvertGroup(
-        l10n::Get(l10n::StringId::SidebarQuickAccess), quick_access_visible, false);
+    // Quick access: the built-in links (minus the ones switched off) and the
+    // pinned folders, mixed in the user's order when there is one. The Git
+    // project row goes in front of the first pin, where it has always been.
+    access = ConvertGroup(l10n::Get(l10n::StringId::SidebarQuickAccess), {}, false);
     access.add_action = ui::SidebarAddAction::AddQuickAccess;
+    size_t first_pin_row = static_cast<size_t>(-1);
+    for (const auto& key : QuickAccessDisplayKeys(sidebar.quick_access, places,
+                                                  quick_access_hidden_mask, false)) {
+        const int builtin = BuiltinQuickAccessFromKey(key);
+        if (builtin >= 0) {
+            const auto entry = std::find_if(sidebar.quick_access.begin(), sidebar.quick_access.end(),
+                [&](const SidebarEntry& candidate) { return candidate.builtin == builtin; });
+            if (entry == sidebar.quick_access.end()) continue;
+            ui::SidebarGroup converted = ConvertGroup({}, {*entry}, false);
+            access.items.push_back(std::move(converted.items.front()));
+            continue;
+        }
+        if (first_pin_row == static_cast<size_t>(-1)) first_pin_row = access.items.size();
+        ui::SidebarItem pin;
+        pin.label = TabTitle(key);
+        pin.path = key;
+        pin.icon_glyph = L"\xE8B7";
+        pin.fallback_text = L"Dir";
+        pin.icon_color = ui::HexColor(0xFBBF24);
+        access.items.push_back(std::move(pin));
+    }
     starred_section = ConvertGroup(l10n::Get(l10n::StringId::StarredItems),
                                    sidebar.starred, false);
     if (!starred_section.items.empty()) {
@@ -2060,26 +2622,62 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
     }
     if (places && starred_expanded) {
         size_t starred_insert = starred_section.items.size();
-        for (const auto& entry : places->starred_items) {
-            if (entry.kind != PlaceItemKind::Folder) continue;
+        const auto add = [&](ui::SidebarItem row) {
+            starred_section.items.insert(
+                starred_section.items.begin() + static_cast<std::ptrdiff_t>(starred_insert),
+                std::move(row));
+            ++starred_insert;
+        };
+        const auto folder_row = [](const StarredItem& entry, int indent) {
             ui::SidebarItem child;
             child.label = TabTitle(entry.path);
             child.path = entry.path;
-            child.indent = 1;
+            child.indent = indent;
             child.starred_child = true;
             child.icon_glyph = L"\xE8B7";
             child.fallback_text = L"Dir";
             child.icon_color = ui::HexColor(0xFBBF24);
             child.badge = entry.badge;
             child.badge_color = ui::HexColor(entry.badge_rgb);
-            starred_section.items.insert(
-                starred_section.items.begin() + static_cast<std::ptrdiff_t>(starred_insert),
-                std::move(child));
-            ++starred_insert;
+            return child;
+        };
+        // 收藏夹分组与分隔线: a group folds its folders under one row; a
+        // separator is a line above the next row.
+        bool line = false;
+        for (const auto& row : places->StarredRows(true)) {
+            if (row.kind == StarredRow::Kind::Separator) {
+                line = true;
+                continue;
+            }
+            if (row.kind == StarredRow::Kind::Group) {
+                const StarredGroup* group = places->FindStarredGroup(row.group);
+                if (!group) continue;
+                ui::SidebarItem header;
+                header.label = group->name;
+                header.path = MakeStarredGroupPath(group->id);
+                header.indent = 1;
+                header.icon_glyph = L"\xE8F1";
+                header.fallback_text = L"Grp";
+                header.icon_color = ui::HexColor(0xFBBF24);
+                header.expandable = true;
+                header.expanded = !group->collapsed;
+                header.show_count = true;
+                header.count = static_cast<int>(row.members.size());
+                header.divider_above = std::exchange(line, false);
+                add(std::move(header));
+                if (group->collapsed) continue;
+                for (size_t member : row.members) add(folder_row(places->starred_items[member], 2));
+                continue;
+            }
+            ui::SidebarItem child = folder_row(places->starred_items[row.index], 1);
+            child.divider_above = std::exchange(line, false);
+            add(std::move(child));
         }
     }
     const std::wstring& gitRoot = tab->git_root;
-    if (!gitRoot.empty() && (!places || !places->IsStarred(gitRoot))) {
+    // A pinned repository already has its row.
+    if (!gitRoot.empty() &&
+        (!places || (!places->IsStarred(gitRoot) && !places->IsQuickAccessPinned(gitRoot)))) {
         ui::SidebarItem project;
         wchar_t project_label[512]{};
         swprintf_s(project_label, l10n::Get(l10n::StringId::ProjectFormat).c_str(),
@@ -2089,25 +2687,18 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
         project.icon_glyph = L"\xE8B7";
         project.fallback_text = L"Repo";
         project.icon_color = ui::HexColor(0x34D399);
-        project.badge = L"Git";
-        access.items.push_back(std::move(project));
-    }
-    if (places) {
-        for (const auto& path : places->quick_access_paths) {
-            ui::SidebarItem item;
-            item.label = TabTitle(path);
-            item.path = path;
-            item.icon_glyph = L"\xE8B7";
-            item.fallback_text = L"Dir";
-            item.icon_color = ui::HexColor(0xFBBF24);
-            access.items.push_back(std::move(item));
-        }
+        // The branch (and how far it is from its upstream) once git answered.
+        const auto git = GitStatusFor(gitRoot);
+        project.badge = git ? GitBadgeText(*git) : std::wstring(L"Git");
+        const size_t project_at = (std::min)(first_pin_row, access.items.size());
+        access.items.insert(access.items.begin() + static_cast<std::ptrdiff_t>(project_at),
+                            std::move(project));
     }
     savedSearches = ConvertGroup(l10n::Get(l10n::StringId::SidebarSavedSearches),
                                  sidebar.saved_searches, false);
     // The title is only used by the section menus: the pane itself shows the
     // account rows without a header (see IsHeaderlessSection).
-    cloud = ConvertGroup(L"OneDrive", sidebar.cloud, false);
+    cloud = ConvertGroup(l10n::Get(l10n::StringId::SidebarCloudDrives), sidebar.cloud, false);
     if (places) {
         // Persisted badges win over the freshly rebuilt sidebar model (#41).
         for (auto* group : { &access, &cloud }) {
@@ -2121,6 +2712,9 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
     }
     drives = ConvertGroup(l10n::Get(l10n::StringId::SidebarDrives),
                           sidebar.drives, false);
+    // Phones follow the drives, as in File Explorer's This PC.
+    for (auto& phone : ConvertGroup(std::wstring(), sidebar.devices, false).items)
+        drives.items.push_back(std::move(phone));
     // Section icons: every header section names itself with a glyph, so the wide
     // header and the narrow rail read the same. The PC glyph (monitor on a
     // stand) keeps "This PC" apart from the monitor-only Desktop row.
@@ -2134,19 +2728,7 @@ ui::WindowViewModel BuildWindowViewModel(const Pane& pane,
 
     tags.header = l10n::Get(l10n::StringId::SidebarTags);
     tags.add_action = ui::SidebarAddAction::CreateTag;
-    if (places) {
-        for (int i = 0; i < static_cast<int>(places->tags.size()); ++i) {
-            const auto& t = places->tags[static_cast<size_t>(i)];
-            ui::SidebarItem tag;
-            tag.label = t.name;
-            tag.path = MakeTagPath(t.id);
-            tag.is_tag = true;
-            tag.show_count = true;
-            tag.count = static_cast<int>(t.paths.size());
-            tag.tag_dot = ui::HexColor(t.rgb);
-            tags.items.push_back(std::move(tag));
-        }
-    }
+    if (places) AppendSidebarTags(tags, *places);
     nets.header = l10n::Get(l10n::StringId::SidebarNetworkLocations);
     nets.add_action = ui::SidebarAddAction::AddNetwork;
     if (places) {

@@ -37,6 +37,9 @@ inline std::wstring IntegrationHint(const WindowViewModel& vm) {
     if(vm.settings_integration_just_enabled) return l10n::Get(I::IntegrationJustOn);
     // Taking over works only while Pulse runs, and closing the window ends
     // Pulse unless it keeps running (AppPrefs::KeepsRunningInBackground).
+    // 兼容打开方式 needs a running Pulse for every double-click, so it speaks first.
+    if(vm.settings_integration_folders_compat && !vm.settings_keep_running) return l10n::Get(I::IntegrationHintKeepCompat);
+    if(vm.settings_integration_folders_compat && !vm.settings_launch_on_startup) return l10n::Get(I::IntegrationHintLaunchCompat);
     if(vm.settings_integration_experimental && !vm.settings_keep_running) return l10n::Get(I::IntegrationHintKeep);
     if(vm.settings_integration_experimental && !vm.settings_launch_on_startup) return l10n::Get(I::IntegrationHintLaunch);
     return l10n::Get(I::IntegrationOnFoot);
@@ -47,16 +50,54 @@ inline bool IntegrationShowsTry(const WindowViewModel& vm) {
 inline constexpr l10n::StringId kIntegrationCover[]={l10n::StringId::IntegrationFolders,
     l10n::StringId::ThisPc,l10n::StringId::SettingsWinE};
 inline bool IntegrationCoverActive(const WindowViewModel& vm,int i) {
-    return vm.settings_integration_enabled && (i==0 ? vm.settings_integration_folders_active
+    // Folders still open in Pulse under 兼容打开方式, through the takeover.
+    return vm.settings_integration_enabled && (i==0 ? (vm.settings_integration_folders_active || vm.settings_integration_folders_compat)
         : i==1 ? vm.settings_integration_this_pc_active : vm.settings_integration_win_e_active);
 }
 
 float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float scale,
                             float y, const fluent::Painter* painter) {
+    using I = l10n::StringId;
     const float left = l.content.left + 20*scale, right = l.content.right - 20*scale;
     const bool narrow = right - left < 560*scale;
-    auto row = [&](float h) { auto r = D2D1::RectF(left, y, right, y+h*scale); y=r.bottom; return r; };
-    auto section = [&](int i) { y+=24*scale; l.section[i]=row(28); };
+    const float seg_h = narrow ? 98.0f : 64.0f;
+    const float child_inset = 28.0f*scale;
+    // Rows stack inside the current group card; a dependent (child) row is inset
+    // and sits on a tinted band, and dividers separate neighbours.
+    int group_index = -1;
+    float group_top = 0.0f;
+    bool group_has_row = false, previous_child = false;
+    float band_top = -1.0f;
+    auto close_band = [&]() {
+        if (band_top >= 0.0f) l.child_bands.push_back(D2D1::RectF(left, band_top, right, y));
+        band_top = -1.0f;
+    };
+    auto end_group = [&]() {
+        close_band();
+        if (group_index >= 0 && group_has_row) l.group[group_index] = D2D1::RectF(left, group_top, right, y);
+        group_has_row = false;
+    };
+    auto section = [&](I title) {
+        end_group();
+        if (l.section_count >= 8) return;
+        y += (l.section_count == 0 ? 22.0f : 26.0f)*scale;
+        group_index = l.section_count++;
+        l.section_title[group_index] = title;
+        l.section[group_index] = D2D1::RectF(left, y, right, y + 30*scale);
+        y += 32*scale;
+        group_top = y;
+    };
+    auto row = [&](float h, bool child = false) {
+        if (group_has_row) {
+            if (child && previous_child) l.dividers.push_back(D2D1::RectF(left + child_inset + 16*scale, y, right - 16*scale, y));
+            else if (!child) { close_band(); l.dividers.push_back(D2D1::RectF(left + 16*scale, y, right - 16*scale, y)); }
+        }
+        if (child && band_top < 0.0f) band_top = y;
+        group_has_row = true; previous_child = child;
+        auto r = D2D1::RectF(child ? left + child_inset : left, y, right, y + h*scale);
+        y = r.bottom;
+        return r;
+    };
     auto choice = [&](D2D1_RECT_F r, float width) {
         return D2D1::RectF(narrow ? r.left+16*scale : r.right-(width+16)*scale,
             r.bottom-44*scale, r.right-16*scale, r.bottom-12*scale);
@@ -65,38 +106,148 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         auto c=choice(r,width); const float w=(c.right-c.left)/count;
         for(int i=0;i<count;++i) output[i]=D2D1::RectF(c.left+i*w,c.top,c.left+(i+1)*w,c.bottom);
     };
-    section(0);
-    l.theme_row=row(narrow ? 142.0f : 112.0f);
-    const float tw=(std::min)(96*scale,(right-left-32*scale)/3);
-    const float tile_left=narrow ? left+16*scale : right-16*scale-3*tw;
-    for(int i=0;i<3;++i) l.theme_tile[i]=D2D1::RectF(tile_left+i*tw+4*scale,
-        l.theme_row.bottom-90*scale,tile_left+(i+1)*tw-4*scale,l.theme_row.bottom-12*scale);
-    l.accent_card=row(96);
-    const float picker=kBloomPickerDip*scale;
-    l.accent_picker=D2D1::RectF(right-16*scale-picker,l.accent_card.top+(96*scale-picker)/2,
-        right-16*scale,l.accent_card.top+(96*scale+picker)/2);
-    // The tiles reuse SettingsEffect's existing hit regions and controller.
-    // A single tile selector avoids duplicate controls for the same setting.
-    const int effect_columns = right-left < 440*scale ? 2 : 4;
-    const int effect_rows = kWindowEffectCount/effect_columns;
-    const float effect_top = 66.0f;
-    l.effect_card=row(effect_top+82.0f*effect_rows+12.0f);
-    l.effect_choice = {};
-    const float effect_gap=8*scale;
-    const float effect_width=(right-left-32*scale-effect_gap*(effect_columns-1))/effect_columns;
-    for(int i=0;i<kWindowEffectCount;++i) {
-        const float tile_x=left+16*scale+(i%effect_columns)*(effect_width+effect_gap);
-        const float tile_y=l.effect_card.top+effect_top*scale+(i/effect_columns)*82*scale;
-        l.effect_row[i]=D2D1::RectF(tile_x,tile_y,tile_x+effect_width,tile_y+74*scale);
-    }
-    l.menu_acrylic_row=row(64);
-    l.language_card=row(narrow ? 98.0f : 64.0f); l.language_choice=choice(l.language_card,176);
-    l.text_render_card=row(narrow ? 98.0f : 64.0f); segments(l.text_render_card,l.text_render_row,3,282);
-    l.ui_font_size_card=row(narrow ? 98.0f : 64.0f); segments(l.ui_font_size_card,l.ui_font_size_row,4,340);
-    l.group[0]=D2D1::RectF(left,l.theme_row.top,right,y);
-    // Default file manager: a titled card of its own, independent of startup and background running.
-    // The switch says what it does; the tiles below show what actually opens in Pulse.
-    y+=24*scale; l.integration_section=row(28);
+    auto button_w = [&](I id, float fallback) {
+        return painter ? painter->MeasureButtonWidth(l10n::Get(id)) : fallback*scale;
+    };
+    const int page = vm.settings_page;
+    if (page == 0) {
+        section(I::SettingsSecThemeColor);
+        l.theme_row=row(narrow ? 142.0f : 112.0f);
+        const float tw=(std::min)(96*scale,(right-left-32*scale)/3);
+        const float tile_left=narrow ? left+16*scale : right-16*scale-3*tw;
+        for(int i=0;i<3;++i) l.theme_tile[i]=D2D1::RectF(tile_left+i*tw+4*scale,
+            l.theme_row.bottom-90*scale,tile_left+(i+1)*tw-4*scale,l.theme_row.bottom-12*scale);
+        l.accent_card=row(96);
+        const float picker=kBloomPickerDip*scale;
+        l.accent_picker=D2D1::RectF(right-16*scale-picker,l.accent_card.top+(96*scale-picker)/2,
+            right-16*scale,l.accent_card.top+(96*scale+picker)/2);
+        {
+            const bool open=(vm.settings_expanded & 32u)!=0;
+            const float bw=button_w(open ? I::AccentCustomDone : I::AccentCustom,72)+22*scale;
+            const float mid=(l.accent_card.top+l.accent_card.bottom)/2;
+            l.accent_custom_button=D2D1::RectF(l.accent_picker.left-20*scale-bw,mid-16*scale,l.accent_picker.left-20*scale,mid+16*scale);
+            if(open) {
+                l.accent_custom_head=row(64,true);
+                l.accent_custom_swatch=D2D1::RectF(right-16*scale-120*scale,l.accent_custom_head.top+16*scale,
+                    right-16*scale,l.accent_custom_head.top+48*scale);
+                for(int i=0;i<3;++i) {
+                    l.accent_slider_row[i]=row(seg_h,true);
+                    segments(l.accent_slider_row[i],l.accent_slider_cells[i],3,narrow ? 300.0f : 360.0f);
+                }
+            }
+        }
+        // The tiles reuse SettingsEffect's existing hit regions and controller.
+        const int effect_columns = right-left < 440*scale ? 2 : 4;
+        const int effect_rows = kWindowEffectCount/effect_columns;
+        const float effect_top = 66.0f;
+        l.effect_card=row(effect_top+82.0f*effect_rows+12.0f);
+        l.effect_choice = {};
+        const float effect_gap=8*scale;
+        const float effect_width=(right-left-32*scale-effect_gap*(effect_columns-1))/effect_columns;
+        for(int i=0;i<kWindowEffectCount;++i) {
+            const float tile_x=left+16*scale+(i%effect_columns)*(effect_width+effect_gap);
+            const float tile_y=l.effect_card.top+effect_top*scale+(i/effect_columns)*82*scale;
+            l.effect_row[i]=D2D1::RectF(tile_x,tile_y,tile_x+effect_width,tile_y+74*scale);
+        }
+        l.frame_look_card=row(seg_h,true); segments(l.frame_look_card,l.frame_look_row,3,282);
+        l.menu_acrylic_row=row(64);
+
+        section(I::SettingsSecBackground);
+        l.wallpaper_card=row(narrow ? 124.0f : 84.0f);
+        l.wallpaper_preview=D2D1::RectF(left+16*scale,l.wallpaper_card.top+14*scale,left+112*scale,l.wallpaper_card.top+70*scale);
+        {
+            const float cw=button_w(I::Clear,80), bw=button_w(I::ChooseImage,120);
+            const float top=narrow ? l.wallpaper_card.bottom-44*scale : (l.wallpaper_card.top+l.wallpaper_card.bottom)/2-16*scale;
+            l.wallpaper_clear=D2D1::RectF(right-16*scale-cw,top,right-16*scale,top+32*scale);
+            l.wallpaper_choose=D2D1::RectF(l.wallpaper_clear.left-8*scale-bw,top,l.wallpaper_clear.left-8*scale,top+32*scale);
+        }
+        l.wallpaper_blur_card=row(seg_h,true); segments(l.wallpaper_blur_card,l.wallpaper_blur_row,3,282);
+        l.wallpaper_look_card=row(seg_h); segments(l.wallpaper_look_card,l.wallpaper_look_row,3,282);
+
+        section(I::SettingsSecTextLanguage);
+        l.language_card=row(seg_h); l.language_choice=choice(l.language_card,176);
+        l.text_render_card=row(seg_h); segments(l.text_render_card,l.text_render_row,3,282);
+        l.ui_font_size_card=row(seg_h); segments(l.ui_font_size_card,l.ui_font_size_row,4,340);
+    } else if (page == 9) {
+        section(I::SettingsSecOpenSelect);
+        l.click_open_card=row(seg_h); segments(l.click_open_card,l.click_open_row,2,282);
+        if(vm.settings_single_click) {
+            l.name_highlight_card=row(seg_h,true); segments(l.name_highlight_card,l.name_highlight_row,2,254);
+            l.hover_select_row=row(64,true);
+        }
+        l.item_checkbox_row=row(64);
+        {
+            // Its description is long: when it would not fit on one line left
+            // of the choices, the choices go under it (aligned with the text)
+            // instead of cutting it off.
+            const float text_w=right-left-54*scale-(282+16)*scale-12*scale;
+            const std::wstring desc=l10n::Get(I::SettingsBlankClickBackDesc);
+            const bool stack=!narrow && painter && text_w>0 &&
+                painter->MeasureWrappedCaptionHeight(desc,text_w)>painter->MeasureWrappedCaptionHeight(L"\x4E2D",text_w)+0.5f*scale;
+            l.blank_click_row=row(stack ? 98.0f : seg_h);
+            if(stack) {
+                const float x0=l.blank_click_row.left+54*scale,w=(std::min)(282*scale,l.blank_click_row.right-16*scale-x0)/3;
+                for(int i=0;i<3;++i) l.blank_click_choice[i]=D2D1::RectF(x0+i*w,l.blank_click_row.bottom-44*scale,x0+(i+1)*w,l.blank_click_row.bottom-12*scale);
+            } else {
+                segments(l.blank_click_row,l.blank_click_choice,3,282);
+            }
+        }
+
+        section(I::SettingsSecVisibleItems);
+        l.hidden_files_row=row(64);
+        l.protected_files_row=row(64);
+        l.folder_sort_card=row(seg_h); segments(l.folder_sort_card,l.folder_sort_row,3,282);
+
+        section(I::SettingsSecListLook);
+        l.density_card=row(seg_h); segments(l.density_card,l.density_row,3,282);
+        l.list_style_row[1]=row(64);   // zebra rows
+        l.list_style_row[0]=row(64);   // smart date
+        for(int i=2;i<6;++i) l.list_style_row[i]=row(64);
+        {
+            // 缩略图缓存: title, description, then the usage bar; the button
+            // is as wide as its longest label so it does not jump.
+            l.thumb_cache_row=row(narrow ? 108.0f : 88.0f);
+            const float bw=(std::max)({button_w(I::ThumbCacheClear,96),button_w(I::ThumbCacheClearing,96),
+                button_w(I::ThumbCacheDone,96)});
+            const float mid=(l.thumb_cache_row.top+l.thumb_cache_row.bottom)/2;
+            l.thumb_cache_button=D2D1::RectF(right-16*scale-bw,mid-16*scale,right-16*scale,mid+16*scale);
+        }
+        l.alias_mark_row=row(64);
+        l.tree_sticky_row=row(64);
+
+        section(I::ListMtimeHint);
+        l.mtime_style_card=row(seg_h); segments(l.mtime_style_card,l.mtime_style_row,4,340);
+        if(vm.settings_mtime.style!=0) {
+            l.mtime_range_card=row(seg_h,true); segments(l.mtime_range_card,l.mtime_range_row,4,300);
+            l.mtime_palette_card=row(seg_h,true); segments(l.mtime_palette_card,l.mtime_palette_row,6,408);
+            for(auto& mtime_row : l.mtime_toggle_row) mtime_row=row(64,true);
+        }
+
+        section(I::SettingsSecSyncStatus);
+        for(auto& sync : l.sync_row) sync=row(64);
+    } else if (page == 10) {
+        section(I::SettingsSecOpenLocation);
+        l.home_folder_card=row(seg_h);
+        {
+            const float rw=button_w(I::ThisPc,80), cw=button_w(I::SettingsHomeFolderPick,120);
+            l.home_folder_reset=D2D1::RectF(right-16*scale-rw,y-44*scale,right-16*scale,y-12*scale);
+            l.home_folder_choose=D2D1::RectF(l.home_folder_reset.left-8*scale-cw,y-44*scale,l.home_folder_reset.left-8*scale,y-12*scale);
+        }
+        l.startup_open_card=row(seg_h); segments(l.startup_open_card,l.startup_open_row,2,282);
+        l.new_tab_open_card=row(seg_h); segments(l.new_tab_open_card,l.new_tab_open_row,2,282);
+        l.external_open_card=row(seg_h); segments(l.external_open_card,l.external_open_row,3,282);
+
+        section(I::SettingsSecTabs);
+        l.vertical_tabs_row=row(64);
+        l.pinned_names_row=row(64);
+        l.close_tab_double_click_row=row(64);
+        l.close_last_tab_row=row(64);
+    } else if (page == 11) {
+        section(I::SettingsIntegration);
+        end_group();   // the integration card is laid out and drawn on its own
+        l.integration_section=l.section[0];
+        {
+        auto irow = [&](float h) { auto r = D2D1::RectF(left, y, right, y+h*scale); y=r.bottom; return r; };
     const float integration_top=y;
     auto caption_height=[&](std::wstring_view value,float width) {
         return value.empty() ? 0.0f : painter
@@ -111,7 +262,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         if(stacked) text_right=switch_left-12*scale;
         const float desc_h=caption_height(l10n::Get(l10n::StringId::IntegrationMasterDesc),text_right-left-54*scale);
         const float body=35*scale+desc_h+(stacked ? 30*scale : 0.0f)+14*scale;
-        l.default_manager_row=row((std::max)(64.0f,body/scale));
+        l.default_manager_row=irow((std::max)(64.0f,body/scale));
         const float top=l.default_manager_row.top;
         l.integration_badge=stacked
             ? D2D1::RectF(left+54*scale,top+35*scale+desc_h+6*scale,left+54*scale+badge_w,top+35*scale+desc_h+28*scale)
@@ -140,7 +291,7 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
             l.integration_restore=D2D1::RectF(x,top,(std::min)(x+restore_w,button_right),top+32*scale);
         }
     }
-    l.integration_list_head=row(32);
+    l.integration_list_head=irow(32);
     const float item_text_left=left+112*scale, item_text_right=right-16*scale;
     {
         // What opens in Pulse: three read-only tiles that wrap with the width.
@@ -156,20 +307,15 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         }
         y=top+tile_h+6*scale;
     }
-    l.integration_options_head=row(32);
+    l.integration_options_head=irow(32);
     auto item_row=[&](l10n::StringId desc,float text_right) {
         const float h=caption_height(l10n::Get(desc),text_right-item_text_left);
-        return row((std::max)(52.0f,(31*scale+h+12*scale)/scale));
+        return irow((std::max)(52.0f,(31*scale+h+12*scale)/scale));
     };
     l.recycle_bin_row=item_row(l10n::StringId::SettingsRecycleBinDesc,item_text_right);
-    {
-        // The experimental tag sits at the end of the title line.
-        const auto tag=l10n::Get(l10n::StringId::IntegrationExperimentalTag);
-        const float w=painter ? painter->MeasureBadgeWidth(tag) : 60*scale;
-        l.explorer_windows_row=item_row(l10n::StringId::IntegrationExperimentalDesc,item_text_right);
-        const float top=l.explorer_windows_row.top;
-        l.integration_chip[0]=D2D1::RectF(item_text_right-w,top+9*scale,item_text_right,top+31*scale);
-    }
+    // The takeover is a regular option now: it also carries 兼容打开方式 below.
+    l.explorer_windows_row=item_row(l10n::StringId::IntegrationExperimentalDesc,item_text_right);
+    l.folders_compat_row=item_row(l10n::StringId::IntegrationCompatDesc,item_text_right);
     {
         // Footer: the try-it button (while on) and one sentence about what happens now.
         const auto hint=IntegrationHint(vm);
@@ -193,58 +339,41 @@ float LayoutSettingsGeneral(SettingsLayout& l, const WindowViewModel& vm, float 
         y=l.integration_hint.bottom;
     }
     l.integration_card=D2D1::RectF(left,integration_top,right,y);
-    section(1);
-    l.startup_row[0]=row(64); l.start_in_tray_row=row(64); l.startup_row[1]=row(64);
-    l.notify_icon_card=row(narrow ? 98.0f : 64.0f); segments(l.notify_icon_card,l.notify_icon_row,3,282);
-    l.home_folder_card=row(narrow ? 98.0f : 64.0f);
-    {
-        const float rw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::ThisPc)) : 80*scale;
-        const float cw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::SettingsHomeFolderPick)) : 120*scale;
-        l.home_folder_reset=D2D1::RectF(right-16*scale-rw,y-44*scale,right-16*scale,y-12*scale);
-        l.home_folder_choose=D2D1::RectF(l.home_folder_reset.left-8*scale-cw,y-44*scale,l.home_folder_reset.left-8*scale,y-12*scale);
-    }
-    l.startup_open_card=row(narrow ? 98.0f : 64.0f); segments(l.startup_open_card,l.startup_open_row,2,282);
-    l.new_tab_open_card=row(narrow ? 98.0f : 64.0f); segments(l.new_tab_open_card,l.new_tab_open_row,2,282);
-    l.external_open_card=row(narrow ? 98.0f : 64.0f); segments(l.external_open_card,l.external_open_row,3,282);
-    l.close_last_tab_row=row(64);
-    l.close_tab_double_click_row=row(64);
-    l.group[1]=D2D1::RectF(left,l.startup_row[0].top,right,y);
-    section(2);
-    l.density_card=row(narrow ? 98.0f : 64.0f); segments(l.density_card,l.density_row,3,282);
-    l.performance_row=row(64);
-    for(auto& list_row : l.list_style_row) list_row=row(64);
-    l.folder_sort_card=row(narrow ? 98.0f : 64.0f); segments(l.folder_sort_card,l.folder_sort_row,3,282);
-    l.confirm_delete_row=row(64);
-    l.group[2]=D2D1::RectF(left,l.density_card.top,right,y);
-    y+=18*scale;
-    l.disclosure[0]=row(64);
-    if(vm.settings_expanded & 1u) {
-        y+=10*scale;
-        l.wallpaper_card=row(124);
-        l.wallpaper_preview=D2D1::RectF(left+16*scale,l.wallpaper_card.top+12*scale,left+112*scale,l.wallpaper_card.top+68*scale);
-        const float cw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::Clear)) : 80*scale;
-        const float bw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::ChooseImage)) : 120*scale;
-        l.wallpaper_clear=D2D1::RectF(right-16*scale-cw,y-44*scale,right-16*scale,y-12*scale);
-        l.wallpaper_choose=D2D1::RectF(l.wallpaper_clear.left-8*scale-bw,y-44*scale,l.wallpaper_clear.left-8*scale,y-12*scale);
-        y+=8*scale; l.wallpaper_look_card=row(narrow ? 98.0f : 64.0f); segments(l.wallpaper_look_card,l.wallpaper_look_row,3,282);
-        y+=8*scale; l.wallpaper_blur_card=row(narrow ? 98.0f : 64.0f); segments(l.wallpaper_blur_card,l.wallpaper_blur_row,3,282);
-        y+=8*scale; l.tray_icon_card=row(narrow ? 98.0f : 64.0f); segments(l.tray_icon_card,l.tray_icon_row,3,282);
-        y+=8*scale; l.shell_tags_row=row(64);
-        y+=8*scale; l.hidden_files_row=row(64);
-        y+=8*scale; l.protected_files_row=row(64);
-        y+=8*scale; l.pinned_names_row=row(64);
-        y+=8*scale; l.vertical_tabs_row=row(64);
-        y+=8*scale; l.hints_row=row(64);
-        y+=8*scale; l.hints_reset_row=row(64);
-        {
-            const float rw=painter ? painter->MeasureButtonWidth(l10n::Get(l10n::StringId::HintsResetButton)) : 80*scale;
-            l.hints_reset_button=D2D1::RectF(right-16*scale-rw,l.hints_reset_row.top+16*scale,right-16*scale,l.hints_reset_row.top+48*scale);
         }
-        y+=8*scale; l.blank_click_row=row(narrow ? 98.0f : 64.0f); segments(l.blank_click_row,l.blank_click_choice,3,282);
-        y+=8*scale; l.change_tracking_row=row(64);
-        l.change_days_row=row(narrow ? 98.0f : 64.0f); segments(l.change_days_row,l.change_days,3,282);
+        section(I::SettingsSecStartupTray);
+        l.startup_row[0]=row(64);
+        l.start_in_tray_row=row(64,true);
+        l.startup_row[1]=row(64);
+        l.notify_icon_card=row(seg_h); segments(l.notify_icon_card,l.notify_icon_row,3,282);
+
+        section(I::SettingsSecExplorer);
+        l.shell_tags_row=row(64);
+    } else {
+        section(I::SettingsSecDelete);
+        l.confirm_delete_row=row(64);
+
+        section(I::SettingsSecStaging);
+        l.tray_icon_card=row(seg_h); segments(l.tray_icon_card,l.tray_icon_row,3,282);
+        l.tray_hide_row=row(64);
+
+        section(I::SettingsSecChanges);
+        l.change_tracking_row=row(64);
+        l.change_days_row=row(seg_h,true); segments(l.change_days_row,l.change_days,3,282);
+
+        section(I::SidebarNetworkLocations);
+        l.lan_discovery_row=row(64);
+        l.lan_cache_card=row(seg_h,true); segments(l.lan_cache_card,l.lan_cache_row,3,282);
+        l.network_recent_row=row(64);
+        l.hidden_shares_row=row(64);
+        l.network_clear_row=row(64);
+        {
+            const float bw=button_w(I::Clear,72);
+            l.network_clear_button=D2D1::RectF(l.network_clear_row.right-16*scale-bw,l.network_clear_row.top+16*scale,
+                                               l.network_clear_row.right-16*scale,l.network_clear_row.top+48*scale);
+        }
     }
-    y+=12*scale; l.footer=row(28); y+=16*scale;
+    end_group();
+    y+=14*scale; l.footer=D2D1::RectF(left,y,right,y+28*scale); y+=28*scale+16*scale;
     return y;
 }
 
@@ -274,41 +403,57 @@ float LayoutSettingsContent(SettingsLayout& l, const WindowViewModel& vm, float 
 // Texts shared by layout (measuring) and drawing. l10n::Pick converts to
 // Traditional Chinese at run time, like the Quick Look format catalog.
 namespace pack_text {
-inline const wchar_t* Title() { return l10n::Pick(L"快速预览", L"Quick Look"); }
-inline const wchar_t* Intro() { return l10n::Pick(
-    L"悬停或按空格键预览文件，在这里选择预览方式、查看格式支持并管理扩展。",
-    L"Hover over or press Space to preview files. Choose how, explore format support and manage extensions here."); }
-inline const wchar_t* TriggerSection() { return l10n::Pick(L"预览方式", L"Preview trigger"); }
-inline const wchar_t* TriggerTitle() { return l10n::Pick(L"打开预览", L"Open previews"); }
+inline const wchar_t* Title() { return l10n::Get(l10n::StringId::QuickPreview).c_str(); }
+inline const wchar_t* Intro() { return l10n::Get(l10n::StringId::HoverOverOrPressSpaceToPreviewFilesChooseHowExploreFormatSup).c_str(); }
+inline const wchar_t* TriggerSection() { return l10n::Get(l10n::StringId::PreviewTrigger).c_str(); }
+inline const wchar_t* TriggerTitle() { return l10n::Get(l10n::StringId::OpenPreviews).c_str(); }
 inline const wchar_t* TriggerDesc(int trigger) {
     return trigger == 1
-        ? l10n::Pick(L"选中文件后按空格键预览", L"Select a file and press Space")
-        : l10n::Pick(L"指针停在文件上时显示预览卡片，空格键仍可展开完整预览",
-                     L"Rest the pointer on a file for a preview card; Space still opens the full preview");
+        ? l10n::Get(l10n::StringId::SelectAFileAndPressSpace).c_str()
+        : l10n::Get(l10n::StringId::RestThePointerOnAFileForAPreviewCardSpaceStillOpensTheFullPr).c_str();
 }
 inline const wchar_t* TriggerChoice(int i) {
-    return i == 0 ? l10n::Pick(L"悬停预览", L"Hover") : l10n::Pick(L"空格预览", L"Space");
+    return i == 0 ? l10n::Get(l10n::StringId::Hover).c_str() : l10n::Get(l10n::StringId::Space).c_str();
 }
-inline const wchar_t* DelayTitle() { return l10n::Pick(L"悬停延迟", L"Hover delay"); }
-inline const wchar_t* DelayDesc() { return l10n::Pick(L"指针停留多久后显示预览卡片",
-                                                      L"How long the pointer rests before the card appears"); }
+inline const wchar_t* DelayTitle() { return l10n::Get(l10n::StringId::HoverDelay).c_str(); }
+inline const wchar_t* DelayDesc() { return l10n::Get(l10n::StringId::HowLongThePointerRestsBeforeTheCardAppears).c_str(); }
 inline const wchar_t* DelayChoice(int i) {
-    if (i == 0) return l10n::Pick(L"0.3 秒", L"0.3 s");
-    if (i == 1) return l10n::Pick(L"0.5 秒", L"0.5 s");
-    return l10n::Pick(L"0.8 秒", L"0.8 s");
+    if (i == 0) return l10n::Get(l10n::StringId::S03S).c_str();
+    if (i == 1) return l10n::Get(l10n::StringId::S05S).c_str();
+    return l10n::Get(l10n::StringId::S08S).c_str();
 }
-inline const wchar_t* SizeTitle() { return l10n::Pick(L"卡片尺寸", L"Card size"); }
+inline const wchar_t* SizeTitle() { return l10n::Get(l10n::StringId::CardSize).c_str(); }
 inline const wchar_t* SizeDesc() {
-    return l10n::Pick(L"卡片随内容变形；按住 Ctrl 临时放大",
-                      L"Follows the content's shape; hold Ctrl to enlarge");
+    return l10n::Get(l10n::StringId::FollowsTheContentSShapeHoldCtrlToEnlarge).c_str();
 }
 inline const wchar_t* SizeChoice(int i) {
-    if (i == 0) return l10n::Pick(L"小", L"Small");
-    if (i == 1) return l10n::Pick(L"中", L"Medium");
-    return l10n::Pick(L"大", L"Large");
+    if (i == 0) return l10n::Get(l10n::StringId::UiFontSmall).c_str();
+    if (i == 1) return l10n::Get(l10n::StringId::Medium).c_str();
+    return l10n::Get(l10n::StringId::UiFontLarge).c_str();
 }
-inline const wchar_t* PacksSection() { return l10n::Pick(L"预览增强包", L"Preview packs"); }
-inline const wchar_t* FormatsSection() { return l10n::Pick(L"格式", L"Formats"); }
+inline const wchar_t* PacksSection() { return l10n::Get(l10n::StringId::PreviewPacks).c_str(); }
+inline const wchar_t* PacksIntro() { return l10n::Get(l10n::StringId::PacksPageIntro).c_str(); }
+inline const wchar_t* ManagePacks() { return l10n::Get(l10n::StringId::ManagePacks).c_str(); }
+inline const wchar_t* SearchSection() { return l10n::Get(l10n::StringId::PackSearchSection).c_str(); }
+inline const wchar_t* ContentTitle() { return l10n::Get(l10n::StringId::ContentPackTitle).c_str(); }
+inline const wchar_t* ContentDesc() { return l10n::Get(l10n::StringId::ContentPackDesc).c_str(); }
+inline const wchar_t* ContentMeta() { return l10n::Get(l10n::StringId::ContentPackMeta).c_str(); }
+inline const wchar_t* OcrTitle() { return l10n::Get(l10n::StringId::OcrPackTitle).c_str(); }
+inline const wchar_t* OcrDesc() { return l10n::Get(l10n::StringId::OcrPackDesc).c_str(); }
+inline const wchar_t* ComingSoon() { return l10n::Get(l10n::StringId::PackComingSoon).c_str(); }
+// app::ContentPackState: 0 bundled (dev build), 1 ready, 2 missing, 3 outdated, 4 damaged, 5 unavailable.
+inline bool ContentReady(const WindowViewModel& vm) {
+    return vm.settings_content_pack_state == 0 || vm.settings_content_pack_state == 1;
+}
+inline bool ContentAvailable(const WindowViewModel& vm) { return vm.settings_content_pack_state != 5; }
+inline const wchar_t* ContentPrimary(const WindowViewModel& vm) {
+    return ContentReady(vm) ? l10n::Get(l10n::StringId::ManageContentIndex).c_str()
+                            : l10n::Get(l10n::StringId::DownloadAndInstall).c_str();
+}
+inline std::wstring UpdateAll(int count) {
+    return std::wstring(l10n::Get(l10n::StringId::UpdateAllPacks).c_str()) + L" (" + std::to_wstring(count) + L")";
+}
+inline const wchar_t* FormatsSection() { return l10n::Get(l10n::StringId::Formats).c_str(); }
 inline std::wstring FormatsSummary(const WindowViewModel& vm) {
     const int packs = int(vm.settings_pack_media_installed) + int(vm.settings_pack_images_installed) +
                       int(vm.settings_pack_raw_installed) + int(vm.settings_pack_archive_installed);
@@ -319,67 +464,51 @@ inline std::wstring FormatsSummary(const WindowViewModel& vm) {
         ? l10n::Cn(L"共 ") + count + l10n::Cn(L" 种格式 · 增强包 ") + std::to_wstring(packs) + L"/4"
         : count + L" formats · Preview packs " + std::to_wstring(packs) + L"/4";
     if (vm.settings_preview_codecs & kPreviewCodecsDetected)
-        result += std::wstring(l10n::Pick(L" · 系统扩展 ", L" · System extensions ")) + std::to_wstring(codecs) + L"/4";
-    else result += l10n::Pick(L" · 系统扩展检测中", L" · Checking system extensions");
+        result += std::wstring(l10n::Get(l10n::StringId::SystemExtensions_2).c_str()) + std::to_wstring(codecs) + L"/4";
+    else result += l10n::Get(l10n::StringId::CheckingSystemExtensions).c_str();
     return result;
 }
-inline const wchar_t* FormatsTitle() { return l10n::Pick(L"支持的格式", L"Supported formats"); }
-inline const wchar_t* SystemTitle() { return l10n::Pick(L"系统扩展", L"System extensions"); }
+inline const wchar_t* FormatsTitle() { return l10n::Get(l10n::StringId::SupportedFormats).c_str(); }
+inline const wchar_t* SystemTitle() { return l10n::Get(l10n::StringId::SystemExtensions).c_str(); }
 inline const wchar_t* Legend(int source) {
-    if (source == 0) return l10n::Pick(L"内置", L"Built in");
-    if (source == 1) return l10n::Pick(L"预览增强包", L"Preview pack");
-    return l10n::Pick(L"增强包或系统扩展", L"Pack or system extension");
+    if (source == 0) return l10n::Get(l10n::StringId::BuiltIn).c_str();
+    if (source == 1) return l10n::Get(l10n::StringId::PreviewPack).c_str();
+    return l10n::Get(l10n::StringId::PackOrSystemExtension).c_str();
 }
-inline const wchar_t* LegendNote() { return l10n::Pick(
-    L"虚线：对应的增强支持尚未启用",
-    L"Dashed: enhanced support is not enabled"); }
+inline const wchar_t* LegendNote() { return l10n::Get(l10n::StringId::DashedEnhancedSupportIsNotEnabled).c_str(); }
 inline const wchar_t* SystemHint(const WindowViewModel& vm) { return vm.settings_pack_images_installed && vm.settings_pack_images_enabled
-    ? l10n::Pick(L"已启用现代图像格式增强包：HEIC / AVIF 可以由增强包解码，无需另装对应的系统扩展。",
-                 L"The image pack is enabled: it decodes HEIC / AVIF without the corresponding system extensions.")
-    : l10n::Pick(L"HEIC / AVIF 也可通过现代图像格式增强包预览，无需微软账户。",
-                 L"The image pack also supports HEIC / AVIF without a Microsoft account."); }
+    ? l10n::Get(l10n::StringId::TheImagePackIsEnabledItDecodesHEICAVIFWithoutTheCorrespondin).c_str()
+    : l10n::Get(l10n::StringId::TheImagePackAlsoSupportsHEICAVIFWithoutAMicrosoftAccount).c_str(); }
 
-inline const wchar_t* OpenFolder() { return l10n::Pick(L"打开文件夹", L"Open folder"); }
-inline const wchar_t* Media() { return l10n::Pick(L"媒体", L"Media"); }
-inline const wchar_t* Advanced() { return l10n::Pick(L"高级", L"Advanced"); }
-inline const wchar_t* MediaTitle() { return l10n::Pick(L"FFmpeg 媒体增强", L"FFmpeg media"); }
-inline const wchar_t* MediaDesc() { return l10n::Pick(
-    L"系统缺少解码器的视频也能生成缩略图、显示时长和媒体信息：HEVC、AV1、VP9、ProRes、FLV、RMVB、MPEG-TS 等。",
-    L"Thumbnails, playing time and media details for videos Windows has no decoder for: HEVC, AV1, VP9, ProRes, FLV, RMVB, MPEG-TS and more."); }
-inline const wchar_t* MediaMeta() { return l10n::Pick(L"LGPL-2.1 · 仅解码构建，不含 GPL 组件", L"LGPL-2.1 · decode-only build, no GPL parts"); }
-inline const wchar_t* Images() { return l10n::Pick(L"图像", L"Images"); }
-inline const wchar_t* ImagesTitle() { return l10n::Pick(L"现代图像格式", L"Modern image formats"); }
-inline const wchar_t* ImagesDesc() { return l10n::Pick(
-    L"不依赖微软商店扩展，直接预览 iPhone 照片（HEIC）、AVIF、JPEG XL 和 HDR / EXR 图像，文件夹里也能看到缩略图。",
-    L"Preview iPhone photos (HEIC), AVIF, JPEG XL and HDR / EXR pictures without the Microsoft Store extensions, thumbnails included."); }
-inline const wchar_t* ImagesMeta() { return l10n::Pick(L"libheif · dav1d · libjxl · OpenEXR · LGPL-3.0 / BSD", L"libheif · dav1d · libjxl · OpenEXR · LGPL-3.0 / BSD"); }
-inline const wchar_t* RawTitle() { return l10n::Pick(L"RAW 相机照片", L"RAW camera photos"); }
-inline const wchar_t* RawDesc() { return l10n::Pick(
-    L"通过 LibRaw 为 CR2、CR3、NEF、ARW、DNG、RAF 等相机原片提供预览和缩略图。",
-    L"Use LibRaw for previews and thumbnails of camera originals such as CR2, CR3, NEF, ARW, DNG and RAF."); }
+inline const wchar_t* OpenFolder() { return l10n::Get(l10n::StringId::OpenFolder).c_str(); }
+inline const wchar_t* Media() { return l10n::Get(l10n::StringId::Media).c_str(); }
+inline const wchar_t* Advanced() { return l10n::Get(l10n::StringId::Advanced_2).c_str(); }
+inline const wchar_t* MediaTitle() { return l10n::Get(l10n::StringId::FFmpegMedia).c_str(); }
+inline const wchar_t* MediaDesc() { return l10n::Get(l10n::StringId::ThumbnailsPlayingTimeAndMediaDetailsForVideosWindowsHasNoDec).c_str(); }
+inline const wchar_t* MediaMeta() { return l10n::Get(l10n::StringId::LGPL21DecodeOnlyBuildNoGPLParts).c_str(); }
+inline const wchar_t* Images() { return l10n::Get(l10n::StringId::Images_2).c_str(); }
+inline const wchar_t* ImagesTitle() { return l10n::Get(l10n::StringId::ModernImageFormats).c_str(); }
+inline const wchar_t* ImagesDesc() { return l10n::Get(l10n::StringId::PreviewIPhonePhotosHEICAVIFJPEGXLAndHDREXRPicturesWithoutThe).c_str(); }
+inline const wchar_t* ImagesMeta() { return l10n::Get(l10n::StringId::LibheifDav1dLibjxlOpenEXRLGPL30BSD).c_str(); }
+inline const wchar_t* RawTitle() { return l10n::Get(l10n::StringId::RAWCameraPhotos).c_str(); }
+inline const wchar_t* RawDesc() { return l10n::Get(l10n::StringId::UseLibRawForPreviewsAndThumbnailsOfCameraOriginalsSuchAsCR2C).c_str(); }
 inline const wchar_t* RawMeta() { return L"LibRaw · LGPL-2.1 / CDDL"; }
-inline const wchar_t* Archive() { return l10n::Pick(L"压缩包", L"Archives"); }
-inline const wchar_t* ArchiveTitle() { return l10n::Pick(L"7-Zip 压缩包增强", L"7-Zip archives"); }
-inline const wchar_t* ArchiveDesc() { return l10n::Pick(
-    L"通过 7-Zip 扩展压缩包内容列表预览，支持 7z、RAR、ISO、CAB、WIM 等格式。",
-    L"Use 7-Zip to preview archive contents, including 7z, RAR, ISO, CAB and WIM."); }
+inline const wchar_t* Archive() { return l10n::Get(l10n::StringId::ArcFamArchive).c_str(); }
+inline const wchar_t* ArchiveTitle() { return l10n::Get(l10n::StringId::S7ZipArchives).c_str(); }
+inline const wchar_t* ArchiveDesc() { return l10n::Get(l10n::StringId::Use7ZipToPreviewArchiveContentsIncluding7zRARISOCABAndWIM).c_str(); }
 inline const wchar_t* ArchiveMeta() { return L"7-Zip · LGPL-2.1 + unRAR"; }
-inline const wchar_t* Install() { return l10n::Pick(L"下载并安装", L"Download and install"); }
-inline const wchar_t* Remove() { return l10n::Pick(L"卸载", L"Remove"); }
-inline const wchar_t* CustomTitle() { return l10n::Pick(L"使用已有 FFmpeg", L"Use existing FFmpeg"); }
-inline const wchar_t* CustomDesc() { return l10n::Pick(
-    L"可选来源；关闭后使用 Pulse 管理的增强包",
-    L"Optional source; turn off to use the Pulse-managed pack"); }
-inline const wchar_t* NoCustom() { return l10n::Pick(L"尚未选择 ffmpeg.exe", L"No ffmpeg.exe chosen"); }
-inline const wchar_t* Browse() { return l10n::Pick(L"浏览…", L"Browse…"); }
-inline const wchar_t* UseDetected() { return l10n::Pick(L"使用检测到的", L"Use found"); }
-inline const wchar_t* RemoveTitle() { return l10n::Pick(L"卸载 Pulse 时删除预览增强包", L"Remove packs when uninstalling Pulse"); }
-inline const wchar_t* RemoveDesc() { return l10n::Pick(L"否则保留，重新安装 Pulse 后可直接使用", L"Otherwise they stay and work again after reinstalling Pulse"); }
-inline const wchar_t* AutoUpdateTitle() { return l10n::Pick(L"自动更新预览增强包", L"Update preview packs automatically"); }
-inline const wchar_t* AutoUpdateDesc() { return l10n::Pick(L"随 Pulse 更新检查一起进行，在后台下载", L"Runs with the Pulse update check and downloads in the background"); }
-inline const wchar_t* Note() { return l10n::Pick(
-    L"预览增强包在隔离的预览进程中运行：崩溃或超时只影响当前预览，Pulse 会回退到内置的缩略图和文本视图。",
-    L"Packs run in the isolated preview process: a crash or timeout only affects that preview, and Pulse falls back to its built-in views."); }
+inline const wchar_t* Install() { return l10n::Get(l10n::StringId::DownloadAndInstall).c_str(); }
+inline const wchar_t* Remove() { return l10n::Get(l10n::StringId::Remove_2).c_str(); }
+inline const wchar_t* CustomTitle() { return l10n::Get(l10n::StringId::UseExistingFFmpeg).c_str(); }
+inline const wchar_t* CustomDesc() { return l10n::Get(l10n::StringId::OptionalSourceTurnOffToUseThePulseManagedPack).c_str(); }
+inline const wchar_t* NoCustom() { return l10n::Get(l10n::StringId::NoFfmpegExeChosen).c_str(); }
+inline const wchar_t* Browse() { return l10n::Get(l10n::StringId::Browse).c_str(); }
+inline const wchar_t* UseDetected() { return l10n::Get(l10n::StringId::UseFound).c_str(); }
+inline const wchar_t* RemoveTitle() { return l10n::Get(l10n::StringId::RemovePacksWhenUninstallingPulse).c_str(); }
+inline const wchar_t* RemoveDesc() { return l10n::Get(l10n::StringId::OtherwiseTheyStayAndWorkAgainAfterReinstallingPulse).c_str(); }
+inline const wchar_t* AutoUpdateTitle() { return l10n::Get(l10n::StringId::UpdatePreviewPacksAutomatically).c_str(); }
+inline const wchar_t* AutoUpdateDesc() { return l10n::Get(l10n::StringId::RunsWithThePulseUpdateCheckAndDownloadsInTheBackground).c_str(); }
+inline const wchar_t* Note() { return l10n::Get(l10n::StringId::PacksRunInTheIsolatedPreviewProcessACrashOrTimeoutOnlyAffect).c_str(); }
 inline std::wstring Bytes(uint64_t bytes) {
     wchar_t text[48]{};
     if (bytes >= 1024ull * 1024 * 1024) swprintf_s(text, L"%.1f GB", bytes / (1024.0 * 1024 * 1024));
@@ -388,69 +517,121 @@ inline std::wstring Bytes(uint64_t bytes) {
     return text;
 }
 inline std::wstring Summary(const WindowViewModel& vm) {
-    if (!vm.settings_pack_installed) return l10n::Pick(L"尚未安装预览增强包", L"No preview packs installed");
+    if (!vm.settings_pack_installed) return l10n::Get(l10n::StringId::NoPreviewPacksInstalled).c_str();
     wchar_t text[128]{};
-    swprintf_s(text, l10n::Pick(L"已安装 %u 个 · 占用 %s", L"%u installed · %s"),
+    swprintf_s(text, l10n::Get(l10n::StringId::UInstalledS).c_str(),
                vm.settings_pack_installed, Bytes(vm.settings_pack_bytes).c_str());
     return text;
 }
 inline std::wstring Found(const std::wstring& path) {
-    return std::wstring(l10n::Pick(L"检测到：", L"Found: ")) + path;
+    return std::wstring(l10n::Get(l10n::StringId::Found).c_str()) + path;
 }
 struct Badge { std::wstring text; fluent::BadgeKind kind = fluent::BadgeKind::Neutral; };
+inline Badge ContentBadge(const WindowViewModel& vm) {
+    switch (vm.settings_content_pack_state) {
+    case 0: return {l10n::Get(l10n::StringId::ContentPackBundled).c_str(), fluent::BadgeKind::Success};
+    case 1: return {l10n::Get(l10n::StringId::Installed).c_str(), fluent::BadgeKind::Success};
+    case 3: case 4: return {l10n::Get(l10n::StringId::ContentPackRepair).c_str(), fluent::BadgeKind::Warning};
+    default: return {l10n::Get(l10n::StringId::NotInstalled).c_str(), fluent::BadgeKind::Neutral};
+    }
+}
+inline Badge OcrBadge() { return {l10n::Get(l10n::StringId::PackPlanned).c_str(), fluent::BadgeKind::Neutral}; }
 inline const wchar_t* PrimaryLabel(bool available, bool installed, bool installing) {
-    if (installing) return l10n::Pick(L"取消", L"Cancel");
+    if (installing) return l10n::Get(l10n::StringId::Cancel).c_str();
     if (installed) return Remove();
-    return available ? Install() : l10n::Pick(L"尚未发布", L"Not published");
+    return available ? Install() : l10n::Get(l10n::StringId::NotPublished).c_str();
 }
 inline bool PrimaryEnabled(bool available, bool installed, bool installing) {
     return available || installed || installing;
+}
+// The AI pack: settings_ai_pack_state holds app::AiPackState (the content
+// pack's values). Usable (bundled or installed): 管理 opens the AI page (kSettingsPageAi), which
+// holds the uninstall.
+inline const wchar_t* AiSection() { return l10n::Get(l10n::StringId::AiPackSection).c_str(); }
+inline const wchar_t* AiTitle() { return l10n::Get(l10n::StringId::AiPackTitle).c_str(); }
+inline const wchar_t* AiDesc() { return l10n::Get(l10n::StringId::AiPackDesc).c_str(); }
+inline const wchar_t* AiMeta() { return l10n::Get(l10n::StringId::AiPackMeta).c_str(); }
+inline bool AiInstalled(const WindowViewModel& vm) { return vm.settings_ai_pack_state == 1; }
+inline bool AiUsable(const WindowViewModel& vm) { return vm.settings_ai_pack_state == 0 || AiInstalled(vm); }
+inline bool AiAvailable(const WindowViewModel& vm) { return vm.settings_ai_pack_state != 5; }
+inline Badge AiBadge(const WindowViewModel& vm) {
+    switch (vm.settings_ai_pack_state) {
+    case 0: return {l10n::Get(l10n::StringId::ContentPackBundled).c_str(), fluent::BadgeKind::Success};
+    case 1: return {l10n::Get(l10n::StringId::Installed).c_str(), fluent::BadgeKind::Success};
+    case 3: case 4: return {l10n::Get(l10n::StringId::ContentPackRepair).c_str(), fluent::BadgeKind::Warning};
+    default: return {l10n::Get(l10n::StringId::NotInstalled).c_str(), fluent::BadgeKind::Neutral};
+    }
+}
+inline const wchar_t* AiPrimary(const WindowViewModel& vm) {
+    if (AiUsable(vm) && !vm.settings_ai_pack_installing) return l10n::Get(l10n::StringId::AiManage).c_str();
+    return PrimaryLabel(AiAvailable(vm), AiInstalled(vm), vm.settings_ai_pack_installing);
+}
+inline bool AiPrimaryEnabled(const WindowViewModel& vm) {
+    return AiUsable(vm) || PrimaryEnabled(AiAvailable(vm), AiInstalled(vm), vm.settings_ai_pack_installing);
+}
+inline PackAction AiAction(const WindowViewModel& vm) {
+    if (vm.settings_ai_pack_installing) return PackAction::AiCancel;
+    return AiUsable(vm) ? PackAction::AiManage : PackAction::AiInstall;
 }
 // "更新到 1.0.2" beside 卸载 while an installed pack is older than the
 // catalog; empty (no button) while it downloads or when it is current.
 inline std::wstring UpdateLabel(bool installed, bool installing, const std::wstring& version) {
     if (!installed || installing || version.empty()) return {};
-    return std::wstring(l10n::Pick(L"更新到 ", L"Update to ")) + version;
+    return std::wstring(l10n::Get(l10n::StringId::UpdateTo).c_str()) + version;
 }
 inline Badge PackBadge(bool available, bool installed, bool installing, bool enabled, const std::wstring& version) {
-    if (installing) return {installed ? l10n::Pick(L"正在更新", L"Updating") : l10n::Pick(L"正在安装", L"Installing"),
+    if (installing) return {installed ? l10n::Get(l10n::StringId::Updating).c_str() : l10n::Get(l10n::StringId::Installing).c_str(),
                             fluent::BadgeKind::Accent};
     if (!installed) return {l10n::Pick(available ? L"未安装" : L"尚未发布", available ? L"Not installed" : L"Not published"), fluent::BadgeKind::Neutral};
-    if (!enabled) return {l10n::Pick(L"已停用", L"Off"), fluent::BadgeKind::Neutral};
-    std::wstring text = l10n::Pick(L"已安装", L"Installed");
+    if (!enabled) return {l10n::Get(l10n::StringId::Off).c_str(), fluent::BadgeKind::Neutral};
+    std::wstring text = l10n::Get(l10n::StringId::Installed).c_str();
     if (!version.empty()) text += L" " + version;
     return {text, fluent::BadgeKind::Success};
 }
+// The user's own FFmpeg is selected and valid: the pack is not used at all.
+inline bool MediaLocalInUse(const WindowViewModel& vm) {
+    return vm.settings_pack_use_custom && vm.settings_pack_ffmpeg == 2 && !vm.settings_pack_installing;
+}
 inline Badge MediaBadge(const WindowViewModel& vm) {
+    if (MediaLocalInUse(vm))
+        return {l10n::Get(l10n::StringId::MediaPackUnused).c_str(), fluent::BadgeKind::Neutral};
     return PackBadge(vm.settings_pack_media_available, vm.settings_pack_media_installed,
         vm.settings_pack_installing, true, vm.settings_pack_version);
 }
 inline const wchar_t* Primary(const WindowViewModel& vm) {
+    // Nothing to download while the local FFmpeg is used; an installed pack can still be removed.
+    if (MediaLocalInUse(vm) && !vm.settings_pack_media_installed) return L"";
     return PrimaryLabel(vm.settings_pack_media_available, vm.settings_pack_media_installed, vm.settings_pack_installing);
 }
+inline std::wstring MediaNotice(const WindowViewModel& vm) {
+    if (!vm.settings_pack_notice.empty() || !MediaLocalInUse(vm)) return vm.settings_pack_notice;
+    return l10n::Get(vm.settings_pack_media_installed ? l10n::StringId::MediaPackLocalNoticeInstalled
+                                                      : l10n::StringId::MediaPackLocalNotice).c_str();
+}
 inline std::wstring MediaUpdate(const WindowViewModel& vm) {
+    if (MediaLocalInUse(vm)) return {};
     return UpdateLabel(vm.settings_pack_media_installed, vm.settings_pack_installing, vm.settings_pack_update_version);
 }
-inline const wchar_t* SourceTitle() { return l10n::Pick(L"启用媒体增强", L"Enable media enhancement"); }
+inline const wchar_t* SourceTitle() { return l10n::Get(l10n::StringId::EnableMediaEnhancement).c_str(); }
 inline const wchar_t* SourceStatus(const WindowViewModel& vm) {
     if (!vm.settings_pack_use_custom && !vm.settings_pack_media_installed)
         return vm.settings_pack_media_available
-            ? l10n::Pick(L"尚无可用媒体来源；可下载增强包或选择已有 FFmpeg", L"No media source available; download a pack or choose existing FFmpeg")
-            : l10n::Pick(L"尚无可用媒体来源；可选择已有 FFmpeg", L"No media source available; choose existing FFmpeg");
+            ? l10n::Get(l10n::StringId::NoMediaSourceAvailableDownloadAPackOrChooseExistingFFmpeg).c_str()
+            : l10n::Get(l10n::StringId::NoMediaSourceAvailableChooseExistingFFmpeg).c_str();
     if (vm.settings_pack_use_custom && vm.settings_pack_ffmpeg != 2)
-        return l10n::Pick(L"当前来源：已有 FFmpeg（路径无效，请重新选择）", L"Source: existing FFmpeg (invalid path; choose again)");
+        return l10n::Get(l10n::StringId::SourceExistingFFmpegInvalidPathChooseAgain).c_str();
     if (!vm.settings_pack_ffmpeg_enabled)
         return vm.settings_pack_use_custom
-            ? l10n::Pick(L"已停用；所选来源：已有 FFmpeg", L"Off; selected source: existing FFmpeg")
-            : l10n::Pick(L"已停用；所选来源：Pulse 管理的增强包", L"Off; selected source: Pulse-managed pack");
+            ? l10n::Get(l10n::StringId::OffSelectedSourceExistingFFmpeg).c_str()
+            : l10n::Get(l10n::StringId::OffSelectedSourcePulseManagedPack).c_str();
     if (vm.settings_pack_use_custom)
-        return l10n::Pick(L"当前来源：已有 FFmpeg（用户文件，不做完整性校验）", L"Source: existing FFmpeg (user file, not verified)");
-    return l10n::Pick(L"当前来源：Pulse 管理的增强包", L"Source: Pulse-managed pack");
+        return l10n::Get(l10n::StringId::SourceExistingFFmpegUserFileNotVerified).c_str();
+    return l10n::Get(l10n::StringId::SourcePulseManagedPack).c_str();
 }
 // "正在下载… 42%" while a pack downloads.
 inline std::wstring Downloading(float progress) {
     const int percent = static_cast<int>(progress * 100.0f + 0.5f);
-    return std::wstring(l10n::Pick(L"正在下载… ", L"Downloading… ")) +
+    return std::wstring(l10n::Get(l10n::StringId::Downloading).c_str()) +
            std::to_wstring(percent < 0 ? 0 : percent > 100 ? 100 : percent) + L"%";
 }
 inline std::wstring Downloading(const WindowViewModel& vm) { return Downloading(vm.settings_pack_progress); }
@@ -509,8 +690,12 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
         return text.empty() ? 0.0f : painter
             ? painter->MeasureWrappedCaptionHeight(text, (std::max)(40*scale, width)) : 40*scale;
     };
-    y += caption_h(pack_text::Intro(), right - left) + 10*scale;
     const float font = static_cast<float>(vm.settings_ui_font_scale) / 100.0f;
+    const float open_w = button_w(pack_text::OpenFolder());
+    // 快速预览 (page 5): how previews open and which formats they cover, then a
+    // card leading to the 增强包 page (8), which holds the packs themselves.
+    if (vm.settings_page != 8) {
+    y += caption_h(pack_text::Intro(), right - left) + 10*scale;
     // 预览方式: one card per choice row, segments at the right (below when narrow).
     {
         const bool narrow = right - left < 560*scale;
@@ -573,10 +758,10 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
         const bool detected = (vm.settings_preview_codecs & kPreviewCodecsDetected) != 0;
         const bool has = (vm.settings_preview_codecs & (1u << i)) != 0;
         const bool button = detected && !has && info.store_id;
-        const auto status = !detected ? l10n::Pick(L"检测中", L"Checking") : has
-            ? l10n::Pick(L"已安装", L"Installed") : l10n::Pick(L"未安装", L"Not installed");
+        const auto status = !detected ? l10n::Get(l10n::StringId::Checking).c_str() : has
+            ? l10n::Get(l10n::StringId::Installed).c_str() : l10n::Get(l10n::StringId::NotInstalled).c_str();
         const float badge_w = painter ? painter->MeasureBadgeWidth(status) : 110*scale;
-        const float bw = button ? button_w(l10n::Pick(L"获取", L"Get")) : 0;
+        const float bw = button ? button_w(l10n::Get(l10n::StringId::Get).c_str()) : 0;
         const float text_right = stacked_codecs ? right - 16*scale : right - 28*scale - badge_w - (button ? bw + 10*scale : 0);
         const float desc_h = caption_h(info.description, text_right - left - 54*scale);
         const float text_h = 14*scale + 26*font*scale + desc_h;
@@ -595,12 +780,27 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
     y = l.preview_codec_hint.bottom + 14*scale;
     l.preview_codec_group = D2D1::RectF(left, codecs_top, right, y);
     y += 30*scale; l.pack_section = row(32*font);
-    // Summary: how many packs, their disk use and where they live.
+    {
+        const bool compact = right - left < 560*font*scale;
+        l.pack_summary = row(compact ? 116.0f : 76.0f);
+        const float manage_w = button_w(pack_text::ManagePacks());
+        l.pack_manage = D2D1::RectF(right - 16*scale - manage_w, l.pack_summary.bottom - 48*scale,
+                                    right - 16*scale, l.pack_summary.bottom - 16*scale);
+    }
+    return y + 24*scale;
+    }
+    y += caption_h(pack_text::PacksIntro(), right - left) + 18*scale;
+    // Summary: how many packs, their disk use and where they live; 全部更新
+    // left of 打开文件夹 while some pack has a newer release.
     const bool compact_pack = right - left < 560*font*scale;
     l.pack_summary = row(compact_pack ? 116.0f : 76.0f);
-    const float open_w = button_w(pack_text::OpenFolder());
     l.pack_open = D2D1::RectF(right - 16*scale - open_w, l.pack_summary.bottom - 48*scale,
                               right - 16*scale, l.pack_summary.bottom - 16*scale);
+    if (vm.settings_pack_updates > 0) {
+        const float all_w = button_w(pack_text::UpdateAll(vm.settings_pack_updates));
+        l.pack_update_all = D2D1::RectF(l.pack_open.left - 8*scale - all_w, l.pack_open.top,
+                                        l.pack_open.left - 8*scale, l.pack_open.bottom);
+    }
 
     // One pack card: icon, title + badge (+ switch), description, meta line
     // with the primary button (and 更新到 left of it), and the last action's
@@ -622,8 +822,9 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
         *out.desc_h = caption_h(desc, inner_right - text_left);
         const float desc_top = compact_pack ? out.badge->bottom + 12*scale : top + 40*scale;
         const float footer = desc_top + *out.desc_h + 12*scale;
-        const float primary_w = button_w(primary);
-        *out.primary = D2D1::RectF(inner_right - primary_w, footer, inner_right, footer + 32*scale);
+        const float primary_w = primary.empty() ? 0.0f : button_w(primary);
+        *out.primary = primary.empty() ? D2D1::RectF(inner_right, footer, inner_right, footer + 32*scale)
+                                       : D2D1::RectF(inner_right - primary_w, footer, inner_right, footer + 32*scale);
         if (!update.empty()) {
             const float update_w = button_w(update);
             *out.update = D2D1::RectF(out.primary->left - 8*scale - update_w, footer,
@@ -644,7 +845,7 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
     card_layout({&l.pack_card, &l.pack_badge, &l.pack_enable, &l.pack_primary, &l.pack_update, &l.pack_notice,
                  &l.pack_desc_h},
                 false, pack_text::MediaBadge(vm), pack_text::MediaDesc(),
-                pack_text::Primary(vm), pack_text::MediaUpdate(vm), vm.settings_pack_notice);
+                pack_text::Primary(vm), pack_text::MediaUpdate(vm), pack_text::MediaNotice(vm));
 
     // Optional existing FFmpeg is adjacent to the independently installable media pack.
     y += 12*scale;
@@ -690,6 +891,23 @@ float LayoutSettingsPacks(SettingsLayout& l, const WindowViewModel& vm, float sc
                  &l.pack_archive_update, &l.pack_archive_notice, &l.pack_archive_desc_h},
                 pack_text::ShowsArchiveEnable(vm), pack_text::ArchiveBadge(vm), pack_text::ArchiveDesc(),
                 pack_text::ArchivePrimary(vm), pack_text::ArchiveUpdate(vm), vm.settings_pack_archive_notice);
+
+    // 搜索: the 内容搜索 module (its index status as the notice) and OCR, planned.
+    y += 24*scale; l.pack_search_section = row(28);
+    card_layout({&l.pack_content_card, &l.pack_content_badge, &l.pack_content_enable, &l.pack_content_primary,
+                 &l.pack_content_update, &l.pack_content_notice, &l.pack_content_desc_h},
+                false, pack_text::ContentBadge(vm), pack_text::ContentDesc(), pack_text::ContentPrimary(vm), {},
+                pack_text::ContentReady(vm) ? vm.settings_content_status : std::wstring{});
+    y += 12*scale;
+    card_layout({&l.pack_ocr_card, &l.pack_ocr_badge, &l.pack_ocr_enable, &l.pack_ocr_primary,
+                 &l.pack_ocr_update, &l.pack_ocr_notice, &l.pack_ocr_desc_h},
+                false, pack_text::OcrBadge(), pack_text::OcrDesc(), pack_text::ComingSoon(), {}, std::wstring{});
+
+    // AI: the AI pack (MCP server; the assistant comes later).
+    y += 24*scale; l.pack_ai_section = row(28);
+    card_layout({&l.pack_ai_card, &l.pack_ai_badge, &l.pack_ai_enable, &l.pack_ai_primary,
+                 &l.pack_ai_update, &l.pack_ai_notice, &l.pack_ai_desc_h},
+                false, pack_text::AiBadge(vm), pack_text::AiDesc(), pack_text::AiPrimary(vm), {}, std::wstring{});
 
     // Background updates and the uninstall choice remain separate from the media source.
     y += 24*scale; l.pack_advanced_section = row(28);

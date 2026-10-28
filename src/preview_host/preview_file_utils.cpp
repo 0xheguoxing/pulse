@@ -1,18 +1,15 @@
 #include "preview_file_utils.h"
+#include "../common/file_placeholder.h"
 #include "../common/path_utils.h"
 #include <cwctype>
 
 namespace pulse::preview {
 
-namespace {
-
-constexpr DWORD kRecallOnOpen = 0x00040000; // FILE_ATTRIBUTE_RECALL_ON_OPEN
-constexpr DWORD kRecallOnData = 0x00400000; // FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
-
-} // namespace
-
 bool IsOfflinePlaceholder(DWORD attrs) {
-    return (attrs & (FILE_ATTRIBUTE_OFFLINE | kRecallOnOpen | kRecallOnData)) != 0;
+    // Previews never recall (common/file_placeholder.h). A vanished path
+    // (INVALID_FILE_ATTRIBUTES) is left to the decoders, which then report
+    // path-unavailable instead of offline-placeholder.
+    return files::PreviewWouldRecall(attrs);
 }
 
 std::wstring ExtensionOf(const std::wstring& path) {

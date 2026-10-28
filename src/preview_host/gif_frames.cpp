@@ -1,5 +1,6 @@
 #include "gif_frames.h"
 #include "preview_file_utils.h"
+#include "shared_image_file.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <algorithm>
@@ -80,11 +81,11 @@ bool DecodeGifFrame(const std::wstring& path, DWORD attrs, UINT pixels,
         bool committed = false;
         ~FailureReset() { if (!committed) state = GifState{}; }
     } completion;
+    SharedImageFile file;  // outlives the decoder
     ComPtr<IWICImagingFactory> factory; ComPtr<IWICBitmapDecoder> decoder;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                                 IID_PPV_ARGS(&factory))) ||
-        FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                   WICDecodeMetadataCacheOnLoad, &decoder))) return false;
+        FAILED(CreateSharedDecoder(factory.Get(), path, WICDecodeMetadataCacheOnLoad, file, &decoder))) return false;
     UINT count = 0; if (FAILED(decoder->GetFrameCount(&count)) || !count) return false;
     frame_count = count; frame_index = (std::min)(frame_index, count - 1);
     loop_count = 0;

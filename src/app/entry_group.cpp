@@ -176,6 +176,9 @@ int GroupRank(const fs::DirEntry& e, GroupBy g, const GroupClock& c) {
         return 7;
     }
     case GroupBy::Type: return IsFolder(e) ? 0 : 1;
+    case GroupBy::ThisPc: return e.pc_launcher ? 2 : e.pc_device ? 1 : 0;
+    case GroupBy::Network:
+    case GroupBy::AiDup: return e.net_group;
     case GroupBy::Tag: {
         if (!c.tags) return 0;
         if (c.tags->rank_by_name.empty()) return c.tags->untagged;
@@ -221,7 +224,7 @@ std::wstring GroupKey(const fs::DirEntry& e, GroupBy g, const GroupClock& clock)
         for (auto& ch : key) ch = static_cast<wchar_t>(std::towlower(ch));
         return key;
     }
-    static constexpr wchar_t kPrefix[] = L"-ndtsgl";
+    static constexpr wchar_t kPrefix[] = L"-ndtsglpwk";
     std::wstring key(1, kPrefix[static_cast<int>(g)]);
     key += std::to_wstring(rank);
     return key;
@@ -267,7 +270,7 @@ std::wstring GroupFolderKey(const std::wstring& path) {
         const std::wstring kind = key.substr(6, colon == std::wstring::npos ? std::wstring::npos : colon - 6);
         if (kind == L"recent") return L"pulse:recent";
         if (kind == L"search" || kind == L"saved-search") return L"pulse:search";
-        if (kind == L"tag") return L"pulse:tag";
+        if (kind == L"tag" || kind == L"tags") return L"pulse:tag";
         if (kind == L"recycle") return L"pulse:recycle";
         return {};
     }

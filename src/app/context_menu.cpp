@@ -1,11 +1,14 @@
 // context_menu.cpp — See context_menu.h.
 #include "context_menu.h"
+#include "folder_alias.h"
 #include "app_model.h"
 #include "../common/localization.h"
 #include "../common/path_utils.h"
 #include "../common/display_path.h"
 #include "../fs/fs_enum.h"
 #include "../ipc/ctx_menu_util.h"
+#include "keymap.h"
+#include "../ui/command_icons.h"
 #include <windows.h>
 #include <algorithm>
 #include <cwchar>
@@ -26,7 +29,6 @@ constexpr const wchar_t* kGlyphDelete = L"\xE74D";
 constexpr const wchar_t* kGlyphRename = L"\xE8AC";
 constexpr const wchar_t* kGlyphProperties = L"\xE946";
 constexpr const wchar_t* kGlyphTerminal = L"\xE756";
-constexpr const wchar_t* kGlyphLink = L"\xE71B";
 constexpr const wchar_t* kGlyphUndo = L"\xE7A7";
 constexpr const wchar_t* kGlyphNewFolder = L"\xE8F4";
 constexpr const wchar_t* kGlyphNewFile = L"\xE8A5";
@@ -38,7 +40,15 @@ constexpr const wchar_t* kGlyphSettings = L"\xE713";
 constexpr const wchar_t* kGlyphRecycle = L"\xE75C";
 constexpr const wchar_t* kGlyphSelectAll = L"\xE8B3";
 constexpr const wchar_t* kGlyphInvert = L"\xE7A1";
-constexpr const wchar_t* kGlyphWildcard = L"\xE71C";
+// One shape per command (pulse_toolbar_redesign §7).
+using ui::command_icons::kGlyphAdvSearch;
+using ui::command_icons::kGlyphBatchRename;
+using ui::command_icons::kGlyphCopyPath;
+using ui::command_icons::kGlyphCopyToPane;
+using ui::command_icons::kGlyphMoveToPane;
+using ui::command_icons::kGlyphPinNetwork;
+using ui::command_icons::kGlyphPinWorkspace;
+using ui::command_icons::kGlyphSelectWild;
 constexpr const wchar_t* kGlyphViewMenu = L"\xE8A9";
 constexpr const wchar_t* kGlyphSortMenu = L"\xE8CB";
 constexpr const wchar_t* kGlyphGroupMenu = L"\xF168";
@@ -49,7 +59,7 @@ ui::FluentMenuItem Item(int cmd, const wchar_t* text, const wchar_t* glyph,
     it.command = cmd;
     it.text = text;
     it.glyph = glyph;
-    if (shortcut) it.shortcut = shortcut;
+    if (shortcut) it.shortcut = ShownShortcut(shortcut);  // the user's key (keymap.h)
     it.enabled = enabled;
     it.mnemonic = BuiltinMenuMnemonic(cmd);
     // Command-less flyout headers: 查看(V) / 排序方式(O) / 分组依据(P).
@@ -94,14 +104,14 @@ std::vector<ui::FluentMenuItem> BuildItemMenu(bool can_undo, const std::wstring&
 
     if (folder)
         items.push_back(Item(CmdOpenInNewTab, l10n::Get(l10n::StringId::OpenNewTab).c_str(), kGlyphOpenInNewTab));
-    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink, L"Ctrl+Shift+C"));
+    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath, L"Ctrl+Shift+C"));
     items.push_back(Item(CmdOpenTerminal, l10n::Get(l10n::StringId::OpenTerminalHere).c_str(), kGlyphTerminal));
     items.push_back(Item(CmdProperties, l10n::Get(l10n::StringId::Properties).c_str(), kGlyphProperties, L"Alt+Enter"));
     items.back().separator_after = true;
-    items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphFolder));
-    items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphLink));
+    items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphPinWorkspace));
+    items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphPinNetwork));
     items.back().separator_after = true;
-    items.push_back(Item(CmdTags, l10n::Get(l10n::StringId::TagsEllipsis).c_str(), kGlyphTag));
+    items.push_back(Item(CmdTags, l10n::Get(l10n::StringId::TagsEllipsis).c_str(), kGlyphTag, L"Alt+T"));
     items.back().separator_after = true;
     items.push_back(UndoItem(can_undo, undo_label));
     return items;
@@ -290,7 +300,7 @@ std::vector<ui::FluentMenuItem> BuildRecycleItemMenu(bool can_undo,
     items.push_back(Item(CmdRestoreRecycle, l10n::Get(l10n::StringId::Restore).c_str(), kGlyphUndo));
     items.push_back(Item(CmdDelete, l10n::Get(l10n::StringId::PermanentDelete).c_str(), kGlyphDelete, L"Del"));
     items.back().separator_after = true;
-    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink, L"Ctrl+Shift+C"));
+    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath, L"Ctrl+Shift+C"));
     items.back().separator_after = true;
     items.push_back(UndoItem(can_undo, undo_label));
     return items;
@@ -325,16 +335,16 @@ std::vector<ui::FluentMenuItem> BuildBackgroundMenu(bool can_paste, bool can_und
     items.push_back(Item(CmdNewTextFile, l10n::Get(l10n::StringId::NewTextDocument).c_str(), kGlyphNewFile));
     items.back().separator_after = true;
     items.push_back(Item(CmdPaste, l10n::Get(l10n::StringId::Paste).c_str(), kGlyphPaste, L"Ctrl+V", can_paste));
-    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink, L"Ctrl+Shift+C"));
+    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath, L"Ctrl+Shift+C"));
     items.back().separator_after = true;
     items.push_back(Item(CmdSelectAll, l10n::Get(l10n::StringId::SelectAll).c_str(), kGlyphSelectAll, L"Ctrl+A"));
     items.push_back(Item(CmdInvertSelection, l10n::Get(l10n::StringId::InvertSelection).c_str(), kGlyphInvert, L"Ctrl+I"));
-    items.push_back(Item(CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard).c_str(), kGlyphWildcard, L"Ctrl+Shift+A"));
+    items.push_back(Item(CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard).c_str(), kGlyphSelectWild, L"Ctrl+Shift+A"));
     items.back().separator_after = true;
     items.push_back(Item(CmdOpenTerminal, l10n::Get(l10n::StringId::OpenTerminalHere).c_str(), kGlyphTerminal));
     items.back().separator_after = true;
-    items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphFolder));
-    items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphLink));
+    items.push_back(Item(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphPinWorkspace));
+    items.push_back(Item(CmdPinNetwork, l10n::Get(l10n::StringId::PinNetwork).c_str(), kGlyphPinNetwork));
     items.back().separator_after = true;
     items.push_back(UndoItem(can_undo, undo_label));
     return items;
@@ -345,7 +355,7 @@ std::vector<ui::FluentMenuItem> BuildBreadcrumbMenu(bool filesystem) {
     items.push_back(Item(CmdOpenInNewTab, l10n::Get(l10n::StringId::OpenNewTab).c_str(), kGlyphOpenInNewTab));
     items.push_back(Item(CmdOpen, l10n::Get(l10n::StringId::Open).c_str(), kGlyphOpen));
     items.back().separator_after = true;
-    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink));
+    items.push_back(Item(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphCopyPath));
     if (filesystem) {
         items.push_back(Item(CmdCopy, l10n::Get(l10n::StringId::Copy).c_str(), kGlyphCopy));
         items.back().separator_after = true;
@@ -409,7 +419,7 @@ std::vector<ui::FluentMenuItem> BuildSortMenu(const BackgroundViewOptions& optio
 
 ui::FluentMenuItem BuildShortcutHints() {
     auto item = Item(CmdShortcutHelp, l10n::Get(l10n::StringId::ShortcutHints).c_str(), L"\xE765");  // keyboard
-    item.shortcut = L"Ctrl+/";  // app_input: Ctrl+/ opens the same dialog
+    item.shortcut = ShownShortcut(L"Ctrl+/");  // app_input: Ctrl+/ opens the same dialog
     return item;
 }
 
@@ -448,7 +458,7 @@ ui::FluentMenuItem BuildGroupMenu(const BackgroundViewOptions& options) {
 void AppendBackgroundViewCommands(std::vector<ui::FluentMenuItem>& items,
                                   const BackgroundViewOptions& options) {
     auto view = Item(CmdNone, l10n::Get(l10n::StringId::View).c_str(), kGlyphViewMenu);
-    view.children = BuildViewMenu(options.view_mode, options.details_panel, options.filesystem);
+    view.children = BuildViewMenu(options.view_mode, options.details_panel, options.filesystem, options.wall);
     auto sort = Item(CmdNone, l10n::Get(l10n::StringId::SortBy).c_str(), kGlyphSortMenu, nullptr, options.can_sort);
     sort.children = BuildSortMenu(options);
     auto refresh = Item(CmdRefresh, l10n::Get(l10n::StringId::Refresh).c_str(), L"\xE72C", L"F5");
@@ -495,14 +505,13 @@ std::vector<ui::FluentMenuItem> BuildSplitMenu(int current_preset) {
         it.pictogram = row.pictogram;
         items.push_back(std::move(it));
     }
-    items.back().separator_after = true;
-    items.push_back(Item(CmdCopyToTarget, l10n::Get(l10n::StringId::CopyToTarget).c_str(), kGlyphCopy, L"Ctrl+Alt+C"));
-    items.push_back(Item(CmdMoveToTarget, l10n::Get(l10n::StringId::MoveToTarget).c_str(), kGlyphCut, L"Ctrl+Alt+X"));
+    // Layouts only (#58-14): 复制到 / 移动到目标栏 act on the selection and
+    // live in the item menu (split only), the selection chip and Ctrl+Alt+C/X.
     return items;
 }
 
 std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool details_panel,
-                                              bool can_apply_all) {
+                                              bool can_apply_all, bool wall) {
     static constexpr l10n::StringId labels[] = {
         l10n::StringId::ViewExtraLarge, l10n::StringId::ViewLarge,
         l10n::StringId::MediumIcons, l10n::StringId::ViewSmall,
@@ -514,7 +523,9 @@ std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool de
         L"\xEA37", L"\xE8A5", L"\xECA5", L"\xE8FD"
     };
     std::vector<ui::FluentMenuItem> items;
-    items.reserve(9);
+    items.reserve(10);
+    const bool wall_shown = wall && (current_mode == ui::ViewMode::MediumIcons ||
+        current_mode == ui::ViewMode::LargeIcons || current_mode == ui::ViewMode::ExtraLargeIcons);
     // File Explorer's Ctrl+Shift+1..8 (explorer_shortcuts.h).
     static constexpr const wchar_t* keys[] = {
         L"Ctrl+Shift+1", L"Ctrl+Shift+2", L"Ctrl+Shift+3", L"Ctrl+Shift+4",
@@ -525,9 +536,13 @@ std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool de
         if (i == 0) row.glyph_scale = 1.16f;
         else if (i == 1) row.glyph_scale = 1.0f;
         else if (i == 2) row.glyph_scale = 0.82f;
-        row.radio = ui::ViewModeIndex(current_mode) == i;
+        row.radio = !wall_shown && ui::ViewModeIndex(current_mode) == i;
         items.push_back(std::move(row));
     }
+    // 照片墙 (P2): pictures in justified rows at their own shape.
+    auto wall_row = Item(CmdViewWall, l10n::Get(l10n::StringId::PhotoWall).c_str(), L"\xEB9F");
+    wall_row.radio = wall_shown;
+    items.push_back(std::move(wall_row));
     items.back().separator_after = true;
     auto panel = Item(CmdDetailsPanel, l10n::Get(l10n::StringId::DetailsPane).c_str(), L"\xE700");
     panel.checked = details_panel;
@@ -536,6 +551,23 @@ std::vector<ui::FluentMenuItem> BuildViewMenu(ui::ViewMode current_mode, bool de
         items.back().separator_after = true;
         items.push_back(Item(CmdApplyViewToAllFolders,
             l10n::Get(l10n::StringId::ApplyViewAllFolders).c_str(), L"\xE8B3"));
+    }
+    // 别名: how aliased items are labelled, once there are any.
+    if (!AliasStore::Instance().Empty()) {
+        items.back().separator_after = true;
+        static constexpr l10n::StringId alias_labels[] = {
+            l10n::StringId::AliasDisplayBoth, l10n::StringId::AliasDisplayOnly,
+            l10n::StringId::AliasDisplayReal,
+        };
+        const int current = static_cast<int>(AliasStore::Instance().Display());
+        for (int i = 0; i < 3; ++i) {
+            auto row = Item(CmdAliasDisplayBase + i, l10n::Get(alias_labels[i]).c_str(),
+                            i == 0 ? L"\xE8EC" : L"");
+            row.radio = current == i;
+            items.push_back(std::move(row));
+        }
+        items.back().separator_after = true;
+        items.push_back(Item(CmdManageAliases, l10n::Get(l10n::StringId::ManageAliasesEllipsis).c_str(), L""));
     }
     return items;
 }
@@ -607,11 +639,8 @@ bool LooksLikeFilesystemPath(const std::wstring& text) {
     return t.find(L'\\') != std::wstring::npos;
 }
 
-std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::vector<std::wstring>& recent_paths) {
-    return BuildCommandPalette(L"", recent_paths, {}, false);
-}
-
 std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
+                                                    std::vector<ui::FluentMenuItem> commands,
                                                     const std::vector<std::wstring>& recent_paths,
                                                     const std::vector<index::Hit>& hits,
                                                     bool project_only,
@@ -624,30 +653,8 @@ std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
     const bool search_mode = parsed.kind == OmnibarQuery::Kind::Search;
     const bool path_like = parsed.kind == OmnibarQuery::Kind::Mixed &&
                            LooksLikeFilesystemPath(needle);
-    auto add_cmd = [&](int cmd, const wchar_t* text, const wchar_t* glyph, const wchar_t* shortcut,
-                       ui::fluent::MenuPictogram pictogram = ui::fluent::MenuPictogram::None) {
-        if (!ContainsI(text, needle)) return;
-        items.push_back(Item(cmd, text, glyph, shortcut));
-        items.back().pictogram = pictogram;
-    };
     if (!project_only && !search_mode && !path_like) {
-        add_cmd(CmdLayoutTwoVertical, l10n::Get(l10n::StringId::LayoutVertical).c_str(), L"", L"Ctrl+Alt+2",
-                ui::fluent::MenuPictogram::LayoutSideBySide);
-        add_cmd(CmdLayoutFourGrid, l10n::Get(l10n::StringId::LayoutFour).c_str(), L"", L"Ctrl+Alt+4",
-                ui::fluent::MenuPictogram::LayoutFour);
-        add_cmd(CmdCopyToTarget, l10n::Get(l10n::StringId::CopyToTarget).c_str(), kGlyphCopy, L"Ctrl+Alt+C");
-        add_cmd(CmdNewFolder, l10n::Get(l10n::StringId::NewFolder).c_str(), kGlyphNewFolder, L"Ctrl+Shift+N");
-        add_cmd(CmdPinWorkspace, l10n::Get(l10n::StringId::PinWorkspace).c_str(), kGlyphFolder, nullptr);
-        add_cmd(CmdCopyPath, l10n::Get(l10n::StringId::CopyPath).c_str(), kGlyphLink, L"Ctrl+Shift+C");
-        add_cmd(CmdInstallFullIndex, l10n::Get(l10n::StringId::EnableFullIndex).c_str(), kGlyphSearch, nullptr);
-        add_cmd(CmdSettings, l10n::Get(l10n::StringId::Settings).c_str(), kGlyphSettings, nullptr);
-        add_cmd(CmdExitPulse, l10n::Get(l10n::StringId::ExitPulse).c_str(), L"\xE7E8", nullptr);
-        add_cmd(CmdOpenRecycle, l10n::Get(l10n::StringId::RecycleBin).c_str(), kGlyphRecycle, nullptr);
-        add_cmd(CmdBatchRename, l10n::Get(l10n::StringId::BatchRename).c_str(), kGlyphRename, L"Ctrl+Shift+R");
-        add_cmd(CmdAdvancedSearch, l10n::Get(l10n::StringId::AdvancedSearch).c_str(), kGlyphSearch, L"Ctrl+Shift+F");
-        add_cmd(CmdSelectAll, l10n::Get(l10n::StringId::SelectAll).c_str(), kGlyphSelectAll, L"Ctrl+A");
-        add_cmd(CmdInvertSelection, l10n::Get(l10n::StringId::InvertSelection).c_str(), kGlyphInvert, L"Ctrl+I");
-        add_cmd(CmdSelectWildcard, l10n::Get(l10n::StringId::SelectWildcard).c_str(), kGlyphWildcard, L"Ctrl+Shift+A");
+        items = std::move(commands);
     }
     std::unordered_set<std::wstring> seen_paths;
     const bool has_content = index::QueryHasContent(index::ParseQuery(needle));
@@ -677,7 +684,8 @@ std::vector<ui::FluentMenuItem> BuildCommandPalette(const std::wstring& query,
     constexpr size_t kMaxRecent = 6;
     size_t recent_added = 0;
     bool recent_sep = false;
-    for (size_t i = 0; i < recent_paths.size() && recent_added < kMaxRecent; ++i) {
+    // The command palette (">") lists commands only, as its mock shows.
+    for (size_t i = 0; i < recent_paths.size() && recent_added < kMaxRecent && !command_mode; ++i) {
         const std::wstring n = fs::NormalizePath(recent_paths[i]);
         if (n.empty() || !seen_paths.insert(n).second) continue;
         if (!current_n.empty() && n == current_n) continue;

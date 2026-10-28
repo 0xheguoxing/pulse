@@ -5,12 +5,19 @@
 // active folder, tab count and first tabs. The selected card is highlighted.
 // The app (app/window_switcher_ui.h) owns the selection and forwards input
 // while it is open; this class only lays out, draws and hit-tests.
+// Motion (animation phase 9a): the backdrop fades in, the panel pops from
+// 0.94, the cards rise in one after another, the selection ring springs from
+// card to card and a plate glides under the pointer. Closing fades out in
+// 110 ms. Frames come from a one-shot timer on the host window, armed only
+// while something moves.
 #include <d2d1_1.h>
 #include <dwrite.h>
 
 #include <cstdint>
 #include <string>
 #include <vector>
+
+#include "ui_motion.h"
 
 namespace pulse::ui {
 
@@ -41,9 +48,14 @@ class WindowSwitcherView {
 public:
     ~WindowSwitcherView();
     // Shows (or refreshes) the switcher; client = window client rect (px).
-    void Show(WindowSwitcherData data, const D2D1_RECT_F& client, float scale);
-    void Hide() noexcept { open_ = false; }
-    bool IsOpen() const noexcept { return open_; }
+    // host = the window it is drawn in, asked for frames while it animates.
+    void Show(WindowSwitcherData data, const D2D1_RECT_F& client, float scale, HWND host = nullptr);
+    // Starts the close fade; input stops at once (HitCard/Contains say no).
+    void Hide() noexcept;
+    // True while drawn, including the close fade.
+    bool IsOpen() const noexcept { return open_ || closing_; }
+    // Card under the pointer for the hover plate; true when it changed.
+    bool SetHover(int card) noexcept;
     // Card under the point (index into data.cards), or -1.
     int HitCard(float x, float y) const noexcept;
     bool Contains(float x, float y) const noexcept;
@@ -53,6 +65,7 @@ private:
     void Layout();
     void EnsureFormats(IDWriteFactory* dwrite, IDWriteTextFormat* base_format);
     void ReleaseFormats();
+    void RequestFrame() const noexcept;
 
     WindowSwitcherData data_;
     D2D1_RECT_F client_{};
@@ -64,6 +77,20 @@ private:
     IDWriteTextFormat* f_small_ = nullptr;
     IDWriteTextFormat* f_hint_ = nullptr;
     float format_scale_ = 0.0f;
+
+    HWND host_ = nullptr;
+    bool closing_ = false;
+    bool animations_ = true;
+    int hover_ = -1;
+    uint64_t open_at_ = 0;
+    uint64_t close_at_ = 0;
+    uint64_t last_draw_ = 0;
+    uint64_t frame_ = 0;
+    uint64_t context_ = 0;      // new per opening: springs do not glide in from the last one
+    float hover_alpha_ = 0.0f;
+    D2D1_RECT_F plate_target_{};
+    motion::SpringRectMotion ring_;
+    motion::SpringRectMotion plate_;
 };
 
 }  // namespace pulse::ui

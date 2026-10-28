@@ -116,11 +116,17 @@ struct MenuItemSpec {
     MenuPictogram pictogram = MenuPictogram::None;
     D2D1_COLOR_F swatch_color{};
     float glyph_scale = 1.0f;
+    bool accent_glyph = false;     // glyph in the accent colour (assistant hand-off)
     bool shortcut_inline = false;
     float inline_label_width = 0.0f;
     // Explorer-style app icon (premultiplied, same device as the painter's
     // context); wins over glyph/pictogram and is drawn 16 DIP like Explorer's.
     ID2D1Bitmap* icon_bitmap = nullptr;
+    // Command palette: a section caption row, and the label characters the
+    // query matched (semibold; plain when the label must ellipsize).
+    bool heading = false;
+    uint16_t match_start = 0;
+    uint16_t match_length = 0;
 };
 
 struct ScrollbarSpec {
@@ -160,6 +166,12 @@ struct SidebarItemSpec {
     bool suppress_text = false;
     bool skip_glyph = false;
     float trailing_reserve = 0.0f;
+    bool alias_mark = false;   // the label is a 别名: the mark follows it
+    // Count roll (motion v2 "dropbin"): below 1 the count / detail text is
+    // still rolling in from count_prev - up when it grew, down when it shrank.
+    float count_roll = 1.0f;
+    std::wstring_view count_prev;
+    bool count_roll_down = false;
     D2D1_COLOR_F icon_color{};
     D2D1_COLOR_F tag_color{};
     D2D1_COLOR_F status_color{};
@@ -367,6 +379,9 @@ struct EmptyStateSpec {
 class Painter {
     friend struct PainterTestPeer;
 public:
+    // A glyph at `format`'s size: its command icon when it has one, else the font.
+    void DrawGlyphWithFormat(std::wstring_view glyph, const D2D1_RECT_F& bounds,
+                             const D2D1_COLOR_F& color, IDWriteTextFormat* format);
     explicit Painter(Compositor* compositor = nullptr) noexcept;
 
     void SetCompositor(Compositor* compositor) noexcept;
@@ -389,6 +404,9 @@ public:
                   HorizontalAlignment alignment, const D2D1_COLOR_F& background);
     void DrawGlyph(std::wstring_view glyph, const D2D1_RECT_F& bounds,
                    const D2D1_COLOR_F& color);
+    // 别名 mark (pulse_alias.html .amark): a soft-accent rounded tile with a
+    // tag drawn in the accent. `tile` is its 14-DIP square.
+    void DrawAliasMark(const D2D1_RECT_F& tile);
     void DrawFocusRing(const D2D1_RECT_F& bounds, float radius);
 
     void DrawButton(const ButtonSpec& spec);
@@ -435,6 +453,11 @@ public:
     float MeasureWrappedCaptionHeight(std::wstring_view text, float width) const;
     void DrawWrappedCaption(std::wstring_view text, D2D1_POINT_2F origin, float width,
                             const D2D1_COLOR_F& color);
+    // The same in the section header style (13px semibold): release-note headings.
+    float MeasureWrappedSectionHeight(std::wstring_view text, float width) const;
+    void DrawWrappedSection(std::wstring_view text, D2D1_POINT_2F origin, float width,
+                            const D2D1_COLOR_F& color);
+    bool HighContrast() const noexcept { return high_contrast_; }
     D2D1_RECT_F FitButtonBounds(D2D1_RECT_F bounds, std::wstring_view text,
                                 std::wstring_view glyph = {},
                                 bool drop_down = false) const;
@@ -517,8 +540,6 @@ private:
                            HorizontalAlignment alignment = HorizontalAlignment::Left);
     void DrawGlyphWithBrush(std::wstring_view glyph, const D2D1_RECT_F& bounds,
                             BrushId brush);
-    void DrawGlyphWithFormat(std::wstring_view glyph, const D2D1_RECT_F& bounds,
-                             const D2D1_COLOR_F& color, IDWriteTextFormat* format);
     void DrawCheckMark(const D2D1_RECT_F& bounds, const D2D1_COLOR_F& color);
     void DrawPaneLayoutIcon(const D2D1_RECT_F& bounds, MenuPictogram kind,
                             const D2D1_COLOR_F& color);

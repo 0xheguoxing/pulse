@@ -105,23 +105,19 @@ bool NetworkConnectUnreachable(DWORD error) {
 std::wstring NetworkConnectErrorText(DWORD error) {
     if (error == ERROR_CANCELLED) return {};
     if (NetworkConnectUnreachable(error))
-        return l10n::Pick(L"连不上服务器。请检查地址；通过公网访问时，运营商常会封锁 SMB 使用的 445 端口。",
-                          L"Can't reach the server. Check the address; over the internet, ISPs often block port 445 used by SMB.");
+        return l10n::Get(l10n::StringId::CanTReachTheServerCheckTheAddressOverTheInternetISPsOftenBlo).c_str();
     switch (error) {
     case ERROR_BAD_NET_NAME:
-        return l10n::Pick(L"服务器上没有这个共享名。", L"The server has no share with this name.");
+        return l10n::Get(l10n::StringId::TheServerHasNoShareWithThisName).c_str();
     case ERROR_ACCESS_DENIED:
     case ERROR_LOGON_FAILURE:
     case ERROR_INVALID_PASSWORD:
     case ERROR_ACCOUNT_RESTRICTION:
-        return l10n::Pick(L"用户名或密码不正确，或此账户无权访问。按 F5 重试。",
-                          L"Wrong user name or password, or this account has no access. Press F5 to try again.");
+        return l10n::Get(l10n::StringId::WrongUserNameOrPasswordOrThisAccountHasNoAccessPressF5ToTryA).c_str();
     case ERROR_SESSION_CREDENTIAL_CONFLICT:
-        return l10n::Pick(L"已用另一个账户连接到此服务器。Windows 不允许同一服务器同时使用两个账户，请先断开原连接。",
-                          L"This server is already connected with another account. Windows allows one account per server; disconnect it first.");
+        return l10n::Get(l10n::StringId::ThisServerIsAlreadyConnectedWithAnotherAccountWindowsAllowsO).c_str();
     case 1272:  // ERROR_ACCESS_DENIED_GUEST-style: insecure guest logons are blocked
-        return l10n::Pick(L"服务器只允许来宾访问，而 Windows 默认禁止不安全的来宾登录。请在服务器上设置用户名和密码。",
-                          L"The server only allows guest access, which Windows blocks by default. Set up a user name and password on the server.");
+        return l10n::Get(l10n::StringId::TheServerOnlyAllowsGuestAccessWhichWindowsBlocksByDefaultSet).c_str();
     default: {
         wchar_t code[64]{};
         swprintf_s(code, l10n::Get(l10n::StringId::ErrorCodeFormat).c_str(), error);

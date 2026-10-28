@@ -15,6 +15,8 @@
 #include "operation_toast_test.h"
 #include "filter_animation.h"
 #include "tab_shortcuts.h"
+#include "keymap.h"
+#include "keymap_input.h"
 #include "quick_access.h"
 #include "../common/windows_compat.h"
 #include "app_input.h"
@@ -23,6 +25,8 @@
 #include "app_runtime.h"
 #include "app_sidebar_refresh.h"
 #include "../ui/address_search_layout.h"
+#include "../ui/layer_alphas.h"
+#include "../ui/details_tree_rows.h"
 #include "search_query.h"
 #include "../common/localization.h"
 #include "app_model.h"
@@ -40,6 +44,16 @@
 #include "details_column_menu.h"
 #include "entry_group.h"
 #include "context_menu.h"
+#include "actions/action_args.h"
+#include "ai_mcp_run.h"
+#include "ai_settings.h"
+#include "actions/action_inventory.h"
+#include "actions/action_files.h"
+#include "ai_cleanup_scan.h"
+#include "actions/action_params.h"
+#include "actions/action_policy.h"
+#include "actions/action_registry.h"
+#include "actions/action_state.h"
 #include "context_menu_controller.h"
 #include "context_menu_prefs.h"
 #include "global_search_handoff.h"
@@ -52,6 +66,7 @@
 #include "../index/index_engine.h"
 #include "../fs/fs_enum.h"
 #include "../fs/fs_recycle.h"
+#include "../ops/elevated_delete.h"
 #include "../common/current_user_security.h"
 #include "../fs/fs_snapshot.h"
 #include "../fs/fs_watch.h"
@@ -59,6 +74,8 @@
 #include "../ui/fluent_menu.h"
 #include "../ui/advanced_search_dialog.h"
 #include "../ui/typography.h"
+#include "../ui/ui_motion.h"
+#include <map>
 #include "../ui/color_picker.h"
 #include "../ui/bloom_accent_picker.h"
 #include "../ui/drag_drop.h"
@@ -1351,6 +1368,12 @@ void TestNotificationToast() {
         Check(toast.HandleMessage(window, WM_LBUTTONDOWN, 0, body), L"toast: body blocks underlying click");
         Check(toast.HandleMessage(window, WM_LBUTTONUP, 0, MAKELPARAM(0, 0)) && GetCapture() != window && toast.IsVisible(),
               L"toast: releasing outside clears capture without dismissing");
+        // With system animations on, the first frame of the entrance draws no
+        // content and places no close button yet: draw the settled frame first.
+        Sleep(ui::motion::SpringSettleMs(ui::motion::spring::Pop) + 50);
+        compositor.Dc()->BeginDraw();
+        toast.Draw(compositor, ui::MakeTheme(false, D2D1::ColorF(0x0078D4)), 1.0f, false);
+        compositor.Dc()->EndDraw();
         const auto close = MAKELPARAM(static_cast<int>(bounds.right - 16), static_cast<int>((bounds.top + bounds.bottom) / 2));
         toast.HandleMessage(window, WM_LBUTTONDOWN, 0, close);
         toast.HandleMessage(window, WM_LBUTTONUP, 0, close);
@@ -1808,6 +1831,21 @@ HWND FindAdvancedTestWindow(const wchar_t* class_name) {
     return context.window;
 }
 
+// Hit ids from advanced_search_dialog.cpp (kHit*); fields answer 1000+.
+constexpr int kAdvHitWholeWord = 11, kAdvHitClear = 13, kAdvHitMore = 20, kAdvHitMode = 40,
+              kAdvHitNameHow = 500, kAdvFieldExts = 1001, kAdvFieldExclude = 1002;
+constexpr int kAdvPadding = 0x10000;
+
+// Where the dialog lays out target `id` (client px), via its selftest hook.
+bool AdvancedHitPoint(HWND dialog, int id, POINT* point) {
+    static const UINT message = RegisterWindowMessageW(L"Pulse.Test.AdvancedHitCenter");
+    const LRESULT at = SendMessageW(dialog, message, static_cast<WPARAM>(id), 0);
+    if (at == -1 || at == 0) return false;
+    point->x = static_cast<short>(LOWORD(static_cast<DWORD_PTR>(at)));
+    point->y = static_cast<short>(HIWORD(static_cast<DWORD_PTR>(at)));
+    return true;
+}
+
 void CALLBACK AdvancedTestTimer(HWND, UINT, UINT_PTR timer, DWORD) {
     if (++advanced_test_ticks > 150) {
         if (advanced_test_window) PostMessageW(advanced_test_window, WM_CLOSE, 0, 0);
@@ -1816,13 +1854,13 @@ void CALLBACK AdvancedTestTimer(HWND, UINT, UINT_PTR timer, DWORD) {
     }
     HWND dialog = FindAdvancedTestWindow(L"PulseAdvancedSearchWindow");
     if (!dialog) return;
-    RECT rect{};
-    GetClientRect(dialog, &rect);
-    const float scale = rect.right / 560.0f;
-    auto click = [&](float x, float y) {
-        const LPARAM pt = MAKELPARAM(static_cast<int>(x * scale), static_cast<int>(y * scale));
+    auto click = [&](int id) {
+        POINT at{};
+        if (!AdvancedHitPoint(dialog, id, &at)) return false;
+        const LPARAM pt = MAKELPARAM(at.x, at.y);
         PostMessageW(dialog, WM_LBUTTONDOWN, MK_LBUTTON, pt);
         PostMessageW(dialog, WM_LBUTTONUP, 0, pt);
+        return true;
     };
     if (advanced_test_stage == 0) {
         advanced_test_window = dialog;
@@ -1845,27 +1883,22 @@ void CALLBACK AdvancedTestTimer(HWND, UINT, UINT_PTR timer, DWORD) {
             PostMessageW(dialog, WM_CLOSE, 0, 0);
             KillTimer(nullptr, timer);
         } else if (advanced_test_mode == 1) {
-            advanced_test_stage = 2;
-            click(450, 84);
-        } else {
-            click(70, 468);
-            advanced_test_stage = 4;
+            if (click(kAdvHitMore)) advanced_test_stage = 2;
+        } else if (advanced_test_mode == 2) {
+            if (click(kAdvHitClear)) advanced_test_stage = 4;
+        } else if (click(kAdvHitMode + 1)) {
+            advanced_test_stage = 3;
         }
         return;
     }
     if (advanced_test_stage == 2) {
-        HWND menu = FindAdvancedTestWindow(L"PulseFluentMenu");
-        if (!menu || !IsWindowVisible(menu)) return;
-        PostMessageW(menu, WM_KEYDOWN, VK_DOWN, 0);
-        PostMessageW(menu, WM_KEYDOWN, VK_RETURN, 0);
-        advanced_test_stage = 3;
+        // 更多选项 is open: "starts with".
+        if (click(kAdvHitNameHow + 1)) advanced_test_stage = 4;
         return;
     }
     if (advanced_test_stage == 3) {
-        HWND menu = FindAdvancedTestWindow(L"PulseFluentMenu");
-        if (menu && IsWindowVisible(menu)) return;
-        click(80, 368);
-        advanced_test_stage = 4;
+        // Content mode carries 全字 inside the keyword box.
+        if (click(kAdvHitWholeWord)) advanced_test_stage = 4;
         return;
     }
     PostMessageW(dialog, WM_COMMAND, IDOK, 0);
@@ -1874,7 +1907,7 @@ void CALLBACK AdvancedTestTimer(HWND, UINT, UINT_PTR timer, DWORD) {
 
 void TestAdvancedSearchDialog() {
     const auto language = l10n::preference();
-    for (int mode = 0; mode < 3; ++mode) {
+    for (int mode = 0; mode < 4; ++mode) {
         l10n::SetLanguage(mode == 2 ? L"en-US" : l10n::LanguageId(language));
         advanced_test_mode = mode;
         advanced_test_ticks = advanced_test_stage = 0;
@@ -1889,31 +1922,53 @@ void TestAdvancedSearchDialog() {
         const auto result = ui::ShowAdvancedSearchDialog(nullptr, spec, mode != 2, D2D1::ColorF(0x0078d4));
         KillTimer(nullptr, timer);
         Check(advanced_hidden_on_destroy, L"advanced search: cold and repeat close hide before surface teardown");
+        const auto parsed = ParseSearchQuery(result.query);
         if (mode == 0) Check(!result.accepted, L"advanced search: close cancels without executing");
         else if (mode == 1) {
-            const auto parsed = ParseSearchQuery(result.query);
-            Check(result.accepted && parsed.whole_word && result.query.find(L"show*") != std::wstring::npos,
-                  L"advanced search: dropdown selection and checkbox compile into search");
-        } else Check(result.accepted && result.query.empty(), L"advanced search: clear all resets conditions");
+            Check(result.accepted && result.query.find(L"show*") != std::wstring::npos && !parsed.whole_word,
+                  L"advanced search: starts-with pill compiles into search");
+        } else if (mode == 2) {
+            // 清空 keeps the folder the dialog was opened for.
+            Check(result.accepted && result.query.find(L"show") == std::wstring::npos &&
+                      result.query.find(L"path:") != std::wstring::npos,
+                  L"advanced search: clear all resets conditions but keeps the current folder");
+        } else {
+            Check(result.accepted && parsed.whole_word && result.query.find(L"show") != std::wstring::npos,
+                  L"advanced search: content mode and whole word compile into search");
+        }
     }
     l10n::SetLanguage(l10n::LanguageId(language));
 }
+
+int advanced_edit_stage = 0;
 
 // No image capture: exercise the actual dialog's mouse target and editing path.
 void CALLBACK AdvancedEditClickTimer(HWND, UINT, UINT_PTR timer, DWORD) {
     HWND dialog = FindAdvancedTestWindow(L"PulseAdvancedSearchWindow");
     if (!dialog) return;
+    if (advanced_edit_stage == 0) {
+        // The extension and exclude fields live under 更多选项.
+        POINT more{};
+        if (!AdvancedHitPoint(dialog, kAdvHitMore, &more)) return;
+        PostMessageW(dialog, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(more.x, more.y));
+        PostMessageW(dialog, WM_LBUTTONUP, 0, MAKELPARAM(more.x, more.y));
+        advanced_edit_stage = 1;
+        return;
+    }
+    POINT probe{};
+    if (!AdvancedHitPoint(dialog, kAdvFieldExclude, &probe)) return;
     KillTimer(nullptr, timer);
-    RECT rc{};
-    GetClientRect(dialog, &rc);
-    const float scale = rc.right / 560.0f;
-    for (float y : {264.0f, 324.0f}) {
-        for (float x : {140.0f, 22.0f}) {
-            POINT point{static_cast<int>(x * scale), static_cast<int>(y * scale)};
+    for (int field : {kAdvFieldExts, kAdvFieldExclude}) {
+        for (int where : {0, kAdvPadding}) {
+            POINT point{};
+            const bool laid_out = AdvancedHitPoint(dialog, field | where, &point);
+            Check(laid_out, L"advanced edit: field is laid out under more options");
+            if (!laid_out) continue;
+            const LONG y = point.y;
             // Query this dialog's child tree without depending on other apps' Z order.
             HWND target = ChildWindowFromPointEx(dialog, point,
                 CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT);
-            if (x == 140.0f) Check(IsChild(dialog, target),
+            if (where == 0) Check(IsChild(dialog, target),
                 L"advanced edit: empty unfocused field has a hittable child surface");
             Check(target == dialog || IsChild(dialog, target), L"advanced edit: click targets dialog or its child");
             if (target != dialog && !IsChild(dialog, target)) continue;
@@ -1927,8 +1982,8 @@ void CALLBACK AdvancedEditClickTimer(HWND, UINT, UINT_PTR timer, DWORD) {
             RECT bounds{};
             GetWindowRect(edit, &bounds);
             MapWindowPoints(nullptr, dialog, reinterpret_cast<POINT*>(&bounds), 2);
-            Check(bounds.top < y * scale && bounds.bottom > y * scale,
-                  L"advanced edit: correct content or exclusion field receives focus");
+            Check(bounds.top < y && bounds.bottom > y,
+                  L"advanced edit: correct extension or exclusion field receives focus");
             SendMessageW(edit, WM_LBUTTONUP, 0, 0);
             SendMessageW(edit, WM_CHAR, L'中', 0);
             Check(GetWindowTextLengthW(edit) > 0, L"advanced edit: clicked field accepts Unicode input");
@@ -1942,6 +1997,7 @@ void TestAdvancedEditClicks() {
     for (bool dark : {true, false}) {
         AdvancedSearchSpec spec;
         spec.name = L"showbox";
+        advanced_edit_stage = 0;
         const UINT_PTR timer = SetTimer(nullptr, 0, 150, AdvancedEditClickTimer);
         Check(timer != 0, L"advanced edit: create click fixture");
         if (!timer) return;
@@ -2081,7 +2137,7 @@ void TestMenuModel() {
     Check(folder_items.size() == 10, L"menu: folder item menu adds 在新标签打开");
     Check(folder_items.size() > 3 &&
           folder_items[2].command == CmdOpenInNewTab &&
-          folder_items[2].text == L"在新标签打开" &&
+          folder_items[2].text == L"在新标签页打开" &&
           folder_items[3].command == CmdCopyPath,
           L"menu: 在新标签打开 sits before 复制路径");
     Check(!items.back().enabled, L"menu: undo disabled without a stack");
@@ -2180,7 +2236,7 @@ void TestMenuModel() {
         {L"C:\\Users\\TestUser\\.codex", L".codex", true},
         {L"C:\\Users\\TestUser\\plugins\\.codex-plugin", L".codex-plugin", true}
     };
-    auto path_items = BuildCommandPalette(L".codex", {}, path_hits, false, path_hits.size());
+    auto path_items = BuildCommandPalette(L".codex", {}, {}, path_hits, false, path_hits.size());
     Check(path_items.size() >= 3 && path_items[0].shortcut_inline &&
           path_items[1].shortcut_inline && !path_items.back().shortcut_inline,
           L"menu: search paths use inline captions, result count remains trailing");
@@ -2239,9 +2295,10 @@ void TestMenuModel() {
     options.sort_direction = ui::SortDirection::Desc;
     options.details_panel = true;
     AppendBackgroundViewCommands(bg, options);
-    // Real folders end the view submenu with "apply to all folders".
-    Check(bg[0].children.size() == 10 && bg[0].children[1].radio &&
-          bg[0].children[8].command == CmdDetailsPanel && bg[0].children[8].checked &&
+    // Real folders end the view submenu with "apply to all folders"; 照片墙
+    // follows the eight view modes.
+    Check(bg[0].children.size() == 11 && bg[0].children[1].radio &&
+          bg[0].children[9].command == CmdDetailsPanel && bg[0].children[9].checked &&
           bg[0].children.back().command == CmdApplyViewToAllFolders,
           L"menu: background reflects view and details pane");
     const auto& sort = bg[1].children;
@@ -2298,6 +2355,9 @@ void TestShellMenuMerge() {
     Check(ipc::IsBuiltinContextVerb(L"Open", false), L"shellmenu: open filtered");
     Check(ipc::IsBuiltinContextVerb(L"copyaspath", false), L"shellmenu: copyaspath filtered");
     Check(ipc::IsBuiltinContextVerb(L"pintohome", false), L"shellmenu: pintohome filtered");
+    Check(!ipc::IsBuiltinContextVerb(L"PinToStartScreen", false) &&
+          !ipc::IsBuiltinContextVerb(L"pintostart", false),
+          L"shellmenu: 固定到开始 kept (Pulse has no row for it)");
     Check(!ipc::IsBuiltinContextVerb(L"MergePdf", false), L"shellmenu: third-party verb kept");
     Check(!ipc::IsBuiltinContextVerb(L"refresh", false), L"shellmenu: refresh only filtered on background");
     Check(ipc::IsBuiltinContextVerb(L"refresh", true), L"shellmenu: background refresh filtered");
@@ -2461,6 +2521,10 @@ void TestContextMenuPrefs() {
 
     ContextMenuPrefs prefs;
     prefs.persist = false;
+    // The fixtures below run with 发送到 and the system verbs switched off;
+    // the defaults (Explorer parity, everything on) are asserted separately.
+    prefs.SetGroupEnabled(ipc::CtxMenuGroup::Share, false);
+    prefs.SetGroupEnabled(ipc::CtxMenuGroup::System, false);
 
     ShellMenuEntry sendto;
     sendto.text = L"发送到";
@@ -2493,12 +2557,45 @@ void TestContextMenuPrefs() {
             if (e.text == text) return true;
         return false;
     };
-    // Explorer keeps 软件功能 / 打开方式 / 打印 and hides 发送到 plus the system
-    // verbs; the settings page turns those two groups on when the user wants them.
     Check(!has(L"发送到") && !has(L"设置为桌面背景") && !has(L"向右旋转"),
-          L"prefs: defaults hide share / wallpaper / rotate");
+          L"prefs: switched-off groups hide share / wallpaper / rotate");
     Check(has(L"Bandizip") && has(L"合并 PDF") && has(L"打印"),
-          L"prefs: defaults keep vendor flyout, type verb, print");
+          L"prefs: other groups keep vendor flyout, type verb, print");
+    {
+        // Pulse's menu must never be shorter than Explorer's: by default every
+        // group Explorer's classic menu shows is on.
+        ContextMenuPrefs defaults;
+        defaults.persist = false;
+        const auto native = ApplyExplorerPrefs(defaults, raw);
+        auto shown = [&](std::wstring_view text) {
+            for (const auto& e : native)
+                if (e.text == text) return true;
+            return false;
+        };
+        Check(shown(L"发送到") && shown(L"设置为桌面背景") && shown(L"向右旋转") &&
+              shown(L"Bandizip") && shown(L"打印"),
+              L"prefs: defaults show every Explorer group (发送到 / wallpaper / rotate)");
+        ContextMenuPrefs reset;
+        reset.persist = false;
+        reset.SetGroupEnabled(ipc::CtxMenuGroup::Share, false);
+        reset.ResetToDefaults();
+        Check(reset.share && reset.GroupEnabled(ipc::CtxMenuGroup::System) && !reset.open_with_com,
+              L"prefs: restore defaults turns 发送到 and the system group back on");
+        // Files written before version 3 stored the old off defaults.
+        ContextMenuPrefs old_file;
+        old_file.persist = false;
+        Check(old_file.FromJson(L"{\"version\":2,\"categories\":{\"share\":false,\"rotate\":false,"
+                                L"\"system_extra\":false,\"print\":false}}") &&
+              old_file.share && old_file.rotate && old_file.system_extra && !old_file.print &&
+              old_file.migrated,
+              L"prefs: version 2 files turn 发送到 / system groups on once, keep other switches");
+        ContextMenuPrefs current_file;
+        current_file.persist = false;
+        Check(current_file.FromJson(L"{\"version\":3,\"categories\":{\"share\":false,\"rotate\":false}}") &&
+              !current_file.share && !current_file.rotate && current_file.wallpaper &&
+              !current_file.migrated,
+              L"prefs: version 3 files keep a group the user switched off");
+    }
     ContextMenuPrefs with_share;
     with_share.persist = false;
     with_share.SetGroupEnabled(ipc::CtxMenuGroup::Share, true);
@@ -2660,7 +2757,7 @@ void TestContextMenuPrefs() {
           L"prefs: slow COM stats round-trip");
 
     loaded.ResetToDefaults();
-    Check(loaded.seen.empty() && loaded.item_enabled.empty() && !loaded.share,
+    Check(loaded.seen.empty() && loaded.item_enabled.empty() && loaded.share,
           L"prefs: restore defaults clears seen and overrides");
     ContextMenuPrefs old_cap;
     old_cap.persist = false;
@@ -3040,6 +3137,135 @@ void TestBloomAccentGeometry() {
           L"bloom: pastel and saturated dots differ");
 }
 
+void TestTreeGuides() {
+    // 树状引线: a / b(open) / b1, b2(open) / b21 / b3, then c; and a
+    // placeholder row under an open folder counts as its child.
+    ui::DetailsTreeRows t;
+    const auto add = [&](uint16_t depth, bool open, ui::TreeRowKind kind = ui::TreeRowKind::Entry) {
+        ui::DetailsTreeRow r;
+        r.depth = depth; r.kind = kind; r.expandable = open; r.expanded = open;
+        t.rows.push_back(r);
+    };
+    add(0, false); add(0, true); add(1, false); add(1, true); add(2, false); add(1, false); add(0, false);
+    const ui::TreeGuides all = ui::BuildTreeGuides(t, 0, 6, -1);
+    Check(all.rows.size() == 7 && all.rows[0].join < 0 && all.rows[1].join < 0 && all.rows[6].join < 0,
+          L"tree guides: top-level rows join no line");
+    Check(all.rows[2].join == 0 && !all.rows[2].last && all.rows[3].join == 0 && !all.rows[3].last &&
+          all.rows[5].join == 0 && all.rows[5].last,
+          L"tree guides: children tick into their folder's line, the last one ends it in an elbow");
+    Check(all.rows[4].join == 1 && all.rows[4].last && all.rows[4].through == 1u,
+          L"tree guides: a grandchild's own line ends while its grandparent's runs on past it");
+    const ui::TreeGuides top = ui::BuildTreeGuides(t, 0, 3, -1);
+    Check(top.rows.size() == 4 && !top.rows[3].last,
+          L"tree guides: a line continues past the last visible row when more children follow");
+    const ui::TreeGuides mid = ui::BuildTreeGuides(t, 4, 5, -1);
+    Check(mid.rows[0].through == 1u && mid.rows[1].last,
+          L"tree guides: rows scrolled into the middle still know their ancestors' lines");
+    const ui::TreeGuides hi = ui::BuildTreeGuides(t, 0, 6, 4);
+    Check(hi.hi_level == 1 && hi.hi_first == 4 && hi.hi_last == 4 && hi.Highlighted(4, 1) &&
+          !hi.Highlighted(4, 0) && !hi.Highlighted(2, 0),
+          L"tree guides: the focus row's folder line is the highlighted one");
+    const ui::TreeGuides hi2 = ui::BuildTreeGuides(t, 0, 6, 2);
+    Check(hi2.hi_level == 0 && hi2.hi_first == 2 && hi2.hi_last == 5 && hi2.Highlighted(4, 0),
+          L"tree guides: highlighting a folder line covers its whole subtree");
+    Check(ui::BuildTreeGuides(t, 0, 6, 1).hi_level < 0 && ui::BuildTreeGuides(t, 0, 6, -1).hi_level < 0,
+          L"tree guides: a top-level or missing focus row highlights nothing");
+    add(1, false, ui::TreeRowKind::Loading);
+    t.rows[6].expandable = t.rows[6].expanded = true;
+    const ui::TreeGuides ph = ui::BuildTreeGuides(t, 6, 7, -1);
+    Check(ph.rows[1].join == 0 && ph.rows[1].last, L"tree guides: a loading row joins its folder's line");
+}
+
+void TestTreeSticky() {
+    // 滚动时固定上级: A(open) / a1(open) / a11, a12 / a2, then B; rows 10 high.
+    ui::DetailsTreeRows t;
+    const auto add = [&](uint16_t depth, bool open) {
+        ui::DetailsTreeRow r;
+        r.depth = depth; r.expandable = open; r.expanded = open;
+        t.rows.push_back(r);
+    };
+    add(0, true); add(1, true); add(2, false); add(2, false); add(1, false); add(0, false);
+    const auto pins = [&](float scroll, int max_rows = ui::kTreeStickyMaxRows) {
+        const int last = static_cast<int>(t.rows.size()) - 1;
+        return ui::PinnedTreeRows(t, 10.0f, max_rows,
+            [&](int row) { return static_cast<float>(row) * 10.0f - scroll; },
+            [&](float y) {
+                for (int i = 0; i <= last; ++i)
+                    if (static_cast<float>(i) * 10.0f - scroll + 10.0f > y) return i;
+                return last;
+            });
+    };
+    Check(pins(0.0f).empty(), L"tree sticky: nothing pins while the folder row is still in place");
+    const auto p5 = pins(5.0f);
+    Check(p5.size() == 2 && p5[0].row == 0 && p5[0].y == 0.0f && p5[1].row == 1 && p5[1].y == 10.0f,
+          L"tree sticky: an open folder pins once its row goes under the top, and so does a child the pin covers");
+    const auto p25 = pins(25.0f);
+    Check(p25.size() == 2 && p25[0].row == 0 && p25[0].y == 0.0f && p25[1].row == 1 && p25[1].y == 5.0f,
+          L"tree sticky: a nested folder pins below its parent and the next sibling pushes it up");
+    const auto p45 = pins(45.0f);
+    Check(p45.size() == 1 && p45[0].row == 0 && p45[0].y == -5.0f,
+          L"tree sticky: the next top-level folder pushes the last pin out");
+    Check(pins(25.0f, 1).size() == 1 && pins(60.0f).empty(),
+          L"tree sticky: at most max_rows pins, none once the subtree has passed");
+    t.rows[0].expanded = false;
+    Check(pins(5.0f).empty(), L"tree sticky: only open folders pin");
+}
+
+void TestLayerAlphas() {
+    // 侧边栏与标题栏 over DWM Acrylic / Mica (backdrop on, not drawn by Pulse).
+    const auto close_to = [](float a, float b) { return std::fabs(a - b) < 1e-4f; };
+    const auto old_layers = [](bool dark, int look, float& title, float& sheet, float& card) {
+        static constexpr float kScale[5] = {1.40f, 1.20f, 1.0f, 0.80f, 0.60f};
+        const float k = ui::LerpStops(static_cast<float>(look) / 100.0f, kScale);
+        title = dark ? 0.72f : 0.78f;
+        sheet = (std::min)(1.0f, (dark ? 0.55f : 0.60f) * k);
+        card = (std::min)(1.0f, (dark ? 0.72f : 0.78f) * k);
+    };
+    bool same = true, mixed = true;
+    for (int dark = 0; dark < 2; ++dark) {
+        for (int look = 0; look <= 60; ++look) {
+            float t = 0, sh = 0, c = 0;
+            old_layers(dark != 0, look, t, sh, c);
+            const ui::LayerAlphas a = ui::ComputeLayerAlphas(false, false, true, dark != 0, look, 14, 10);
+            same = same && close_to(a.title, t) && close_to(a.sheet, sh) && close_to(a.card, c);
+            const float stacked = 1.0f - (1.0f - t) * (1.0f - sh) * (1.0f - c);
+            mixed = mixed && close_to(a.pane, stacked) &&
+                    close_to(a.pane_mix[0] + a.pane_mix[1] + a.pane_mix[2], stacked);
+        }
+    }
+    Check(same, L"layers: 侧边栏与标题栏 at 10 gives the old title, sheet and card up to 60");
+    Check(mixed, L"layers: a cut-through pane card has the old stacked opacity and colour weights");
+    const ui::LayerAlphas vivid = ui::ComputeLayerAlphas(false, false, true, false, 90, 14, 10);
+    Check(close_to(vivid.pane, 0.80f), L"layers: interface transparency 90 leaves the file list 80% opaque");
+    const auto side = [](const ui::LayerAlphas& a) { return 1.0f - (1.0f - a.title) * (1.0f - a.sheet); };
+    const ui::LayerAlphas solid = ui::ComputeLayerAlphas(false, false, true, false, 50, 14, 0);
+    Check(close_to(solid.title, 1.0f) && close_to(solid.sheet, 1.0f) && close_to(solid.card, 1.0f),
+          L"layers: 侧边栏与标题栏 0 is solid like no window effect (the active tab keeps its colour)");
+    bool clear = true;
+    for (int dark = 0; dark < 2; ++dark) {
+        const ui::LayerAlphas a = ui::ComputeLayerAlphas(false, false, true, dark != 0, 50, 14, 100);
+        clear = clear && close_to(a.title, 0.0f) && close_to(side(a), 0.30f) && a.sheet > 0.25f;
+    }
+    Check(clear, L"layers: at 100 the title strip is the material and the sheet keeps 30% for the active tab");
+    bool falling = true;
+    float last_side = 2.0f;
+    for (int v = 0; v <= 100; v += 5) {
+        const ui::LayerAlphas a = ui::ComputeLayerAlphas(false, false, true, false, 60, 14, v);
+        const float content = 1.0f - (1.0f - side(a)) * (1.0f - a.card);
+        falling = falling && side(a) <= last_side + 1e-5f && a.title <= side(a) + 1e-5f &&
+                  content >= a.pane - 1e-4f &&
+                  close_to(a.pane, ui::ComputeLayerAlphas(false, false, true, false, 60, 14, 10).pane);
+        last_side = side(a);
+    }
+    Check(falling, L"layers: the sidebar clears steadily; the file list and Settings cards never get thinner");
+    const ui::LayerAlphas image = ui::ComputeLayerAlphas(true, true, true, false, 50, 14, 100);
+    const ui::LayerAlphas image10 = ui::ComputeLayerAlphas(true, true, true, false, 50, 14, 10);
+    const ui::LayerAlphas drawn = ui::ComputeLayerAlphas(false, true, true, false, 50, 14, 100);
+    Check(close_to(image.title, image10.title) && close_to(image.sheet, image10.sheet) && image.pane < 0.0f &&
+              drawn.pane < 0.0f,
+          L"layers: a background image ignores 侧边栏与标题栏; a sampled material never cuts through");
+}
+
 void TestBloomSpring() {
     auto run = [](float from, float to, float k, float d, float& peak, float& lo, float& end) {
         float v = from;
@@ -3170,6 +3396,512 @@ bool SnapshotHasName(const fs::SnapshotPtr& snap, const wchar_t* name) {
     return false;
 }
 
+void TestViewZoomChain() {
+    using ui::ViewMode;
+    using ui::ZoomViewMode;
+    constexpr ViewMode Det = ViewMode::Details, Med = ViewMode::MediumIcons,
+        Lrg = ViewMode::LargeIcons, XL = ViewMode::ExtraLargeIcons;
+    Check(ZoomViewMode(Det, Med, 1) == Med && ZoomViewMode(Med, Med, 1) == Lrg &&
+          ZoomViewMode(Lrg, Med, 1) == XL && ZoomViewMode(XL, Med, 1) == XL,
+          L"view zoom: zooming in walks Details, medium, large, extra large and stops");
+    Check(ZoomViewMode(XL, Med, -1) == Lrg && ZoomViewMode(Lrg, Med, -1) == Med &&
+          ZoomViewMode(Med, Med, -1) == Det && ZoomViewMode(Det, Med, -1) == Det,
+          L"view zoom: zooming out returns to Details and stops (no tiles or content)");
+    Check(ZoomViewMode(Det, Lrg, 1) == Lrg && ZoomViewMode(Det, XL, 1) == XL && ZoomViewMode(Det, XL, 2) == XL,
+          L"view zoom: the first step out of Details returns to the last icon size");
+    Check(ZoomViewMode(Det, ViewMode::SmallIcons, 1) == Med && ZoomViewMode(Det, ViewMode::Tiles, 1) == Med,
+          L"view zoom: an off-chain last size falls back to medium icons");
+    for (ViewMode off : {ViewMode::List, ViewMode::SmallIcons, ViewMode::Tiles, ViewMode::Content}) {
+        Check(ZoomViewMode(off, Lrg, 1) == Lrg && ZoomViewMode(off, Lrg, -1) == Det &&
+              ZoomViewMode(off, Lrg, 0) == off,
+              L"view zoom: list, small icons, tiles and content join the chain at its ends");
+    }
+    Check(ZoomViewMode(Det, Med, 9) == XL && ZoomViewMode(XL, Med, -9) == Det,
+          L"view zoom: large steps clamp to the chain");
+    for (int i = 0; i < 8; ++i) {
+        const ViewMode mode = ui::ViewModeFromIndex(i);
+        Check(ui::IsZoomIconMode(mode) == (mode == Med || mode == Lrg || mode == XL),
+              L"view zoom: only medium, large and extra large are chain icon sizes");
+    }
+}
+
+void TestContinuousIconSize() {
+    using ui::ViewMode;
+    using ui::ZoomIconDip;
+    std::vector<float> up;
+    for (float dip = ui::kMinIconDip; up.size() < 24 && dip < ui::kMaxIconDip;)
+        up.push_back(dip = ZoomIconDip(dip, 1, 1.0f));
+    const auto reaches = [&](float dip) { return std::find(up.begin(), up.end(), dip) != up.end(); };
+    Check(reaches(48.0f) && reaches(96.0f) && reaches(240.0f) && !up.empty() &&
+          up.back() == ui::kMaxIconDip && up.size() == 14,
+          (L"icon size: zooming in stops on each preset and ends at 256 DIP (" +
+           std::to_wstring(up.size()) + L" notches)").c_str());
+    Check(ZoomIconDip(48.0f, 1, 1.0f) == 57.0f && ZoomIconDip(96.0f, -1, 1.0f) == 81.0f &&
+          ZoomIconDip(136.0f, 1, 1.5f) == 160.0f && ZoomIconDip(100.0f, -1, 1.0f) == 96.0f,
+          L"icon size: a notch is 2^(1/4) and stops on presets (extra large in device pixels)");
+    Check(ZoomIconDip(ui::kMinIconDip, -1, 1.0f) == 0.0f && ZoomIconDip(34.0f, -1, 1.0f) == ui::kMinIconDip &&
+          ZoomIconDip(ui::kMaxIconDip, 1, 1.0f) == ui::kMaxIconDip,
+          L"icon size: zooming clamps to 32..256 DIP and leaves for Details below 32");
+    Check(ui::IconModeForDip(57.0f, 1.0f) == ViewMode::MediumIcons &&
+          ui::IconModeForDip(68.0f, 1.0f) == ViewMode::LargeIcons &&
+          ui::IconModeForDip(151.0f, 1.0f) == ViewMode::LargeIcons &&
+          ui::IconModeForDip(152.0f, 1.0f) == ViewMode::ExtraLargeIcons &&
+          ui::IconModeForDip(130.0f, 3.0f) == ViewMode::ExtraLargeIcons,
+          L"icon size: a size belongs to the nearest preset on a log scale");
+    Check(ui::NormalizeIconDip(ViewMode::LargeIcons, 96.0f, 1.0f) == 0.0f &&
+          ui::NormalizeIconDip(ViewMode::ExtraLargeIcons, 160.0f, 1.5f) == 0.0f &&
+          ui::NormalizeIconDip(ViewMode::LargeIcons, 114.2f, 1.0f) == 114.0f &&
+          ui::NormalizeIconDip(ViewMode::Details, 114.0f, 1.0f) == 0.0f &&
+          ui::NormalizeIconDip(ViewMode::MediumIcons, 10.0f, 1.0f) == ui::kMinIconDip,
+          L"icon size: presets are stored as 0, custom sizes as whole DIP in range");
+
+    const D2D1_RECT_F viewport = D2D1::RectF(0.0f, 0.0f, 1000.0f, 700.0f);
+    const float block = ui::IconGridNameBlockDip(2);
+    auto metrics = [&](ViewMode mode, float dip) {
+        return ui::ViewLayout(mode, viewport, 200, 0.0f, 0.0f, 1.0f, ui::ViewLayoutParams(block, dip)).Metrics();
+    };
+    const auto large = metrics(ViewMode::LargeIcons, 0.0f), large96 = metrics(ViewMode::LargeIcons, 96.0f);
+    const auto xl = metrics(ViewMode::ExtraLargeIcons, 0.0f), xl240 = metrics(ViewMode::ExtraLargeIcons, 240.0f);
+    const auto custom = metrics(ViewMode::LargeIcons, 120.0f);
+    Check(large96.cell_width == large.cell_width && large96.cell_height == large.cell_height &&
+          xl240.cell_width == xl.cell_width && xl240.slot_height == xl.slot_height,
+          L"icon size: a custom size equal to a preset lays out like the preset");
+    Check(custom.icon_size == 120.0f && custom.slot_height > 110.0f && custom.slot_height < 120.0f &&
+          custom.columns < large.columns && custom.columns > xl.columns,
+          (L"icon size: a size between presets has its own slot and columns (" +
+           std::to_wstring(custom.columns) + L" columns)").c_str());
+    Check(ui::IconGridNameWidth(ViewMode::LargeIcons, 1.0f, 120.0f) >
+          ui::IconGridNameWidth(ViewMode::LargeIcons, 1.0f) &&
+          ui::IconGridNameWidth(ViewMode::LargeIcons, 1.0f, 96.0f) ==
+          ui::IconGridNameWidth(ViewMode::LargeIcons, 1.0f),
+          L"icon size: names wrap at the custom size's cell width");
+
+    AppPrefs prefs;
+    prefs.persist = false;
+    prefs.folder_views.Set(L"C:\\Photos", ViewMode::LargeIcons);
+    Check(prefs.folder_views.SetIconDip(L"C:\\Photos", 136.0f) &&
+          !prefs.folder_views.SetIconDip(L"c:/photos/", 136.0f) &&
+          prefs.folder_views.SetIconDip(L"", 57.0f) &&
+          !prefs.folder_views.SetIconDip(L"pulse:settings", 57.0f),
+          L"icon size: folders and This PC keep a size, virtual views do not");
+    AppPrefs reloaded;
+    reloaded.persist = false;
+    reloaded.FromJson(prefs.ToJson());
+    Check(reloaded.folder_views.FindIconDip(L"C:\\PHOTOS\\") == 136.0f &&
+          reloaded.folder_views.FindIconDip(L"") == 57.0f &&
+          reloaded.folder_views.Find(L"C:\\Photos") == ViewMode::LargeIcons,
+          L"icon size: sizes survive reload next to the view modes");
+    reloaded.FromJson(L"{\"folder_icon_dip\":[\"x|C:\\\\Bad\",\"120\",\"|C:\\\\Empty\",\"9999|C:\\\\Big\"]}");
+    Check(!reloaded.folder_views.FindIconDip(L"C:\\Bad") && !reloaded.folder_views.FindIconDip(L"C:\\Empty") &&
+          !reloaded.folder_views.FindIconDip(L"C:\\Big") && !reloaded.folder_views.FindIconDip(L"C:\\Photos"),
+          L"icon size: malformed saved sizes are ignored");
+    Check(prefs.folder_views.SetIconDip(L"C:\\Photos", 0.0f) && !prefs.folder_views.FindIconDip(L"C:\\Photos"),
+          L"icon size: 0 forgets a folder's size");
+    prefs.folder_views.SetIconDip(L"C:\\Photos", 136.0f);
+    prefs.folder_views.ApplyToAll(ViewMode::Details);
+    Check(!prefs.folder_views.FindIconDip(L"C:\\Photos") && prefs.folder_views.FindIconDip(L"") == 57.0f,
+          L"icon size: apply to all folders drops folder sizes, This PC keeps its own");
+    // Photo wall (P2b): kept for folders and This PC like the sizes.
+    Check(prefs.folder_views.SetWall(L"C:\\Photos", true) && !prefs.folder_views.SetWall(L"c:/photos/", true) &&
+          prefs.folder_views.SetWall(L"", true) && !prefs.folder_views.SetWall(L"pulse:settings", true),
+          L"photo wall: folders and This PC keep it, virtual views do not");
+    reloaded.FromJson(prefs.ToJson());
+    Check(reloaded.folder_views.FindWall(L"C:\\PHOTOS\\") && reloaded.folder_views.FindWall(L"") &&
+          !reloaded.folder_views.FindWall(L"C:\\Other"),
+          L"photo wall: survives reload next to the view modes");
+    Check(prefs.folder_views.SetWall(L"C:\\Photos", false) && !prefs.folder_views.FindWall(L"C:\\Photos") &&
+          !prefs.folder_views.SetWall(L"C:\\Photos", false),
+          L"photo wall: turning it off forgets the folder's choice");
+    prefs.folder_views.SetWall(L"C:\\Photos", true);
+    prefs.folder_views.ApplyToAll(ViewMode::Details);
+    Check(!prefs.folder_views.FindWall(L"C:\\Photos") && prefs.folder_views.FindWall(L""),
+          L"photo wall: apply to all folders drops folder choices, This PC keeps its own");
+    prefs.ResetToDefaults();
+    Check(!prefs.folder_views.FindIconDip(L""), L"icon size: reset clears saved sizes");
+    Check(!prefs.folder_views.FindWall(L""), L"photo wall: reset clears it");
+}
+
+void TestWallRows() {
+    // Justified rows: full rows fill the width, the last keeps its height.
+    std::vector<float> aspects(37, 1.5f);
+    aspects[5] = 0.0f;   // not known yet: 4:3
+    aspects[9] = 0.6f;   // portrait
+    aspects[20] = 12.0f; // panorama, capped
+    const float width = 1000.0f, row = 100.0f, scale = 1.0f;
+    const ui::WallRows wall = ui::BuildWallRows(aspects, width, row, scale);
+    bool filled = true, heights = true;
+    for (size_t r = 0; r + 1 < wall.RowCount(); ++r) {
+        const int last = wall.row_first[r + 1] - 1;
+        filled = filled && std::fabs(wall.x[static_cast<size_t>(last)] + wall.w[static_cast<size_t>(last)] - (width - 8.0f)) < 0.5f;
+        heights = heights && wall.row_h[r] <= row + 0.01f && wall.row_h[r] > row * 0.45f;
+    }
+    Check(wall.RowCount() > 3 && wall.row_first.back() == 37 && filled && heights,
+          (L"photo wall: full rows fill the width at about the row height (" + std::to_wstring(wall.RowCount()) +
+           L" rows)").c_str());
+    const ui::WallRows one = ui::BuildWallRows(std::vector<float>(1, 0.0f), width, row, scale);
+    Check(one.RowCount() == 1 && std::fabs(one.row_h[0] - row) < 0.01f && std::fabs(one.w[0] - row * 4.0f / 3.0f) < 0.01f,
+          L"photo wall: a short last row keeps the row height; unknown pictures are 4:3");
+    Check(wall.RowOf(0) == 0 && wall.RowOf(36) == static_cast<int>(wall.RowCount()) - 1 && wall.RowOf(37) == -1 &&
+              wall.RowAtY(wall.row_top[1] + 1.0f) == 1 && wall.RowAtY(0.0f) == -1,
+          L"photo wall: rows are found by index and by height");
+
+    // ViewLayout on the rows: rects, hit test, visible range, arrows.
+    const D2D1_RECT_F view = D2D1::RectF(0.0f, 0.0f, width, 300.0f);
+    ui::ViewLayoutParams params(0.0f, 96.0f);
+    params.wall = &wall;
+    const float scroll = wall.row_top[2];
+    const ui::ViewLayout layout(ui::ViewMode::LargeIcons, view, aspects.size(), 0.0f, scroll, scale, params);
+    bool rects = true, hits = true;
+    for (int i = 0; i < 37; ++i) {
+        const D2D1_RECT_F r = layout.ItemRect(i);
+        const size_t rr = static_cast<size_t>(wall.RowOf(i));
+        rects = rects && std::fabs(r.left - wall.x[static_cast<size_t>(i)]) < 0.01f &&
+                std::fabs(r.top - (wall.row_top[rr] - scroll)) < 0.01f;
+        if (r.bottom > view.top + 1.0f && r.top < view.bottom - 1.0f)
+            hits = hits && layout.HitTest((r.left + r.right) * 0.5f, std::clamp((r.top + r.bottom) * 0.5f,
+                                                                               view.top + 0.5f, view.bottom - 1.0f)) == i;
+    }
+    const D2D1_RECT_F a = layout.ItemRect(wall.row_first[2]);
+    const auto range = layout.VisibleRange();
+    const bool covers = range.first <= wall.row_first[2] &&
+                        range.second >= layout.HitTest(view.right - 9.0f, view.bottom - 2.0f);
+    Check(rects && hits && layout.HitTest(a.right + 3.0f, a.top + 5.0f) == -1 && covers &&
+              std::fabs(layout.ContentHeight() - wall.content_height) < 0.01f,
+          L"photo wall: items are hit where drawn, gaps hit nothing, the visible range covers the view");
+    const int from = wall.row_first[2] + 1;
+    const int down = layout.MoveIndex(from, 0, 1);
+    const float cx = wall.x[static_cast<size_t>(from)] + wall.w[static_cast<size_t>(from)] * 0.5f;
+    Check(wall.RowOf(down) == 3 && wall.x[static_cast<size_t>(down)] <= cx + 0.5f &&
+              wall.x[static_cast<size_t>(down)] + wall.w[static_cast<size_t>(down)] >= cx - 0.5f &&
+              layout.MoveIndex(from, 1, 0) == from + 1 && layout.MoveIndex(0, 0, -1) == 0,
+          L"photo wall: Down goes to the picture under the current one");
+
+    // Many items: built in one pass, ends where it should.
+    const ui::WallRows big = ui::BuildWallRows(std::vector<float>(100000, 1.33f), 1600.0f, 150.0f, 1.5f);
+    Check(big.row_first.back() == 100000 && big.RowCount() > 1000 &&
+              big.RowAtY(big.content_height - 20.0f) == static_cast<int>(big.RowCount()) - 1,
+          L"photo wall: 100000 pictures lay out in one pass");
+}
+
+void TestInlineRename() {
+    using ui::ViewMode;
+    auto state = std::make_unique<AppState>();
+    state->places.persist = false;
+    state->appPrefs.persist = false;
+    state->isolatedTest = true;
+    HWND hwnd = CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+        0, 0, 1000, 700, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(hwnd != nullptr, L"inline rename: isolated owner created");
+    if (!hwnd) return;
+    state->hwnd = hwnd;
+    if (state->compositor.Init(hwnd)) {
+        state->compositor.RecreateTextFormats(1.0f);
+        state->renderer.SetCompositor(&state->compositor);
+        state->window_tabs.NewTab(L"C:\\InlineRenameFixture");
+        state->pane = state->window_tabs.Active()->panes.front().get();
+        auto* tab = state->pane->ActiveTab();
+        std::wstring long_name;
+        for (int i = 0; i < 30; ++i) long_name += L"\x957F\x6587\x4EF6\x540D";  // 长文件名
+        long_name += L".jpg";
+        auto entries = std::make_shared<std::vector<fs::DirEntry>>(4);
+        (*entries)[0].name = long_name;
+        (*entries)[1].name = L"notes.txt";
+        (*entries)[2].name = L"report.docx";
+        (*entries)[3].name = L"invoice_0001234567_ACME_Corporation_May_2024.pdf";
+        tab->SetSnapshot(entries);
+        tab->view_mode = ViewMode::MediumIcons;
+
+        // Field geometry: two cells (280 dip at most), six lines, never narrower.
+        ui::WindowViewModel vm = BuildVm(*state);
+        const D2D1_RECT_F list = state->renderer.PaneListRect(vm.pane, FocusedPaneRect(*state));
+        const D2D1_RECT_F cell = state->renderer.ItemRectInPane(vm.pane, FocusedPaneRect(*state), vm.pane.ViewIndex(0));
+        const float cell_w = cell.right - cell.left;
+        const float max_w = std::min({2.0f * cell_w + 8.0f, std::max(cell_w, 280.0f), list.right - list.left});
+        const D2D1_RECT_F field = state->renderer.RenameFieldRect(vm.pane, list, 0);
+        const float field_w = field.right - field.left;
+        const float field_h = field.bottom - field.top;
+        Check(field_w > cell_w + 1.0f && field_w <= max_w + 1.0f && field_h > 80.0f && field_h <= 6.0f * 22.0f + 6.0f,
+              (L"inline rename: a long name gets up to two cells and six lines (" + std::to_wstring(field_w) +
+               L" x " + std::to_wstring(field_h) + L", cell " + std::to_wstring(cell_w) + L")").c_str());
+        const D2D1_RECT_F latin = state->renderer.RenameFieldRect(vm.pane, list, 3);
+        Check(latin.bottom - latin.top > 40.0f,
+              (L"inline rename: a long name without spaces wraps too (" + std::to_wstring(latin.right - latin.left) +
+               L" x " + std::to_wstring(latin.bottom - latin.top) + L")").c_str());
+        const D2D1_RECT_F short_field = state->renderer.RenameFieldRect(vm.pane, list, 1);
+        vm.pane.rename_index = 1;
+        vm.pane.rename_text = L"notes.txt";
+        vm.pane.rename_field_w = 250.0f;
+        const D2D1_RECT_F kept = state->renderer.RenameFieldRect(vm.pane, list, 1);
+        Check(short_field.right - short_field.left >= cell_w - 0.5f &&
+              std::fabs((kept.right - kept.left) - std::min(max_w, 250.0f)) <= 1.0f,
+              L"inline rename: the field starts at the cell width and does not narrow while typing");
+
+        // Keys: Tab relays, refused characters, the extension question.
+        tab->SelectOnly(1);
+        ShowRenameOverlay(*state);
+        Check(state->renameIndex == 1 && state->hwndRenameEdit != nullptr, L"inline rename: the field opens");
+        if (state->hwndRenameEdit) {
+            SendMessageW(state->hwndRenameEdit, WM_KEYDOWN, VK_TAB, 0);
+            Check(state->renameIndex == 2 && tab->selected_index == 2,
+                  L"inline rename: Tab commits and renames the next item");
+            HWND edit = state->hwndRenameEdit;
+            wchar_t buf[128]{};
+            SendMessageW(edit, WM_CHAR, L':', 1);
+            GetWindowTextW(edit, buf, ARRAYSIZE(buf));
+            Check(wcscmp(buf, L"report.docx") == 0 && !state->renameHint.empty() && state->renameHintUntil != 0,
+                  L"inline rename: a character a name cannot hold is refused with a hint");
+            SetWindowTextW(edit, L"report.pdf");
+            SendMessageW(edit, WM_KEYDOWN, VK_RETURN, 0);
+            const bool asked = state->renameIndex == 2 && state->renameConfirmExt && state->renameHintUntil == 0;
+            SendMessageW(edit, WM_KEYDOWN, VK_ESCAPE, 0);
+            DWORD from = 0, to = 0;
+            SendMessageW(edit, EM_GETSEL, reinterpret_cast<WPARAM>(&from), reinterpret_cast<LPARAM>(&to));
+            Check(asked && state->renameIndex == 2 && !state->renameConfirmExt && from == 7 && to == 10,
+                  (L"inline rename: a changed extension asks first; Esc goes back with the extension selected (" +
+                   std::to_wstring(from) + L".." + std::to_wstring(to) + L")").c_str());
+            SendMessageW(edit, WM_KEYDOWN, VK_RETURN, 0);
+            const bool asked_again = state->renameConfirmExt;
+            SendMessageW(edit, WM_CHAR, L'x', 1);
+            Check(asked_again && !state->renameConfirmExt && state->renameIndex == 2,
+                  L"inline rename: typing again drops the question");
+            SendMessageW(edit, WM_KEYDOWN, VK_RETURN, 0);
+            HideRenameOverlay(*state, true);  // focus lost with the question open
+            Check(state->renameIndex == -1 && tab->held_renames.empty(),
+                  L"inline rename: an unanswered extension question never commits");
+        }
+        if (state->hwndRenameEdit) DestroyWindow(state->hwndRenameEdit);
+        state->hwndRenameEdit = nullptr;
+    } else Check(false, L"inline rename: graphics initialized");
+    DestroyWindow(hwnd);
+    state->hwnd = nullptr;
+}
+
+void TestViewZoomAnchor() {
+    using ui::ViewMode;
+    auto state = std::make_unique<AppState>();
+    state->places.persist = false;
+    state->appPrefs.persist = false;
+    state->isolatedTest = true;
+    HWND hwnd = CreateWindowExW(0, L"STATIC", L"", WS_POPUP,
+        0, 0, 1000, 700, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(hwnd != nullptr, L"view anchor: isolated owner created");
+    if (!hwnd) return;
+    state->hwnd = hwnd;
+    if (state->compositor.Init(hwnd)) {
+        state->compositor.RecreateTextFormats(1.0f);
+        state->renderer.SetCompositor(&state->compositor);
+        state->window_tabs.NewTab(L"C:\\ZoomAnchorFixture");
+        state->pane = state->window_tabs.Active()->panes.front().get();
+        auto* tab = state->pane->ActiveTab();
+        auto entries = std::make_shared<std::vector<fs::DirEntry>>(400);
+        for (size_t i = 0; i < entries->size(); ++i)
+            (*entries)[i].name = L"photo_" + std::to_wstring(1000 + i) + L".jpg";
+        tab->SetSnapshot(entries);
+        tab->view_mode = ViewMode::Details;
+        const D2D1_RECT_F list = ListRect(*state);
+        auto rect_of = [&](int index) {
+            const auto vm = BuildVm(*state);
+            return state->renderer.ItemRectInPane(vm.pane, FocusedPaneRect(*state),
+                vm.pane.ViewIndex(index));
+        };
+        auto mid_y = [](const D2D1_RECT_F& r) { return (r.top + r.bottom) * 0.5f; };
+
+        tab->selected_index = 200;
+        EnsureRowVisible(*state, *tab, 200);
+        tab->scroll_y += (list.bottom - list.top) * 0.4f;  // focused row mid-screen
+        ClampScroll(*state);
+        const float details_y = mid_y(rect_of(200));
+        SetViewMode(*state, ViewMode::LargeIcons);
+        const D2D1_RECT_F large = rect_of(200);
+        Check(tab->scroll_y > 0.0f && std::fabs(mid_y(large) - details_y) <= 1.0f &&
+              large.top >= list.top && large.bottom <= list.bottom,
+              (L"view anchor: the focused item keeps its place when switching to icons (" +
+               std::to_wstring(details_y) + L" -> " + std::to_wstring(mid_y(large)) + L", item " +
+               std::to_wstring(large.top) + L".." + std::to_wstring(large.bottom) + L", list " +
+               std::to_wstring(list.top) + L".." + std::to_wstring(list.bottom) + L", scroll " +
+               std::to_wstring(tab->scroll_y) + L")").c_str());
+        SetViewMode(*state, ViewMode::Details);
+        Check(std::fabs(mid_y(rect_of(200)) - details_y) <= 1.0f,
+              (L"view anchor: switching back to Details returns the focused row to its place (" +
+               std::to_wstring(mid_y(rect_of(200))) + L")").c_str());
+
+        // Ctrl+wheel: the item under the pointer stays under it (rows, not columns).
+        const POINT pt{static_cast<LONG>(list.left + 40.0f), static_cast<LONG>(list.top + 60.0f)};
+        const int under = state->renderer.ItemFromPointInPane(BuildVm(*state).pane,
+            FocusedPaneRect(*state), static_cast<float>(pt.x), static_cast<float>(pt.y));
+        POINT screen = pt;
+        ClientToScreen(hwnd, &screen);
+        const LPARAM at = MAKELPARAM(screen.x, screen.y);
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(MK_CONTROL, WHEEL_DELTA), at);
+        const D2D1_RECT_F zoomed = rect_of(under);
+        const float py = static_cast<float>(pt.y);
+        Check(under >= 0 && under != 200 && tab->view_mode == ViewMode::LargeIcons &&
+              zoomed.top <= py && py < zoomed.bottom,
+              L"view anchor: Ctrl+wheel keeps the item under the pointer on the pointer's row");
+        state->zoomWheelTick = 0;
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(MK_CONTROL, WHEEL_DELTA / 2), at);
+        const bool half_waits = tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 0.0f;
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(MK_CONTROL, WHEEL_DELTA / 2), at);
+        Check(half_waits && tab->view_mode == ViewMode::LargeIcons &&
+              std::fabs(tab->icon_dip - 114.0f) < 0.5f,
+              (L"view zoom: touchpad half notches add up to one step (" +
+               std::to_wstring(tab->icon_dip) + L" DIP)").c_str());
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL,
+            MAKEWPARAM(MK_CONTROL, static_cast<WORD>(-3 * WHEEL_DELTA)), at);
+        Check(tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 0.0f,
+              L"view zoom: a fast spin moves one size per message");
+
+        // Continuous sizes: zooming out walks down to the smallest size, then
+        // Details; the first step back returns to that size, remembered per folder.
+        int notches = 0;
+        while (ui::IsZoomIconMode(tab->view_mode) && notches < 16) {
+            ZoomIconSize(*state, -1);
+            ++notches;
+        }
+        Check(tab->view_mode == ViewMode::Details && notches == 8 &&
+              tab->last_icon_mode == ViewMode::MediumIcons && tab->last_icon_dip == ui::kMinIconDip,
+              (L"icon size: zooming out stops at 32 DIP before Details (" +
+               std::to_wstring(notches) + L" notches)").c_str());
+        ZoomIconSize(*state, 1);
+        Check(tab->view_mode == ViewMode::MediumIcons && tab->icon_dip == ui::kMinIconDip &&
+              state->appPrefs.folder_views.FindIconDip(tab->current_path) == ui::kMinIconDip,
+              L"icon size: zooming in from Details returns to the last size, kept for the folder");
+        SetIconSize(*state, 150.0f);
+        SetViewMode(*state, ViewMode::Details);
+        ShowLastIconSize(*state);
+        Check(tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 150.0f,
+              L"icon size: the icon button returns to a custom size");
+        SetViewMode(*state, ViewMode::LargeIcons);
+        Check(tab->icon_dip == 0.0f && !state->appPrefs.folder_views.FindIconDip(tab->current_path),
+              L"icon size: choosing a size from the menu returns to its preset");
+
+        // Header size slider (P1e): icon views only; drag, plain wheel, double-click.
+        state->pane->header_animation.Tick(true, 1);
+        SetViewMode(*state, ViewMode::LargeIcons);
+        const ui::WindowViewModel hvm = BuildVm(*state);
+        const D2D1_RECT_F client = D2D1::RectF(0.0f, 0.0f, static_cast<float>(state->compositor.Width()),
+                                               static_cast<float>(state->compositor.Height()));
+        const ui::PaneViewModel& hpane = hvm.pane_slots.front().pane;
+        const D2D1_RECT_F hrect = hvm.pane_slots.front().rect;
+        const D2D1_RECT_F slider = state->renderer.PaneSizeSliderRect(hpane, hrect);
+        const float sy = (slider.top + slider.bottom) * 0.5f;
+        Check(slider.right - slider.left > 60.0f &&
+              state->renderer.HitTest(hvm, client, (slider.left + slider.right) * 0.5f, sy).region ==
+                  ui::HitTestResult::PaneSizeSlider &&
+              state->renderer.PaneSizeSliderValueAt(hpane, hrect, slider.left) == ui::kMinIconDip &&
+              state->renderer.PaneSizeSliderValueAt(hpane, hrect, slider.right) == ui::kMaxIconDip,
+              L"view header: icon views show a 32..256 DIP size slider in the pane header");
+        const auto client_at = [](float x, float y) {
+            return MAKELPARAM(static_cast<int>(x), static_cast<int>(y));
+        };
+        // Press where the slider reads about 110 DIP (the track's ends move with the design).
+        float press_x = slider.left;
+        for (float px = slider.left; px <= slider.right; px += 1.0f) {
+            if (std::fabs(state->renderer.PaneSizeSliderValueAt(hpane, hrect, px) - 110.0f) <
+                std::fabs(state->renderer.PaneSizeSliderValueAt(hpane, hrect, press_x) - 110.0f))
+                press_x = px;
+        }
+        HandleLButtonDown(state.get(), hwnd, WM_LBUTTONDOWN, MK_LBUTTON, client_at(press_x, sy));
+        const float pressed = state->paneSizeDragging && tab->view_mode == ViewMode::LargeIcons
+            ? tab->icon_dip : 0.0f;
+        HandleMouseMove(state.get(), hwnd, WM_MOUSEMOVE, MK_LBUTTON, client_at(slider.right + 30.0f, sy));
+        HandleLButtonUp(state.get(), hwnd, WM_LBUTTONUP, 0, client_at(slider.right + 30.0f, sy));
+        Check(pressed > 100.0f && pressed < 140.0f && !state->paneSizeDragging &&
+              tab->view_mode == ViewMode::ExtraLargeIcons && tab->icon_dip == ui::kMaxIconDip &&
+              state->appPrefs.folder_views.FindIconDip(tab->current_path) == ui::kMaxIconDip,
+              (L"view header: dragging the slider resizes the icons and keeps the size for the folder (" +
+               std::to_wstring(pressed) + L" -> " + std::to_wstring(tab->icon_dip) + L")").c_str());
+        POINT wheel_pt{static_cast<LONG>((slider.left + slider.right) * 0.5f), static_cast<LONG>(sy)};
+        ClientToScreen(hwnd, &wheel_pt);
+        const LPARAM on_slider = MAKELPARAM(wheel_pt.x, wheel_pt.y);
+        state->zoomWheelTick = 0;
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), on_slider);
+        const bool wheel_down = tab->view_mode == ViewMode::ExtraLargeIcons && tab->icon_dip == 0.0f;
+        SetIconSize(*state, ui::kMinIconDip);
+        state->zoomWheelTick = 0;
+        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), on_slider);
+        Check(wheel_down && tab->view_mode == ViewMode::MediumIcons && tab->icon_dip == ui::kMinIconDip,
+              L"view header: the plain wheel on the slider changes the size and stays in the icon views");
+        HandleLButtonDblClk(state.get(), hwnd, WM_LBUTTONDBLCLK, MK_LBUTTON, client_at(press_x, sy));
+        if (GetCapture() == hwnd) ReleaseCapture();
+        state->paneSizeDragging = false;
+        Check(tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 0.0f,
+              L"view header: double-clicking the slider returns to large icons");
+        ui::PaneViewModel narrow_pane = hpane;
+        const D2D1_RECT_F narrow = D2D1::RectF(hrect.left, hrect.top, hrect.left + 400.0f, hrect.bottom);
+        const D2D1_RECT_F size_button = state->renderer.PaneSizeButtonRect(narrow_pane, narrow);
+        const D2D1_RECT_F folded = state->renderer.PaneSizeSliderRect(narrow_pane, narrow);
+        narrow_pane.size_slider_open = true;
+        const D2D1_RECT_F opened = state->renderer.PaneSizeSliderRect(narrow_pane, narrow);
+        Check(size_button.right > size_button.left && folded.right <= folded.left &&
+              opened.right > opened.left && opened.right <= size_button.left && opened.left >= narrow.left,
+              L"view header: a narrow pane folds the slider into a button that opens it over the title");
+        SetViewMode(*state, ViewMode::Details);
+        const ui::WindowViewModel dvm = BuildVm(*state);
+        const D2D1_RECT_F hidden = state->renderer.PaneSizeSliderRect(dvm.pane_slots.front().pane,
+                                                                      dvm.pane_slots.front().rect);
+        Check(hidden.right <= hidden.left, L"view header: Details hides the size slider");
+
+        // Photo wall (P2b): the segment holds details, icons and photo wall
+        // ahead of the view menu; the wall keeps the size and the folder keeps it.
+        SetViewMode(*state, ViewMode::LargeIcons);
+        const ui::WindowViewModel gvm = BuildVm(*state);
+        const ui::PaneViewModel& gpane = gvm.pane_slots.front().pane;
+        const D2D1_RECT_F grect = gvm.pane_slots.front().rect;
+        const D2D1_RECT_F seg_list = state->renderer.PaneDetailsRect(grect, 1.0f, true);
+        const D2D1_RECT_F seg_grid = state->renderer.PaneMediumIconsRect(grect, 1.0f, true);
+        const D2D1_RECT_F seg_wall = state->renderer.PaneWallRect(gpane, grect);
+        const D2D1_RECT_F seg_more = state->renderer.PaneViewButtonRect(grect);
+        const auto region_at = [&](const ui::WindowViewModel& v, const D2D1_RECT_F& r) {
+            return state->renderer.HitTest(v, client, (r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f).region;
+        };
+        Check(seg_wall.right > seg_wall.left && seg_list.right <= seg_grid.left && seg_grid.right <= seg_wall.left &&
+              seg_wall.right <= seg_more.left && state->renderer.PaneSizeSliderRect(gpane, grect).right <= seg_list.left &&
+              region_at(gvm, seg_list) == ui::HitTestResult::PaneDetails &&
+              region_at(gvm, seg_grid) == ui::HitTestResult::PaneMediumIcons &&
+              region_at(gvm, seg_wall) == ui::HitTestResult::PaneWall &&
+              region_at(gvm, seg_more) == ui::HitTestResult::PaneViewButton,
+              L"photo wall: the header segment holds details, icons and photo wall ahead of the view menu");
+        const D2D1_RECT_F grid_item = state->renderer.ItemRectInPane(gpane, grect, 3);
+        const auto press = [&](const D2D1_RECT_F& r) {
+            const float cx = (r.left + r.right) * 0.5f, cy = (r.top + r.bottom) * 0.5f;
+            HandleLButtonDown(state.get(), hwnd, WM_LBUTTONDOWN, MK_LBUTTON, client_at(cx, cy));
+            HandleLButtonUp(state.get(), hwnd, WM_LBUTTONUP, 0, client_at(cx, cy));
+        };
+        press(seg_wall);
+        const ui::WindowViewModel wvm = BuildVm(*state);
+        const D2D1_RECT_F wall_item = state->renderer.ItemRectInPane(wvm.pane_slots.front().pane,
+                                                                     wvm.pane_slots.front().rect, 3);
+        Check(tab->wall && tab->view_mode == ViewMode::LargeIcons && wvm.pane_slots.front().pane.wall &&
+              state->appPrefs.folder_views.FindWall(tab->current_path) &&
+              (std::fabs(wall_item.left - grid_item.left) > 1.0f || std::fabs(wall_item.right - grid_item.right) > 1.0f ||
+               std::fabs(wall_item.top - grid_item.top) > 1.0f),
+              L"photo wall: the wall button keeps the size, lays the items out in rows and is kept for the folder");
+        SetIconSize(*state, 150.0f);
+        SetViewMode(*state, ViewMode::Details);
+        ShowLastIconSize(*state);
+        Check(tab->wall && tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 150.0f,
+              L"photo wall: resizing and the way back from Details keep the wall");
+        press(seg_grid);
+        Check(!tab->wall && tab->view_mode == ViewMode::LargeIcons && tab->icon_dip == 150.0f &&
+              !state->appPrefs.folder_views.FindWall(tab->current_path),
+              L"photo wall: the icons button returns to the grid at the same size");
+
+        // At the top with nothing selected there is nothing to follow.
+        tab->selected_index = -1;
+        SetViewMode(*state, ViewMode::Details);
+        tab->scroll_x = tab->scroll_y = 0.0f;
+        SetViewMode(*state, ViewMode::LargeIcons);
+        const bool large_top = tab->scroll_y == 0.0f;
+        SetViewMode(*state, ViewMode::MediumIcons);
+        Check(large_top && tab->scroll_y == 0.0f,
+              L"view anchor: at the top with nothing selected, switching views stays at the top");
+    } else Check(false, L"view anchor: graphics initialized");
+    state->watches.Stop();
+    DestroyWindow(hwnd);
+    state->hwnd = nullptr;
+}
+
 void TestFolderViews() {
     using ui::ViewMode;
     AppPrefs prefs;
@@ -3259,10 +3991,15 @@ void TestFolderViews() {
         Check(tab->view_mode == ViewMode::LargeIcons, L"folder views: back restores parent mode");
         StartLoadingPath(*state, *tab, tab->GoForward());
         Check(tab->view_mode == ViewMode::List, L"folder views: forward restores child mode");
+        Check(tab->last_icon_mode == ViewMode::LargeIcons,
+              L"view zoom: a list folder keeps the last icon size for the header button");
         state->appPrefs.FromJson(state->appPrefs.ToJson());
         tab->view_mode = ViewMode::SmallIcons;
+        tab->last_icon_mode = ViewMode::MediumIcons;
         StartLoadingPath(*state, *tab, parent, PathLoadReason::RestoreSession);
         Check(tab->view_mode == ViewMode::LargeIcons, L"folder views: saved folder choice wins over session mode");
+        Check(tab->last_icon_mode == ViewMode::LargeIcons,
+              L"view zoom: opening a saved icon folder records its size");
         tab->view_mode = ViewMode::Tiles;
         StartLoadingPath(*state, *tab, parent + L"\\legacy", PathLoadReason::RestoreSession);
         Check(tab->view_mode == ViewMode::Tiles, L"folder views: legacy session without folder preference keeps its mode");
@@ -3960,16 +4697,21 @@ void TestSnapshotPatchBatch() {
         event.old_name = old_name;
         return event;
     };
+    // New rows go to their sort position (2bef32f). One at a time, that
+    // position depends on rows a later rename holds out of order (#13), so
+    // the rows that move (new files, alpha changing its size group) arrive
+    // last here; the batch merges them in after all renames either way.
     const std::vector<fs::DirNotifyEvent> events = {
-        ev(FILE_ACTION_ADDED, L"file3.txt"), ev(FILE_ACTION_MODIFIED, L"file3.txt"),
         ev(FILE_ACTION_REMOVED, L"beta.log"),
         ev(FILE_ACTION_RENAMED_NEW_NAME, L"omega.txt", L"delta.txt"),
         ev(FILE_ACTION_RENAMED_NEW_NAME, L"gamma.txt", L"Gamma.txt"),
         ev(FILE_ACTION_ADDED, L"temp.tmp"), ev(FILE_ACTION_REMOVED, L"temp.tmp"),
-        ev(FILE_ACTION_MODIFIED, L"zeta.txt"), ev(FILE_ACTION_ADDED, L"file20.txt"),
+        ev(FILE_ACTION_MODIFIED, L"zeta.txt"),
         ev(FILE_ACTION_ADDED, L"ghost.txt"), ev(FILE_ACTION_REMOVED, L"missing.txt"),
+        ev(FILE_ACTION_RENAMED_NEW_NAME, L"epsilon.txt", L"epsilon.md"),
         ev(FILE_ACTION_MODIFIED, L"alpha.txt"),
-        ev(FILE_ACTION_RENAMED_NEW_NAME, L"epsilon.txt", L"epsilon.md")};
+        ev(FILE_ACTION_ADDED, L"file3.txt"), ev(FILE_ACTION_MODIFIED, L"file3.txt"),
+        ev(FILE_ACTION_ADDED, L"file20.txt")};
 
     bool same = true;
     const ui::SortColumn cols[] = {ui::SortColumn::Name, ui::SortColumn::Size,
@@ -3995,16 +4737,25 @@ void TestSnapshotPatchBatch() {
                 same = false;
                 continue;
             }
-            for (size_t i = 0; i < seq.size(); ++i) {
-                if (seq[i].name != batch[i].name || seq[i].size != batch[i].size ||
-                    seq[i].is_dir != batch[i].is_dir)
+            // Grouped, a row that changes group moves like a new one, and one
+            // at a time its spot depends on the rows held in place around it
+            // then; the batch places it after the whole burst. Same rows there.
+            std::vector<fs::DirEntry> seq_rows = seq, batch_rows = batch;
+            if (group != static_cast<int>(GroupBy::None)) {
+                const auto by_name = [](const fs::DirEntry& a, const fs::DirEntry& b) { return a.name < b.name; };
+                std::sort(seq_rows.begin(), seq_rows.end(), by_name);
+                std::sort(batch_rows.begin(), batch_rows.end(), by_name);
+            }
+            for (size_t i = 0; i < seq_rows.size(); ++i) {
+                if (seq_rows[i].name != batch_rows[i].name || seq_rows[i].size != batch_rows[i].size ||
+                    seq_rows[i].is_dir != batch_rows[i].is_dir)
                     same = false;
             }
             last = batch;
         }
     }
     }
-    Check(same, L"patch batch: identical to per-event patching for every sort order and grouping");
+    Check(same, L"patch batch: matches per-event patching (same order ungrouped, same rows grouped)");
     const auto has = [&](const wchar_t* name) {
         return std::any_of(last.begin(), last.end(),
                            [&](const fs::DirEntry& e) { return e.name == name; });
@@ -4080,13 +4831,13 @@ void TestSnapshotPatchHoldsRows() {
           L"patch hold: a renamed row keeps its place instead of re-sorting");
     make(L"aardvark.txt", 1);
     Check(name_asc(entries, ev(FILE_ACTION_ADDED, L"aardvark.txt"), dir) == NotifyPatch::Applied &&
-          names(entries) == L"zeta.txt,beta.txt,gamma.txt,aardvark.txt",
-          L"patch hold: a new row lands at the end until the next sort");
+          names(entries) == L"aardvark.txt,zeta.txt,beta.txt,gamma.txt",
+          L"patch hold: a new row goes before the first row that sorts after it");
     make(L"beta.txt", 5000);
     Check(ApplyDirNotify(entries, dir, ev(FILE_ACTION_MODIFIED, L"beta.txt"),
                          ui::SortColumn::Size, ui::SortDirection::Desc) == NotifyPatch::Applied &&
-          names(entries) == L"zeta.txt,beta.txt,gamma.txt,aardvark.txt" &&
-          entries[1].size == 5000u,
+          names(entries) == L"aardvark.txt,zeta.txt,beta.txt,gamma.txt" &&
+          entries[2].size == 5000u,
           L"patch hold: a modified row keeps its place and takes the new size");
 
     {
@@ -4095,12 +4846,12 @@ void TestSnapshotPatchHoldsRows() {
         make(L"notes.md", 1);
         name_asc(entries, ev(FILE_ACTION_ADDED, L"new"), dir);
         name_asc(entries, ev(FILE_ACTION_ADDED, L"notes.md"), dir);
-        Check(names(entries) == L"new,notes.md,zeta.txt,beta.txt,gamma.txt,aardvark.txt",
-              L"patch hold: grouped, a new row joins the end of its own group");
+        Check(names(entries) == L"new,notes.md,aardvark.txt,zeta.txt,beta.txt,gamma.txt",
+              L"patch hold: grouped, a new row goes to its sort position in its group");
         MoveFileW(full(L"zeta.txt").c_str(), full(L"zeta.md").c_str());
         name_asc(entries, ev(FILE_ACTION_RENAMED_NEW_NAME, L"zeta.md", L"zeta.txt"), dir);
-        Check(names(entries) == L"new,notes.md,zeta.md,beta.txt,gamma.txt,aardvark.txt",
-              L"patch hold: grouped, a rename into another group moves to that group's end");
+        Check(names(entries) == L"new,notes.md,zeta.md,aardvark.txt,beta.txt,gamma.txt",
+              L"patch hold: grouped, a rename into another group moves to its place there");
     }
 
     for (const wchar_t* name : {L"zeta.md", L"beta.txt", L"gamma.txt", L"aardvark.txt", L"notes.md"})
@@ -4143,11 +4894,11 @@ void TestEntryOrderHold() {
                                                     entry(L"charlie"), entry(L"delta"),
                                                     entry(L"zulu")});
     const auto held = keep(shown, fresh, {{L"echo", L"zulu"}});
-    Check(names(held) == L"alpha,zulu,delta,beta,charlie",
-          L"order hold: rows keep their place, a renamed row its old one, new rows go last");
+    Check(names(held) == L"alpha,charlie,zulu,delta,beta",
+          L"order hold: rows keep their place, a renamed row its old one, new rows merge in sorted");
     Check(!held.empty() && held[0].size == 42u,
           L"order hold: kept rows take the fresh metadata");
-    Check(names(keep(shown, fresh, {})) == L"alpha,delta,beta,charlie,zulu",
+    Check(names(keep(shown, fresh, {})) == L"alpha,charlie,delta,beta,zulu",
           L"order hold: without a rename hint the new name is just a new row");
     Check(names(keep({}, fresh, {})) == names(fresh),
           L"order hold: nothing shown yet means plain sort order");
@@ -4159,8 +4910,8 @@ void TestEntryOrderHold() {
         const auto fresh_grouped = sorted({entry(L"docs", true), entry(L"new", true),
                                            entry(L"z.md"), entry(L"a.txt"), entry(L"b.txt"),
                                            entry(L"c.txt")});
-        Check(names(keep(shown_grouped, fresh_grouped, {})) == L"docs,new,z.md,c.txt,a.txt,b.txt",
-              L"order hold: grouped, new rows join the end of their own group");
+        Check(names(keep(shown_grouped, fresh_grouped, {})) == L"docs,new,z.md,b.txt,c.txt,a.txt",
+              L"order hold: grouped, new rows merge in at their sort position");
         const auto fresh_moved = sorted({entry(L"docs", true), entry(L"a.md"), entry(L"c.txt")});
         Check(names(keep(shown_grouped, fresh_moved, {{L"a.txt", L"a.md"}})) == L"docs,a.md,c.txt",
               L"order hold: grouped, a rename into another group leaves its old row");
@@ -4389,6 +5140,21 @@ void TestMultiSelect() {
     Check(tab.SelectedCount() == 3 && tab.IsSelected(2) && tab.IsSelected(4) && tab.selected_index == 4,
           L"select: shift-extend");
 
+    tab.SelectOnly(0);
+    tab.ToggleSelect(2);
+    tab.AddRange(2, 4);
+    Check(tab.SelectedCount() == 4 && tab.IsSelected(0) && !tab.IsSelected(1) && tab.IsSelected(4) &&
+          tab.selected_index == 4 && tab.selection_anchor == 2,
+          L"select: ctrl-shift adds a range to the selection");
+    tab.ToggleSelect(4);
+    Check(!tab.IsSelected(4) && tab.HasCaret() && tab.FocusIndex() == 4 && tab.selection_anchor == 4,
+          L"select: ctrl-click keeps focus on the item it deselected");
+    tab.SetCaret(1);
+    Check(tab.FocusIndex() == 1 && !tab.IsSelected(1) && tab.SelectedCount() == 3,
+          L"select: ctrl-arrow moves focus without selecting");
+    tab.SelectOnly(3);
+    Check(!tab.HasCaret() && tab.FocusIndex() == 3, L"select: a new selection drops the moved focus");
+
     tab.ClearSelection();
     Check(tab.SelectedCount() == 0 && !tab.IsSelected(0) && tab.selected_index < 0,
           L"select: escape clears");
@@ -4594,19 +5360,82 @@ void TestSplitLayout() {
           splitMenu[3].pictogram == ui::fluent::MenuPictogram::LayoutThree &&
           splitMenu[4].pictogram == ui::fluent::MenuPictogram::LayoutFour,
           L"menu: split presets use distinct layout pictograms");
-    auto pal = BuildCommandPalette({ L"C:\\Users" });
+    // The palette's command rows come from the action registry; these views
+    // stand in for ListActions (an app state is not needed for the rows).
+    namespace act = app::actions;
+    std::vector<act::ActionView> fake_actions;
+    auto add_fake = [&](std::string_view id, const wchar_t* title, const wchar_t* domain,
+                        bool enabled = true) -> act::ActionView& {
+        act::ActionView v;
+        v.index = static_cast<int>(fake_actions.size());
+        v.id = id;
+        v.title = title;
+        v.domain = domain;
+        v.enabled = enabled;
+        if (!enabled) v.why = L"先选中一个文件";
+        fake_actions.push_back(std::move(v));
+        return fake_actions.back();
+    };
+    {
+        auto& layout = add_fake("window.layout", L"分栏布局", L"窗口");          // 0
+        for (const wchar_t* choice : { L"单栏", L"左右两栏", L"四宫格" }) {
+            ui::FluentMenuItem row;
+            row.command = CmdLayoutSingle;
+            row.text = choice;
+            layout.choices.push_back(std::move(row));
+        }
+        layout.choices[2].command = CmdLayoutFourGrid;
+    }
+    add_fake("file.new_folder", L"新建文件夹", L"文件");                          // 1
+    add_fake("tab.new", L"新建标签页", L"标签页").shortcut = L"Ctrl+T";          // 2
+    add_fake("file.rename", L"重命名", L"文件", false);                           // 3
+    add_fake("file.batch_rename", L"批量重命名", L"文件");                        // 4
+    add_fake("app.exit", l10n::Get(l10n::StringId::ExitPulse).c_str(), L"应用");  // 5
+    add_fake("settings.set", L"显示隐藏的文件", L"设置 · 文件列表").key = "show_hidden";  // 6
+    const auto mixed_rows = [&](const wchar_t* needle) {
+        return act::PaletteRows(fake_actions, needle, act::PaletteMode::Mixed, {});
+    };
+    const auto command_rows = [&](const wchar_t* needle, const std::vector<int>& used = {}) {
+        return act::PaletteRows(fake_actions, needle, act::PaletteMode::Commands, used);
+    };
+    auto pal = BuildCommandPalette(L"", {}, { L"C:\\Users" }, {}, false);
     Check(!pal.empty() && pal.back().command == CmdRecentBase, L"menu: command palette recent");
     Check(pal.back().badge_text == L"历史路径" && pal.back().shortcut.empty(),
           L"menu: recent rows use 历史路径 badge");
-    auto palQ = BuildCommandPalette(L"四宫", { L"C:\\Users" }, {}, false);
-    Check(!palQ.empty() && palQ[0].command == CmdLayoutFourGrid, L"menu: palette filters by query");
+    auto palQ = BuildCommandPalette(L"四宫", mixed_rows(L"四宫"), { L"C:\\Users" }, {}, false);
+    Check(!palQ.empty() && palQ[0].text == L"分栏布局" && palQ[0].children.size() == 3 &&
+          palQ[0].children[2].command == CmdLayoutFourGrid,
+          L"menu: a choice's label finds its action (四宫 → 分栏布局 ›)");
     {
         bool offers_exit = false;
-        for (const auto& it : BuildCommandPalette(l10n::Get(l10n::StringId::ExitPulse), {}, {}, false))
-            offers_exit = offers_exit || it.command == CmdExitPulse;
+        for (const auto& it : command_rows(l10n::Get(l10n::StringId::ExitPulse).c_str()))
+            offers_exit = offers_exit || it.command == act::PaletteCommand(5);
         Check(offers_exit, L"menu: the palette offers Exit Pulse (#57)");
     }
-    auto palLong = BuildCommandPalette(L"", { L"\\\\?\\C:\\Users\\TestUser" }, {}, false);
+    {
+        const auto rows = command_rows(L"xj");
+        bool initials = false;
+        for (const auto& it : rows)
+            if (it.text == L"新建文件夹") initials = it.match_start == 0 && it.match_length == 2;
+        Check(initials, L"palette: pinyin initials match and mark the matched characters");
+        const auto renames = command_rows(L"重命名");
+        Check(renames.size() == 4 && renames[0].heading && renames[0].text == L"文件" &&
+              renames[1].text == L"批量重命名" && renames[1].match_start == 2 &&
+              renames[1].match_length == 3 && renames[2].heading && renames[3].text == L"重命名" &&
+              !renames[3].enabled && renames[3].shortcut == L"先选中一个文件",
+              L"palette: unavailable actions come last, under their heading, with the reason");
+        const auto none = command_rows(L"把上个月的截图挪到图片");
+        Check(none.size() == 2 && !none[0].enabled && none[1].command == act::kPaletteAskAssistant &&
+              none[1].text.find(L"把上个月的截图挪到图片") != std::wstring::npos,
+              L"palette: no match offers the assistant with the words");
+        const auto start = command_rows(L"", { 4 });
+        Check(start.size() >= 4 && start[0].heading && start[1].command == act::PaletteCommand(4) &&
+              start[2].heading,
+              L"palette: an empty > lists this session's actions, then 常用");
+        Check(mixed_rows(L"").empty() && mixed_rows(L"新建").size() == 2,
+              L"palette: mixed mode adds only the best few commands");
+    }
+    auto palLong = BuildCommandPalette(L"", {}, { L"\\\\?\\C:\\Users\\TestUser" }, {}, false);
     bool recent_ok = false;
     for (const auto& it : palLong) {
         if (it.command != CmdRecentBase) continue;
@@ -4642,20 +5471,22 @@ void TestSplitLayout() {
     Check(LooksLikeFilesystemPath(L"C:\\Windows") && LooksLikeFilesystemPath(L"\\\\server\\share") &&
           !LooksLikeFilesystemPath(L"新建文件夹"),
           L"omnibar: path-like detection");
-    auto palCmd = BuildCommandPalette(L">新建", { L"C:\\新建" }, {}, false);
-    Check(!palCmd.empty() && palCmd[0].command == CmdNewFolder, L"omnibar: >新建 matches 新建文件夹");
-    bool cmd_has_layout = false;
-    for (const auto& it : palCmd)
-        if (it.command == CmdLayoutFourGrid) cmd_has_layout = true;
+    auto palCmd = BuildCommandPalette(L">新建", command_rows(L"新建"), { L"C:\\新建" }, {}, false);
+    bool cmd_has_folder = false, cmd_has_layout = false, cmd_has_recent = false;
+    for (const auto& it : palCmd) {
+        cmd_has_folder = cmd_has_folder || it.command == act::PaletteCommand(1);
+        cmd_has_layout = cmd_has_layout || it.text == L"分栏布局";
+        cmd_has_recent = cmd_has_recent || it.command == CmdRecentBase;
+    }
+    Check(cmd_has_folder, L"omnibar: >新建 matches 新建文件夹");
     Check(!cmd_has_layout, L"omnibar: >新建 does not keep unrelated commands");
-    Check(palCmd.back().command == CmdRecentBase && palCmd.back().badge_text == L"历史路径",
-          L"omnibar: command mode still lists recents at the end");
-    auto palSearch = BuildCommandPalette(L"?foo", { L"C:\\Users" }, {}, false);
+    Check(!cmd_has_recent, L"omnibar: the > palette lists commands only");
+    auto palSearch = BuildCommandPalette(L"?foo", mixed_rows(L"新建"), { L"C:\\Users" }, {}, false);
     bool search_has_cmd = false;
     for (const auto& it : palSearch)
-        if (it.command == CmdSettings || it.command == CmdNewFolder) search_has_cmd = true;
+        if (it.command >= act::kPaletteCmdBase && it.command < act::kPaletteCmdEnd) search_has_cmd = true;
     Check(!search_has_cmd, L"omnibar: ? search hides commands");
-    auto palDup = BuildCommandPalette(L"", { L"C:\\A", L"C:\\A", L"C:\\B" }, {}, false, 0, L"C:\\B");
+    auto palDup = BuildCommandPalette(L"", {}, { L"C:\\A", L"C:\\A", L"C:\\B" }, {}, false, 0, L"C:\\B");
     int recent_n = 0;
     int recent_idx = -1;
     for (const auto& it : palDup) {
@@ -4669,7 +5500,7 @@ void TestSplitLayout() {
     hit.name = L"Users";
     hit.path = L"C:\\Users";
     hit.is_dir = true;
-    auto palSkipHit = BuildCommandPalette(L"", { L"C:\\Users" }, { hit }, false);
+    auto palSkipHit = BuildCommandPalette(L"", {}, { L"C:\\Users" }, { hit }, false);
     bool recent_after_hit = false;
     for (const auto& it : palSkipHit)
         if (it.command == CmdRecentBase) recent_after_hit = true;
@@ -4755,8 +5586,8 @@ void TestSplitLayout() {
         D2D1_RECT_F active_rc{}, other_rc{};
         Check(chrome.TabItemRect(vm, crowd_w, 30, &active_rc) && chrome.TabItemRect(vm, crowd_w, 29, &other_rc) &&
               std::abs((active_rc.right - active_rc.left) - 120.0f) < 0.01f &&
-              std::abs((other_rc.right - other_rc.left) - 40.0f) < 0.01f,
-              L"chrome: crowded tabs shrink to icons while the active tab keeps its title");
+              std::abs((other_rc.right - other_rc.left) - 96.0f) < 0.01f,
+              L"chrome: crowded tabs stop at the minimum width while the active tab keeps room for close");
         const float mid_y = (active_rc.top + active_rc.bottom) * 0.5f;
         const auto active_hit = chrome.HitTest(vm, crowd_rect, (active_rc.left + active_rc.right) * 0.5f, mid_y);
         Check(active_hit.region == ui::HitTestResult::Tab && active_hit.index == 30,
@@ -4778,7 +5609,13 @@ void TestSplitLayout() {
               L"chrome: a strip that fits ignores the wheel");
     }
     {
-        auto vm = crowded(10, 9);
+        // Tabs below the maximum width, where a close would otherwise reflow them.
+        int count = 4;
+        for (D2D1_RECT_F probe{}; count < 30; ++count) {
+            chrome.TabItemRect(crowded(count, count - 1), 1400.0f, 0, &probe);
+            if (probe.right - probe.left < 239.0f) break;
+        }
+        auto vm = crowded(count, count - 1);
         D2D1_RECT_F before{}, frozen{}, released{};
         chrome.TabItemRect(vm, 1400.0f, 0, &before);
         chrome.FreezeTabWidths(vm, 1400.0f);
@@ -4798,6 +5635,1040 @@ void TestSplitLayout() {
         ui::PaneViewModel::FilterMap{ 2, 5, 9 });
     Check(pvm.EntryCount() == 3 && pvm.SourceIndex(1) == 5 && pvm.ViewIndex(9) == 2,
           L"filter: view/source index mapping");
+}
+
+// 兼容打开方式 (settings index 9): the folder verb stays unregistered while the
+// scope stays selected, the state reads healthy, and the choice survives a save.
+// persist = false keeps every Apply* away from the registry.
+// get_state, the selector and waiting (actions/action_state.h), on panes
+// filled by hand; the wait for a finished task runs a real copy in the sandbox.
+namespace {
+
+uint64_t AsLocalTicks(int y, int m, int d, int h, int mi) {
+    SYSTEMTIME local{}, utc{};
+    local.wYear = static_cast<WORD>(y);
+    local.wMonth = static_cast<WORD>(m);
+    local.wDay = static_cast<WORD>(d);
+    local.wHour = static_cast<WORD>(h);
+    local.wMinute = static_cast<WORD>(mi);
+    FILETIME ft{};
+    TzSpecificLocalTimeToSystemTime(nullptr, &local, &utc);
+    SystemTimeToFileTime(&utc, &ft);
+    return app::actions::FileTimeTicks(ft);
+}
+
+fs::DirEntry AsEntry(const wchar_t* name, uint64_t size, uint64_t mtime, bool dir = false, DWORD attrs = 0) {
+    fs::DirEntry e;
+    e.name = name;
+    e.size = size;
+    e.mtime.dwLowDateTime = static_cast<DWORD>(mtime & 0xFFFFFFFFu);
+    e.mtime.dwHighDateTime = static_cast<DWORD>(mtime >> 32);
+    e.is_dir = dir;
+    e.attrs = attrs | (dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_ARCHIVE);
+    return e;
+}
+
+int64_t AsInt(const json::Value* v) {
+    int64_t n = -1;
+    if (v) v->get_int(n, -(int64_t{1} << 53), int64_t{1} << 53);
+    return n;
+}
+
+const json::Value& AsPane(const json::Value& state, size_t i) {
+    static const json::Value none;
+    const json::Value* panes = state.find("panes");
+    return panes && i < panes->items().size() ? panes->items()[i] : none;
+}
+
+std::vector<int> AsPick(AppState& s, const char* selector_json, uint64_t now, std::string* reason = nullptr) {
+    namespace act = app::actions;
+    json::Value args;
+    act::Selector sel;
+    std::string error;
+    if (!json::Parse(selector_json, args) || !act::ParseSelector(args, now, sel, error)) return {-99};
+    const act::SelectorMatch m = act::ResolveSelector(s, sel);
+    if (reason) *reason = m.reason;
+    act::ApplySelection(s, m);
+    return m.matched;
+}
+
+// Runs the message loop until `done` or `ms` pass; `tick` runs each turn.
+bool AsPump(const std::function<bool()>& done, DWORD ms, const std::function<void(ULONGLONG)>& tick = {}) {
+    const ULONGLONG start = GetTickCount64();
+    while (!done()) {
+        const ULONGLONG elapsed = GetTickCount64() - start;
+        if (elapsed > ms) return false;
+        if (tick) tick(elapsed);
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        Sleep(5);
+    }
+    return true;
+}
+
+} // namespace
+
+// P3: the assistant's gate per action and find_actions' rows
+// (plans/ai/P3_AI接入动作表.html).
+void TestActionPolicy() {
+    namespace act = app::actions;
+    const auto gate = [](std::string_view id, std::wstring_view target = {}) { return act::AiPolicy(id, target).gate; };
+    Check(gate("view.sort") == act::Gate::Direct, L"policy: a view action runs at once");
+    Check(gate("tag.toggle") == act::Gate::Direct, L"policy: organizing runs at once");
+    Check(gate("settings.set") == act::Gate::Direct, L"policy: settings run at once (the card says old -> new)");
+    Check(gate("file.new_folder") == act::Gate::Direct, L"policy: a new folder runs at once and undoes");
+    Check(gate("file.move_to") == act::Gate::Plan && gate("file.rename") == act::Gate::Plan,
+          L"policy: moves and renames show a plan first");
+    Check(gate("file.recycle") == act::Gate::Plan && gate("recycle.empty") == act::Gate::Plan,
+          L"policy: deleting shows its card first");
+    Check(gate("app.exit") == act::Gate::Locked, L"policy: exiting Pulse is the user's only");
+    Check(gate("no.such.action") == act::Gate::Locked, L"policy: unknown ids are locked");
+    Check(gate("index.install_full") == act::Gate::Confirm, L"policy: a system action asks first");
+    Check(gate("nav.open", L"C:\\AsT\\setup.exe") == act::Gate::Confirm &&
+              gate("nav.open", L"C:\\AsT\\run.PS1") == act::Gate::Confirm &&
+              gate("nav.open", L"C:\\AsT\\app.lnk") == act::Gate::Confirm,
+          L"policy: programs, scripts and shortcuts ask first");
+    Check(gate("nav.open", L"C:\\AsT\\report.pdf") == act::Gate::Direct &&
+              gate("nav.open", L"C:\\AsT\\photo.jpg") == act::Gate::Direct,
+          L"policy: documents and media open at once");
+    Check(act::IsProgramPath(L"x.msi") && act::IsProgramPath(L"x.BAT") && !act::IsProgramPath(L"x.txt") &&
+              !act::IsProgramPath(L"exe"),
+          L"policy: program extensions");
+
+    // find_actions: the best rows first, runnable before the rest.
+    std::vector<act::ActionView> views;
+    auto add = [&](std::string_view id, const wchar_t* title, bool enabled = true) -> act::ActionView& {
+        act::ActionView v;
+        v.index = static_cast<int>(views.size());
+        v.id = id;
+        v.title = title;
+        v.enabled = enabled;
+        if (!enabled) v.why = L"先选中一个文件";
+        views.push_back(std::move(v));
+        return views.back();
+    };
+    add("details.toggle", L"详情面板").value = L"关";
+    add("view.sort", L"排序方式");
+    add("file.rename", L"重命名", false);
+    add("settings.set", L"显示文件夹大小").key = "size_bars";
+    add("settings.set", L"显示隐藏的文件").key = "show_hidden";
+    add("settings.set", L"列表行高").key = "row_height";
+    add("tab.close_others", L"关闭其他标签页", false);
+    {
+        const auto hits = act::FindActions(views, L"详情面板", 8);
+        Check(!hits.empty() && hits.front()->id == "details.toggle", L"find_actions: a title finds its action");
+    }
+    {
+        const auto hits = act::FindActions(views, L"文件夹大小", 8);
+        Check(!hits.empty() && hits.front()->key == "size_bars", L"find_actions: a setting is found by the words naming it");
+    }
+    {
+        const auto hits = act::FindActions(views, L"文件夹大小 列表", 8);
+        Check(!hits.empty() && hits.front()->key == "size_bars", L"find_actions: the longer, more specific word ranks first");
+    }
+    Check(act::FindActions(views, L"zzqqxx", 8).empty(), L"find_actions: nothing for unrelated words");
+    Check(act::FindActions(views, L"详情 排序 重命名 文件", 2).size() <= 2, L"find_actions: at most max rows");
+    {
+        const json::Value row = act::ActionJson(views[0]);
+        Check(row.get_string("id") == "details.toggle" && row.get_string("now") == "\xE5\x85\xB3" && row.find("args"),
+              L"find_actions: a row has its id, current value and args");
+        const json::Value off = act::ActionJson(views[6]);
+        const json::Value* enabled = off.find("enabled");
+        Check(enabled && enabled->is_bool() && !enabled->as_bool() && !off.get_string("why").empty(),
+              L"find_actions: a row that cannot run says why");
+        // A file step takes its items as arguments: the selection's state is
+        // only what happens without them, not "cannot run".
+        const json::Value file = act::ActionJson(views[2]);
+        Check(!file.find("enabled") && file.get_string("without_args").find("items") != std::string::npos,
+              L"find_actions: a file step without a selection still runs with items");
+        const json::Value set = act::ActionJson(views[4]);
+        Check(set.get_string("id") == "settings.set" && set.get_string("key") == "show_hidden" &&
+                  set.get_string("values") == "true|false",
+              L"find_actions: a setting row has its key and values");
+    }
+    {
+        const json::Value spec = act::ArgSpecJson(act::ArgSpec("view.sort"));
+        Check(spec.get_string("by") == "name|modified|type|size|created" && spec.get_string("desc") == "bool",
+              L"find_actions: view.sort's args");
+        Check(act::ArgSpec("window.overview").empty(), L"find_actions: an action without args has no spec");
+    }
+}
+
+// P4: actions run with arguments (action_args.h) - the tab, tag, name or
+// keys the model gave; each says what changed and undoes it.
+// P4c: what a file step would do, before its card (action_files.h). Plans
+// only: nothing is queued.
+void TestFilePlans() {
+    namespace act = app::actions;
+    // Next to the exe: %TEMP% may be C:\Windows\Temp, which the plans refuse.
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, ARRAYSIZE(exe));
+    std::wstring base = exe;
+    base.resize(base.find_last_of(L'\\') + 1);
+    const std::wstring root = base + L"PulseFilePlans-" + std::to_wstring(GetCurrentProcessId());
+    const std::wstring a = root + L"\\a.txt", b = root + L"\\b.txt", sub = root + L"\\sub";
+    CreateDirectoryW(root.c_str(), nullptr);
+    CreateDirectoryW(sub.c_str(), nullptr);
+    const auto write = [](const std::wstring& path, const char* text) {
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return;
+        DWORD n = 0;
+        WriteFile(h, text, static_cast<DWORD>(strlen(text)), &n, nullptr);
+        CloseHandle(h);
+    };
+    write(a, "12345");
+    write(b, "123");
+    write(sub + L"\\x.txt", "x");
+    write(sub + L"\\y.txt", "y");
+
+    auto owner = std::make_unique<AppState>();
+    AppState& s = *owner;
+    s.places.persist = false;
+    s.appPrefs.persist = false;
+    s.isolatedTest = true;
+    const auto with = [](std::initializer_list<std::wstring> items, const char* key = nullptr, const std::wstring& value = {}) {
+        json::Value v = json::Value::Object();
+        json::Value list = json::Value::Array();
+        for (const auto& i : items) list.push(json::Utf8(i));
+        v.set("items", std::move(list));
+        if (key) v.set(key, json::Utf8(value));
+        return v;
+    };
+
+    Check(act::FileOpOf("file.move_to") == act::FileOp::Move && act::FileOpOf("file.paste") == act::FileOp::Move &&
+              act::FileOpOf("recycle.empty") == act::FileOp::EmptyBin && !act::IsFileOp("file.copy"),
+          L"file plans: the file steps are known");
+    Check(act::FileOpUndoes(act::FileOp::Recycle) && !act::FileOpUndoes(act::FileOp::Purge) &&
+              !act::FileOpUndoes(act::FileOp::Restore) && !act::FileOpUndoes(act::FileOp::EmptyBin),
+          L"file plans: permanent deletes and restores do not undo");
+    Check(act::AiPolicy("file.delete_permanent").gate == act::Gate::Plan && act::AiPolicy("recycle.restore").gate == act::Gate::Plan &&
+              act::FindAction("recycle.empty") != nullptr,
+          L"file plans: the new rows show a plan first");
+
+    act::FilePlan p = act::PlanFileOp(s, "file.move_to", with({a, b}, "dest", root + L"\\new"), nullptr);
+    Check(p.ok && !p.skip && !p.dest_exists && p.count == 2 && p.bytes == 8 && p.files_only && p.rows.size() == 2 &&
+              p.rows[0].name == L"a.txt" && p.rows[0].to == root + L"\\new",
+          L"file plans: a move lists each item and makes a missing folder");
+    p = act::PlanFileOp(s, "file.move_to", with({a}, "dest", root), nullptr);
+    Check(p.ok && p.skip, L"file plans: a move into its own folder does nothing");
+    p = act::PlanFileOp(s, "file.copy_to", with({sub}, "dest", sub + L"\\inner"), nullptr);
+    Check(!p.ok && !p.why.empty(), L"file plans: a folder never goes into itself");
+    p = act::PlanFileOp(s, "file.copy_to", with({a}, "dest", root + L"\\sub"), nullptr);
+    Check(p.ok && p.dest_exists && p.clashes == 0, L"file plans: a copy into an existing folder");
+    p = act::PlanFileOp(s, "file.move_to", with({a}), nullptr);
+    Check(!p.ok && !p.why.empty(), L"file plans: no destination and no other pane is refused");
+
+    p = act::PlanFileOp(s, "file.rename", with({a}, "name", L"b.txt"), nullptr);
+    Check(!p.ok, L"file plans: a rename onto a taken name fails");
+    p = act::PlanFileOp(s, "file.rename", with({a}, "name", L"bad:name"), nullptr);
+    Check(!p.ok, L"file plans: a rename to an invalid name fails");
+    p = act::PlanFileOp(s, "file.rename", with({a}, "name", L"a.txt"), nullptr);
+    Check(p.ok && p.skip, L"file plans: the same name does nothing");
+    p = act::PlanFileOp(s, "file.rename", with({a}, "name", L"c.txt"), nullptr);
+    Check(p.ok && p.new_name == L"c.txt" && p.rows.size() == 1 && p.rows[0].to == L"c.txt", L"file plans: a rename");
+    p = act::PlanFileOp(s, "file.rename", with({a, b}, "name", L"c.txt"), nullptr);
+    Check(!p.ok, L"file plans: a rename is one item");
+
+    p = act::PlanFileOp(s, "file.group_into_folder", with({a, b}, "name", L"sub"), nullptr);
+    Check(!p.ok, L"file plans: a group into a taken name fails");
+    p = act::PlanFileOp(s, "file.group_into_folder", with({a, b}, "name", L"grp"), nullptr);
+    Check(p.ok && p.dest == root && p.new_name == L"grp" && p.count == 2, L"file plans: a group into a new folder");
+    p = act::PlanFileOp(s, "file.dissolve", with({a}), nullptr);
+    Check(!p.ok, L"file plans: only folders dissolve");
+    p = act::PlanFileOp(s, "file.dissolve", with({sub}), nullptr);
+    Check(p.ok && p.inner == 2 && p.dest == root, L"file plans: a dissolve counts what moves up");
+
+    wchar_t win[MAX_PATH]{};
+    GetWindowsDirectoryW(win, ARRAYSIZE(win));
+    p = act::PlanFileOp(s, "file.move_to", with({std::wstring(win) + L"\\System32"}, "dest", root), nullptr);
+    Check(!p.ok && !p.why.empty(), L"file plans: system folders are never touched");
+    p = act::PlanFileOp(s, "file.copy_to", with({a}, "dest", std::wstring(win) + L"\\Temp"), nullptr);
+    Check(!p.ok, L"file plans: nothing goes into a system folder");
+    p = act::PlanFileOp(s, "file.recycle", with({std::wstring(win).substr(0, 3)}), nullptr);
+    Check(!p.ok, L"file plans: a drive itself is refused");
+    p = act::PlanFileOp(s, "file.recycle", with({root + L"\\missing.txt"}), nullptr);
+    Check(!p.ok, L"file plans: a missing item is refused");
+    p = act::PlanFileOp(s, "file.recycle", json::Value::Object(), nullptr);
+    Check(!p.ok && !p.why.empty(), L"file plans: no items and no selection is refused");
+    p = act::PlanFileOp(s, "file.recycle", with({a, b}), nullptr);
+    Check(p.ok == app::ai::ReadBin(root[0]).available && (!p.ok || (p.count == 2 && p.bytes == 8 && p.bin_max > 0)),
+          L"file plans: a recycle checks its drive's bin");
+    Check(app::ai::ReadBin(root[0]).available || !ops::RecycleBinAvailable(root.substr(0, 3)),
+          L"file plans: the bin check agrees with the delete's");
+    {
+        act::FilePlan q = act::PlanFileOp(s, "file.recycle", with({L"\\\\?\\" + a}), nullptr);
+        Check(q.ok == p.ok && (q.sources.empty() || q.sources[0] == a),
+              L"file plans: a \\\\?\\ path plans as the plain path");
+    }
+    p = act::PlanFileOp(s, "file.delete_permanent", with({a, sub}), nullptr);
+    Check(p.ok && p.count == 2 && !p.files_only, L"file plans: a permanent delete lists its items");
+    p = act::PlanFileOp(s, "recycle.restore", json::Value::Object(), nullptr);
+    Check(!p.ok, L"file plans: a restore needs the Recycle Bin open");
+    {
+        // Emptying the bin: a plan only - it reads the bin and empties nothing.
+        SHQUERYRBINFO before{};
+        before.cbSize = sizeof(before);
+        const bool read = SUCCEEDED(SHQueryRecycleBinW(nullptr, &before));
+        const act::FilePlan e = act::PlanFileOp(s, "recycle.empty", json::Value::Object(), nullptr);
+        Check(!read || (e.ok && e.op == act::FileOp::EmptyBin && e.count == static_cast<size_t>(before.i64NumItems) &&
+                        e.skip == (before.i64NumItems == 0) && (!e.skip || !e.why.empty())),
+              L"file plans: emptying the bin counts what is in it; an empty bin is nothing to do");
+        SHQUERYRBINFO after{};
+        after.cbSize = sizeof(after);
+        Check(!read || (SUCCEEDED(SHQueryRecycleBinW(nullptr, &after)) && after.i64NumItems == before.i64NumItems),
+              L"file plans: planning to empty the bin empties nothing");
+        Check(act::McpGroupOf("recycle.empty") == act::McpGroup::Files &&
+                  act::AiPolicy("recycle.empty").risk == act::ActionRisk::PermanentDelete,
+              L"file plans: emptying the bin is a permanent delete in the files group");
+    }
+
+    for (const wchar_t* f : {L"\\a.txt", L"\\b.txt", L"\\sub\\x.txt", L"\\sub\\y.txt"}) DeleteFileW((root + f).c_str());
+    RemoveDirectoryW(sub.c_str());
+    RemoveDirectoryW(root.c_str());
+}
+
+void TestActionArgs() {
+    namespace act = app::actions;
+    auto owner = std::make_unique<AppState>();
+    AppState& s = *owner;
+    s.places.persist = false;
+    s.appPrefs.persist = false;
+    s.isolatedTest = true;
+    const auto args = [](const char* text) {
+        json::Value v;
+        json::Parse(text, v);
+        return v;
+    };
+
+    const char* ids[] = {"tab.pin", "tab.color", "tab.rename", "tab.group", "tab.duplicate", "tab.close_others",
+                         "tab.activate", "pane.focus", "window.activate", "sidebar.section", "view.icon_size",
+                         "tag.create", "tag.edit", "tag.delete", "tag.group", "smartview.save", "recent.remove",
+                         "alias.set", "tray.remove", "search.open", "index.status", "net.place", "keymap.read",
+                         "keymap.set"};
+    bool all = true, direct = true;
+    for (const char* id : ids) {
+        all = all && act::HasArgRunner(id);
+        direct = direct && act::AiPolicy(id).gate == act::Gate::Direct;
+    }
+    Check(all && !act::HasArgRunner("view.sort") && !act::HasArgRunner("no.such"), L"args: every P4a action has a runner");
+    Check(direct, L"args: P4a actions run at once (they undo)");
+
+    bool round = true;
+    for (const char* w : {"red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"}) {
+        const int i = act::ColorIndex(w);
+        round = round && i >= 0 && !act::ColorName(i).empty();
+    }
+    Check(round && act::ColorIndex("none") == -1 && act::ColorIndex("plaid") == -2, L"args: color words");
+
+    // ---- Tabs: pin, color, rename, each undone ------------------------------
+    s.window_tabs.items.clear();
+    for (const wchar_t* t : {L"发票", L"合同", L"报销单"}) {
+        auto tab = std::make_unique<LayoutTab>();
+        tab->title = t;
+        s.window_tabs.items.push_back(std::move(tab));
+    }
+    s.window_tabs.active = 0;
+    LayoutTab* invoice = s.window_tabs.items[0].get();
+    LayoutTab* contract = s.window_tabs.items[1].get();
+    LayoutTab* claims = s.window_tabs.items[2].get();
+    {
+        act::ArgRun r = act::RunWithArgs(s, "tab.pin", args(R"({"tab":["发票","合同"]})"));
+        Check(r.ok && !r.skip && invoice->pinned && contract->pinned && !claims->pinned && !r.line_bold.empty() && r.undo,
+              L"args: tab.pin pins the tabs named");
+        act::ArgRun again = act::RunWithArgs(s, "tab.pin", args(R"({"tab":["发票","合同"]})"));
+        Check(again.ok && again.skip, L"args: pinning pinned tabs is already so");
+        r.undo(s);
+        Check(!invoice->pinned && !contract->pinned, L"args: tab.pin undoes");
+        Check(invoice->marker_rgb == 0 && contract->marker_rgb == 0, L"args: undoing a pin takes back the color it gave");
+        Check(s.window_tabs.items[0].get() == invoice && s.window_tabs.items[1].get() == contract &&
+                  s.window_tabs.items[2].get() == claims,
+              L"args: undoing a pin puts the tabs back in place");
+    }
+    {
+        // Pin one tab (it gets a color), then color it: the line says 无 → 蓝色.
+        act::ArgRun pin = act::RunWithArgs(s, "tab.pin", args(R"({"tab":"报销单"})"));
+        act::ArgRun color = act::RunWithArgs(s, "tab.color", args(R"({"tab":"报销单","color":"blue"})"));
+        Check(pin.ok && color.ok && color.data.get_string("from") == json::Utf8(l10n::Get(l10n::StringId::ActColorNone)),
+              L"args: a pin's own color counts as none");
+        if (color.undo) color.undo(s);
+        if (pin.undo) pin.undo(s);
+        Check(!claims->pinned && claims->marker_rgb == 0 && s.window_tabs.items[2].get() == claims,
+              L"args: pin then color undoes to where it was");
+    }
+    {
+        act::ArgRun bad = act::RunWithArgs(s, "tab.color", args(R"({"tab":"发票"})"));
+        Check(!bad.ok && !bad.error.empty() && !bad.why.empty(), L"args: tab.color needs a color");
+        const uint32_t before = claims->marker_rgb;
+        act::ArgRun r = act::RunWithArgs(s, "tab.color", args(R"({"tab":3,"color":"blue"})"));
+        Check(r.ok && claims->marker_rgb == TabController::Palette()[act::ColorIndex("blue")] && r.arg == act::ColorName(act::ColorIndex("blue")),
+              L"args: tab.color by number (1 = first)");
+        if (r.undo) r.undo(s);
+        Check(claims->marker_rgb == before, L"args: tab.color undoes");
+    }
+    {
+        act::ArgRun r = act::RunWithArgs(s, "tab.rename", args(R"({"tab":"合同","name":"  报销  "})"));
+        Check(r.ok && contract->title == L"报销", L"args: tab.rename trims the name");
+        if (r.undo) r.undo(s);
+        Check(contract->title == L"合同", L"args: tab.rename undoes");
+    }
+    Check(!act::RunWithArgs(s, "tab.activate", args(R"({"tab":99})")).ok &&
+              !act::RunWithArgs(s, "tab.pin", args(R"({"tab":"没有这个"})")).ok,
+          L"args: a tab that is not there fails with a reason");
+
+    // ---- Tags: create, delete, undo brings it back ----------------------------
+    {
+        const size_t before = s.places.tags.size();
+        act::ArgRun r = act::RunWithArgs(s, "tag.create", args(R"({"name":"P4测试","color":"blue"})"));
+        Check(r.ok && s.places.tags.size() == before + 1 && r.arg == L"P4测试", L"args: tag.create makes the tag");
+        Check(!act::RunWithArgs(s, "tag.create", args(R"({"name":"P4测试"})")).ok, L"args: tag.create refuses a name in use");
+        Check(!act::RunWithArgs(s, "tag.create", args(R"({"name":"  "})")).ok, L"args: tag.create needs a name");
+        act::ArgRun del = act::RunWithArgs(s, "tag.delete", args(R"({"tag":"P4测试"})"));
+        Check(del.ok && s.places.tags.size() == before && del.undo, L"args: tag.delete deletes it");
+        del.undo(s);
+        bool back = false;
+        for (const ColorTag& t : s.places.tags) back = back || t.name == L"P4测试";
+        Check(back, L"args: undoing tag.delete brings the tag back");
+        // The brought-back tag has a new id: undoing the create (old id) leaves it.
+        if (r.undo) r.undo(s);
+        Check(s.places.tags.size() == before + 1, L"args: an old undo does not touch a tag made since");
+        act::ArgRun made = act::RunWithArgs(s, "tag.create", args(R"({"name":"P4临时"})"));
+        if (made.undo) made.undo(s);
+        bool gone = true;
+        for (const ColorTag& t : s.places.tags) gone = gone && t.name != L"P4临时";
+        Check(made.ok && gone, L"args: undoing tag.create removes the tag");
+        act::RunWithArgs(s, "tag.delete", args(R"({"tag":"P4测试"})"));
+    }
+
+    // ---- Keymap: bad input changes nothing --------------------------------------
+    Check(!act::RunWithArgs(s, "keymap.set", args(R"({"action":"no_such","keys":"Ctrl+Shift+F"})")).ok,
+          L"args: keymap.set needs a known action");
+    Check(!act::RunWithArgs(s, "keymap.set", args(R"({"action":"NewFolder","keys":"Ctrl+Banana"})")).ok,
+          L"args: keymap.set rejects keys it cannot read");
+
+    // ---- P4b: what asks, what is locked, and their words ---------------------------
+    bool ext_words = true, locks = true, ask_gate = true;
+    for (const act::ActionEntry& e : act::kActions) {
+        if (e.risk == act::ActionRisk::External) ext_words = ext_words && act::HasAskText(e.id);
+        if (e.risk == act::ActionRisk::UserOnly) locks = locks && act::HasLockText(e.id);
+        if (e.risk == act::ActionRisk::External || e.risk == act::ActionRisk::System)
+            ask_gate = ask_gate && act::AiPolicy(e.id).gate == act::Gate::Confirm;
+    }
+    Check(ext_words, L"args: every External action has its own confirm words");
+    Check(locks, L"args: every only-you action says why and where");
+    Check(ask_gate, L"args: External and System actions ask every time");
+    Check(act::AiPolicy("assistant.prefs").gate == act::Gate::Locked && act::AiPolicy("drive.unlock").gate == act::Gate::Locked,
+          L"args: the assistant's own settings and BitLocker unlock are the user's");
+    bool runners = true;
+    for (const char* id : {"git.refresh", "git.push", "git.pull", "shell.verbs", "shell.run_verb", "toolbar.open_with",
+                           "preview.cloud_download", "drive.eject", "drive.disconnect"})
+        runners = runners && act::HasArgRunner(id);
+    Check(runners && act::AiPolicy("git.refresh").gate == act::Gate::Direct &&
+              act::AiPolicy("shell.verbs").gate == act::Gate::Direct,
+          L"args: P4b runners exist; the reads run at once");
+    {
+        const act::ArgLock e_drive = act::LockFor(s, "drive.unlock", args(R"({"drive":"E:"})"));
+        const act::ArgLock any = act::LockFor(s, "drive.unlock", args("{}"));
+        Check(!e_drive.title.empty() && !e_drive.sub.empty() && e_drive.where.find(L'E') != std::wstring::npos &&
+                  !any.where.empty() && any.where != e_drive.where,
+              L"args: the unlock lock card names the drive the user double-clicks");
+        Check(!act::LockFor(s, "app.exit", args("{}")).where.empty() &&
+                  !act::LockFor(s, "assistant.prefs", args("{}")).where.empty(),
+              L"args: exit and the assistant's settings say where the user does them");
+    }
+    // No repository, no drive, nothing selected: no card, and the runner says why.
+    Check(act::AskFor(s, "git.push", args("{}")).state == act::ArgAsk::State::Fail &&
+              !act::RunWithArgs(s, "git.push", args("{}")).ok && !act::RunWithArgs(s, "git.refresh", args("{}")).ok,
+          L"args: git outside a repository asks nothing and fails with a reason");
+    Check(act::AskFor(s, "drive.eject", args(R"({"drive":"?"})")).state == act::ArgAsk::State::Fail &&
+              !act::RunWithArgs(s, "drive.eject", args(R"({"drive":"?"})")).ok,
+          L"args: eject needs a real drive");
+    Check(act::AskFor(s, "shell.run_verb", args(R"({"verb":"打印"})")).state == act::ArgAsk::State::Fail &&
+              !act::RunWithArgs(s, "shell.run_verb", args("{}")).ok,
+          L"args: a shell item needs a selection and a name");
+    Check(!act::RunWithArgs(s, "toolbar.open_with", args(R"({"app":"no such app"})")).ok,
+          L"args: open_with names a pinned app");
+    Check(act::AskFor(s, "view.sort", args("{}")).title.empty() && !act::HasAskText("view.sort"),
+          L"args: actions without words use the generic card");
+}
+
+// P5: what AI apps (MCP) may run - the groups behind the settings switches,
+// ai.json's mcp_allow, and the checks run_actions makes before any step runs.
+void TestMcpRunActions() {
+    namespace act = app::actions;
+    namespace ai = app::ai;
+    using G = act::McpGroup;
+    size_t counts[act::kMcpGroupCount] = {};
+    for (const act::ActionEntry& e : act::kActions) ++counts[static_cast<size_t>(act::McpGroupOf(e.id))];
+    size_t total = 0;
+    for (size_t n : counts) total += n;
+    Check(total == std::size(act::kActions) && counts[static_cast<size_t>(G::View)] > 0 &&
+              counts[static_cast<size_t>(G::Locked)] == 3 && counts[static_cast<size_t>(G::Files)] == 11,
+          L"mcp: every action is in one group; 3 are only the user's, 11 change files");
+    Check(act::McpGroupOf("nav.back") == G::View && act::McpGroupOf("settings.set") == G::Organize &&
+              act::McpGroupOf("file.new_folder") == G::Create && act::McpGroupOf("file.recycle") == G::Files &&
+              act::McpGroupOf("file.delete_permanent") == G::Files && act::McpGroupOf("git.push") == G::External &&
+              act::McpGroupOf("app.exit") == G::Locked && act::McpGroupOf("assistant.prefs") == G::Locked,
+          L"mcp: sample actions sit in the groups the settings page names");
+    bool files_are_files = true;
+    for (const act::ActionEntry& e : act::kActions)
+        if (act::IsFileOp(e.id)) files_are_files = files_are_files && act::McpGroupOf(e.id) == G::Files;
+    Check(files_are_files, L"mcp: every file step is behind the 移动、重命名和删除 switch");
+
+    // ai.json: no mcp_allow = view and create; the switches write the list; locked never.
+    ai::Settings fresh;
+    Check(ai::McpAllows(fresh, "view") && ai::McpAllows(fresh, "create") && !ai::McpAllows(fresh, "organize") &&
+              !ai::McpAllows(fresh, "files") && !ai::McpAllows(fresh, "external") && !ai::McpAllows(fresh, "locked"),
+          L"mcp: without mcp_allow only 查看与界面 and 新建 are on");
+    ai::Settings edited;
+    ai::SetMcpAllow(edited, "organize", true);
+    ai::SetMcpAllow(edited, "view", false);
+    ai::SetMcpAllow(edited, "locked", true);
+    const ai::Settings back = ai::ParseSettings(ai::SerializeSettings(edited));
+    Check(back.mcp_allow_set && ai::McpAllows(back, "organize") && !ai::McpAllows(back, "view") &&
+              ai::McpAllows(back, "create") && !ai::McpAllows(back, "locked"),
+          L"mcp: switches survive ai.json; turning one on keeps the defaults; locked cannot be switched on");
+    bool malformed = true;
+    const ai::Settings old_file = ai::ParseSettings(R"({"mcp_enabled":true,"log_days":30,"clients":[],"allow":[]})", &malformed);
+    Check(!malformed && !old_file.mcp_allow_set && ai::McpAllows(old_file, "view") && !ai::McpAllows(old_file, "files"),
+          L"mcp: an ai.json from before P5 reads as the defaults");
+
+    // run_actions from an AI app: refused before any step when a step is unknown,
+    // only the user's, switched off, or a second file step. Nothing runs.
+    auto owner = std::make_unique<AppState>();
+    AppState& s = *owner;
+    s.places.persist = false;
+    s.appPrefs.persist = false;
+    s.isolatedTest = true;
+    auto run_of = [&](const char* steps_json, std::initializer_list<G> on) {
+        auto run = std::make_shared<ai::McpActionsRun>();
+        run->client = L"Selftest";
+        json::Value steps;
+        json::Parse(steps_json, steps);
+        for (size_t i = 0; i < steps.size(); ++i) run->steps.push_back(steps.at(i));
+        for (G g : on) run->allowed[static_cast<size_t>(g)] = true;
+        ai::StartMcpRunActions(s, run);
+        return run;
+    };
+    auto code_of = [](const std::shared_ptr<ai::McpActionsRun>& run) {
+        std::lock_guard lock(run->mu);
+        return run->done ? (run->outcome.ok ? std::string("ok") : run->outcome.error.code) : std::string("running");
+    };
+    const auto off = run_of(R"([{"action":"settings.set","args":{"key":"x","value":1}}])", {G::View});
+    Check(code_of(off) == "not_allowed" && off->outcome.error.message.find("step 1 (settings.set)") != std::string::npos &&
+              off->outcome.summary.find(L'\n') != std::wstring::npos,
+          L"mcp: a step whose group is off: not_allowed naming the step, with 本次运行's summary");
+    const auto locked = run_of(R"([{"action":"app.exit"}])", {G::View, G::Organize, G::Create, G::Files, G::External});
+    Check(code_of(locked) == "locked", L"mcp: an only-you action is refused (locked) with every switch on");
+    const auto unknown = run_of(R"([{"action":"no.such.action"}])", {G::View});
+    Check(code_of(unknown) == "invalid_args", L"mcp: an unknown action: invalid_args, nothing done");
+    const auto two_files = run_of(R"([{"action":"file.recycle"},{"action":"file.move_to","args":{"folder":"C:\\x"}}])",
+                                  {G::View, G::Files});
+    Check(code_of(two_files) == "invalid_args", L"mcp: two file steps in one call are refused before either runs");
+    const auto later_off = run_of(R"([{"action":"nav.back"},{"action":"git.push"}])", {G::View});
+    Check(code_of(later_off) == "not_allowed" && later_off->undo.empty(),
+          L"mcp: a later step switched off stops the call before the first step runs");
+    Check(code_of(run_of("[]", {G::View})) == "invalid_args", L"mcp: no steps: invalid_args");
+    // A new folder is asked about (and made) in the folder shown now.
+    const auto no_folder = run_of(R"([{"action":"file.new_folder","args":{"name":"A"}}])", {G::View, G::Create});
+    Check(code_of(no_folder) == "invalid_args" && no_folder->outcome.error.message.find("shows no folder") != std::string::npos,
+          L"mcp: a new folder with no folder open is refused before Pulse asks");
+    const auto moved = run_of(R"([{"action":"nav.go","args":{"path":"C:\\"}},{"action":"file.new_folder","args":{"name":"A"}}])",
+                              {G::View, G::Create});
+    Check(code_of(moved) == "invalid_args" && moved->outcome.error.message.find("step 1 (nav.go)") != std::string::npos &&
+              moved->undo.empty(),
+          L"mcp: a new folder after a step that changes the folder is refused before anything runs");
+}
+
+void TestActionState() {
+    namespace act = app::actions;
+    auto owner = std::make_unique<AppState>();
+    AppState& s = *owner;
+    s.places.persist = false;
+    s.appPrefs.persist = false;
+    s.isolatedTest = true;
+
+    // ---- Panes in screen order -------------------------------------------
+    app::LayoutTab& lt = LiveLayout(s);
+    lt.panes.clear();
+    for (int i = 0; i < 4; ++i) lt.panes.push_back(std::make_unique<Pane>());
+    std::vector<Pane*> four;
+    for (auto& p : lt.panes) four.push_back(p.get());
+    lt.layout = LayoutPreset::FourGrid;
+    lt.root = MakePresetTree(LayoutPreset::FourGrid, four);
+    lt.focused_index = 3;
+    lt.target_index = 1;
+    const wchar_t* folders[] = { L"C:\\AsT\\One", L"C:\\AsT\\Two", L"\\\\?\\C:\\AsT\\Three", L"C:\\AsT\\Four" };
+    for (int i = 0; i < 4; ++i) {
+        four[static_cast<size_t>(i)]->view.current_path = folders[i];
+        four[static_cast<size_t>(i)]->view.SetSnapshot(std::make_shared<std::vector<fs::DirEntry>>());
+    }
+    {
+        std::vector<std::pair<Pane*, D2D1_RECT_F>> laid;
+        LayoutSplitTree(*lt.root, D2D1::RectF(0, 0, 1000, 800), 8.0f, laid);
+        const std::vector<Pane*> order = act::PanesOnScreen(lt);
+        bool reading = order.size() == 4 && laid.size() == 4;
+        auto rect_of = [&](Pane* p) {
+            for (const auto& entry : laid)
+                if (entry.first == p) return entry.second;
+            return D2D1::RectF();
+        };
+        if (reading) {
+            const D2D1_RECT_F r0 = rect_of(order[0]), r1 = rect_of(order[1]), r2 = rect_of(order[2]), r3 = rect_of(order[3]);
+            reading = r0.left < r1.left && r0.top == r1.top && r2.top > r0.top && r2.left < r3.left && r2.top == r3.top;
+        }
+        Check(reading, L"state: four panes are numbered left to right, then top to bottom");
+        // A custom tree whose tree order is not reading order: [A over B] | C.
+        Pane a, b, c;
+        app::LayoutTab custom;
+        std::vector<Pane*> left_pair{ &a, &b };
+        custom.root = SplitContainer::Join(SplitOrientation::Vertical, 0.5f,
+                                           MakePresetTree(LayoutPreset::TwoHorizontal, left_pair),
+                                           SplitContainer::CreateLeaf(&c));
+        const std::vector<Pane*> mixed = act::PanesOnScreen(custom);
+        Check(mixed.size() == 3 && mixed[0] == &a && mixed[1] == &c && mixed[2] == &b,
+              L"state: a custom split is numbered by position, not tree order");
+    }
+    {
+        const json::Value state = act::StateSnapshot(s);
+        const std::vector<Pane*> order = act::PanesOnScreen(lt);
+        bool fields = state.find("panes") && state.find("panes")->items().size() == 4;
+        for (size_t i = 0; fields && i < 4; ++i) {
+            const json::Value& p = AsPane(state, i);
+            const bool is_focused = order[i] == lt.panes[3].get();
+            const bool is_target = order[i] == lt.panes[1].get();
+            fields = AsInt(p.find("pane")) == static_cast<int64_t>(i) + 1 &&
+                     p.get_bool("focused") == is_focused && p.get_bool("target") == is_target;
+        }
+        Check(fields, L"state: pane numbers, the focused pane and the target pane");
+        Check(AsPane(state, 2).get_string("folder") == "C:\\AsT\\Three",
+              L"state: folders are shown without the \\\\?\\ prefix");
+        Check(state.find("tab") && state.find("tab")->get_string("layout") == "four" &&
+              state.find("window") && state.find("window")->get_string("title") == "Four",
+              L"state: the tab's layout and the window title from the focused folder");
+        Check(state.find("preview") && state.find("preview")->is_null() && state.find("dialog") &&
+              state.find("dialog")->is_null() && state.find("panels") && state.find("file_ops") &&
+              !state.find("file_ops")->get_bool("active"),
+              L"state: no preview, dialog or file task when none is open");
+    }
+
+    // ---- One pane, the selector's fixture ----------------------------------
+    lt.panes.resize(2);
+    std::vector<Pane*> two{ lt.panes[0].get(), lt.panes[1].get() };
+    lt.layout = LayoutPreset::TwoVertical;
+    lt.root = MakePresetTree(LayoutPreset::TwoVertical, two);
+    lt.focused_index = 0;
+    lt.target_index = 1;
+    Tab& tab = lt.panes[0]->view;
+    tab.current_path = L"C:\\AsT\\Downloads";
+    tab.view_mode = ui::ViewMode::Tiles;
+    tab.sort_column = ui::SortColumn::Size;
+    tab.sort_direction = ui::SortDirection::Desc;
+    // "Now" is Wednesday 2026-10-28 15:00 local; the week began on Monday the 26th.
+    const uint64_t now = AsLocalTicks(2026, 10, 28, 15, 0);
+    const uint64_t kb = 1024, mb = 1024 * 1024;
+    auto entries = std::make_shared<std::vector<fs::DirEntry>>();
+    entries->push_back(AsEntry(L"发票-10月.pdf", 300 * kb, AsLocalTicks(2026, 10, 28, 10, 0)));     // 0
+    entries->push_back(AsEntry(L"合同扫描.PDF", 3 * mb, AsLocalTicks(2026, 10, 28, 9, 0)));         // 1
+    entries->push_back(AsEntry(L"截图.png", 1 * mb, AsLocalTicks(2026, 10, 28, 8, 0)));             // 2
+    entries->push_back(AsEntry(L"素材包.zip", 48 * mb, AsLocalTicks(2026, 10, 27, 21, 0)));         // 3
+    entries->push_back(AsEntry(L"说明书.pdf", 2 * mb, AsLocalTicks(2026, 10, 25, 12, 0)));          // 4
+    entries->push_back(AsEntry(L"视频.mp4", 150 * mb, AsLocalTicks(2026, 9, 14, 12, 0)));           // 5
+    entries->push_back(AsEntry(L"资料", 0, AsLocalTicks(2026, 10, 28, 7, 0), true));                // 6
+    entries->push_back(AsEntry(L"隐藏.pdf", 1 * kb, AsLocalTicks(2026, 10, 28, 7, 0), false,
+                               FILE_ATTRIBUTE_HIDDEN));                                             // 7
+    entries->push_back(AsEntry(L"logo.png", 20 * kb, AsLocalTicks(2026, 10, 26, 11, 0)));           // 8
+    tab.SetSnapshot(entries);
+
+    Check(AsPick(s, R"({"extensions":["pdf"],"modified":"today"})", now) == std::vector<int>({0, 1}) &&
+              tab.SelectedIndices() == std::vector<int>({0, 1}),
+          L"selector: today's PDFs are selected; hidden files are never candidates");
+    Check(AsPick(s, R"({"name":"*.pdf"})", now) == std::vector<int>({0, 1, 4}),
+          L"selector: a wildcard name matches whole names, ignoring case");
+    Check(AsPick(s, R"({"name":["发票","logo"]})", now) == std::vector<int>({0, 8}),
+          L"selector: names without wildcards match what they contain, any of them");
+    Check(AsPick(s, R"({"type":"image"})", now) == std::vector<int>({2, 8}) &&
+              AsPick(s, R"({"type":"folder"})", now) == std::vector<int>({6}),
+          L"selector: type uses search_files' kinds");
+    Check(AsPick(s, R"({"size":{"larger_than":"100MB"}})", now) == std::vector<int>({5}) &&
+              AsPick(s, R"({"size":{"smaller_than":"1MB"}})", now) == std::vector<int>({0, 8}),
+          L"selector: sizes compare files only, never folders");
+    Check(AsPick(s, R"({"modified":"yesterday"})", now) == std::vector<int>({3}) &&
+              AsPick(s, R"({"modified":"this_week"})", now) == std::vector<int>({0, 1, 2, 3, 6, 8}) &&
+              AsPick(s, R"({"modified":"last_month"})", now) == std::vector<int>({5}) &&
+              AsPick(s, R"({"modified":{"after":"2026-10-25","before":"2026-10-25"}})", now) ==
+                  std::vector<int>({4}),
+          L"selector: date presets start on Monday and include the whole last day");
+    AsPick(s, R"({"extensions":["pdf"],"modified":"today"})", now);
+    AsPick(s, R"({"items":["LOGO.png"],"mode":"add"})", now);
+    Check(tab.SelectedIndices() == std::vector<int>({0, 1, 8}), L"selector: add keeps the selection and adds");
+    tab.SelectIndices({0, 6});
+    AsPick(s, R"({"selected":true,"type":"folder","mode":"remove"})", now);
+    Check(tab.SelectedIndices() == std::vector<int>({0}), L"selector: remove drops matches within the selection");
+    {
+        const app::TagId id = s.places.CreateTag(L"AsT 重要", 0xE81123);
+        int tag_index = -1;
+        for (size_t i = 0; i < s.places.tags.size(); ++i)
+            if (s.places.tags[i].id == id) tag_index = static_cast<int>(i);
+        s.places.SetTagged(tag_index, L"C:\\AsT\\Downloads\\说明书.pdf", true);
+        std::string reason;
+        Check(tag_index >= 0 && AsPick(s, R"({"tag":"ast 重要"})", now) == std::vector<int>({4}),
+              L"selector: a tag's name selects the items carrying it");
+        AsPick(s, R"({"tag":"没有这个标签"})", now, &reason);
+        Check(reason == "unknown_tag", L"selector: an unknown tag says so");
+    }
+    {
+        tab.SelectIndices({2});
+        std::string reason;
+        const auto none = AsPick(s, R"({"name":"不存在"})", now, &reason);
+        Check(none.empty() && reason == "no_match" && tab.SelectedIndices() == std::vector<int>({2}),
+              L"selector: nothing matched leaves the selection alone and says why");
+        tab.filter_text = L"发票";
+        const auto hidden = AsPick(s, R"({"name":"*.png"})", now, &reason);
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        json::Parse(R"({"name":"*.png"})", args);
+        act::ParseSelector(args, now, sel, error);
+        const act::SelectorMatch m = act::ResolveSelector(s, sel);
+        Check(hidden.empty() && reason == "filter_hides" && m.hidden_by_filter == 2 &&
+                  tab.SelectedIndices() == std::vector<int>({2}),
+              L"selector: items the filter box hides are not selected, only counted");
+        tab.filter_text.clear();
+        tab.loading = true;
+        AsPick(s, R"({"name":"*.png"})", now, &reason);
+        Check(reason == "loading", L"selector: a pane still loading asks to wait");
+        tab.loading = false;
+    }
+    {
+        Tab& right = lt.panes[1]->view;
+        right.current_path = L"C:\\AsT\\Desktop";
+        auto r = std::make_shared<std::vector<fs::DirEntry>>();
+        r->push_back(AsEntry(L"a.txt", 1, now));
+        r->push_back(AsEntry(L"b.mp4", 200 * mb, now));
+        right.SetSnapshot(r);
+        Check(AsPick(s, R"({"pane":2,"type":"video","size":{"larger_than":"100MB"}})", now) ==
+                  std::vector<int>({1}) &&
+                  AsPick(s, R"({"pane":"target","name":"a.txt"})", now) == std::vector<int>({0}) &&
+                  right.SelectedIndices() == std::vector<int>({0}),
+              L"selector: pane numbers and the target pane pick the pane");
+    }
+    {
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        int bad = 0;
+        for (const char* text : { R"({})", R"({"mode":"swap","name":"a"})", R"({"type":"car"})",
+                                  R"({"modified":"tomorrow"})", R"({"size":{"larger_than":"lots"}})",
+                                  R"({"pane":5,"name":"a"})", R"({"modified":{"after":"2026-13-01"}})" })
+            if (json::Parse(text, args) && !act::ParseSelector(args, now, sel, error) && !error.empty()) ++bad;
+        Check(bad == 7, L"selector: invalid conditions are rejected with a reason");
+        uint64_t bytes = 0;
+        Check(act::ParseByteSize(L"1.5 GB", bytes) && bytes == 1610612736ull &&
+                  act::ParseByteSize(L"500k", bytes) && bytes == 512000 &&
+                  act::ParseByteSize(L"2048", bytes) && bytes == 2048 && !act::ParseByteSize(L"abc", bytes),
+              L"selector: byte sizes in B, KB, MB and GB");
+        Check(act::WildcardMatch(L"aXXbc.txt", L"A*B?.TXT") && act::WildcardMatch(L"", L"*") &&
+                  !act::WildcardMatch(L"x.pdf.bak", L"*.pdf") && act::WildcardMatch(L"报告-最终.docx", L"报告*.docx"),
+              L"selector: wildcards * and ?, ignoring case");
+    }
+    {
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        json::Parse(R"({"extensions":["pdf"]})", args);
+        act::ParseSelector(args, now, sel, error);
+        const json::Value report = act::ApplySelection(s, act::ResolveSelector(s, sel));
+        Check(AsInt(report.find("matched")) == 3 && AsInt(report.find("selected")) == 3 &&
+                  report.find("names") && report.find("names")->items().size() == 3 &&
+                  AsInt(report.find("bytes")) == static_cast<int64_t>(300 * kb + 3 * mb + 2 * mb),
+              L"selector: the report gives matches, the selection, names and bytes");
+    }
+    {
+        // P4d: a name search's results come from all over. search_done is
+        // over once every page is in; the match counts their folders.
+        Tab& right = lt.panes[1]->view;
+        const std::wstring keep_path = right.current_path;
+        const fs::SnapshotPtr keep_rows = right.snapshot;
+        right.current_path = L"pulse:search:发票";
+        auto hits = std::make_shared<std::vector<fs::DirEntry>>();
+        for (const wchar_t* path : { L"C:\\AsT\\A\\发票1.pdf", L"C:\\AsT\\B\\发票2.PDF", L"C:\\AsT\\B\\发票3.pdf",
+                                     L"C:\\AsT\\C\\发票.xlsx" }) {
+            fs::DirEntry e = AsEntry(wcsrchr(path, L'\\') + 1, 10 * kb, now);
+            e.full_path = path;
+            hits->push_back(std::move(e));
+        }
+        right.search_entries = hits;
+        right.SetSnapshot(hits);
+        right.search_total = hits->size();
+        right.search_next_offset = hits->size();
+        act::WaitSpec spec;
+        spec.kind = act::WaitKind::SearchDone;
+        spec.pane = 2;
+        json::Value out;
+        Check(act::WaitReady(s, spec, out) && out.get_bool("ok") && out.get_bool("complete") &&
+                  AsInt(out.find("results")) == 4,
+              L"wait: search_done is over once a name search has every result");
+        right.search_total = 9;            // five more than scrolling loaded
+        right.search_loading_more = true;  // and their page is on its way
+        out = json::Value::Object();
+        Check(!act::WaitReady(s, spec, out) && AsInt(out.find("total")) == 9,
+              L"wait: search_done waits while results are still coming");
+        right.search_loading_more = false;
+        right.search_total = 4;
+        spec.pane = 1;
+        out = json::Value::Object();
+        Check(act::WaitReady(s, spec, out) && out.get_bool("ok") && !out.find("results"),
+              L"wait: search_done in a folder has nothing to wait for");
+        Check(act::PaneShowsSearch(s, 2) && !act::PaneShowsSearch(s, 1), L"selector: a search page is told from a folder");
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        json::Parse(R"({"pane":2,"extensions":["pdf"]})", args);
+        act::ParseSelector(args, now, sel, error);
+        const act::SelectorMatch m = act::ResolveSelector(s, sel);
+        Check(m.results && m.reason.empty() && m.matched == std::vector<int>({0, 1, 2}) && m.folders == 2 &&
+                  m.bytes == 30 * kb,
+              L"selector: in search results it matches every result and counts their folders");
+        json::Parse(R"({"wait":"search_done","timeout_ms":99999})", args);
+        Check(act::ParseWait(args, spec, error) && spec.kind == act::WaitKind::SearchDone && spec.timeout_ms == 30000,
+              L"wait: search_done is capped at 30 s");
+        right.search_entries.reset();
+        right.search_total = right.search_next_offset = 0;
+        right.current_path = keep_path;
+        right.SetSnapshot(keep_rows);
+    }
+    {
+        // P4d: a content search's results live in a store; they are matched
+        // on its thread and handed back from a timer, never at once.
+        Tab& right = lt.panes[1]->view;
+        const std::wstring keep_path = right.current_path;
+        const fs::SnapshotPtr keep_rows = right.snapshot;
+        right.current_path = L"pulse:search?content:ZX2026";
+        auto store = std::make_shared<index::ContentResultStore>(nullptr, 0);
+        std::vector<index::ContentHit> hits;
+        for (const wchar_t* path : { L"C:\\AsT\\甲\\记录1.txt", L"C:\\AsT\\乙\\记录2.txt", L"C:\\AsT\\乙\\备注.md",
+                                     L"C:\\AsT\\丙\\记录3.txt" }) {
+            index::ContentHit hit;
+            hit.path = path;
+            hit.name = wcsrchr(path, L'\\') + 1;
+            hit.size = 100;
+            hit.modified = now;
+            hits.push_back(std::move(hit));
+        }
+        const bool filled = store->Append(hits);
+        right.content_results = store;
+        right.SetSnapshot(std::make_shared<const std::vector<fs::DirEntry>>());
+        right.ClearSelection();
+        json::Value args;
+        act::Selector sel;
+        std::string error;
+        json::Parse(R"({"pane":2,"extensions":["txt"]})", args);
+        act::ParseSelector(args, now, sel, error);
+        bool called = false;
+        act::SelectorMatch got;
+        const bool started = act::ResolveSelectorAsync(s, sel, [&](AppState&, act::SelectorMatch m) {
+            called = true;
+            got = std::move(m);
+        });
+        const bool later = !called;
+        AsPump([&] { return called; }, 5000);
+        Check(filled && started && later && called && got.reason.empty() && got.results && got.matched.size() == 3 &&
+                  got.folders == 3 && got.bytes == 300,
+              L"selector: content search results are matched off the UI thread, with their folders and bytes");
+        act::ApplySelection(s, got);
+        Check(right.SelectedCount() == 3, L"selector: the match of content search results is selected");
+        json::Parse(R"({"pane":2,"tag":"AsT 重要"})", args);
+        act::ParseSelector(args, now, sel, error);
+        called = false;
+        act::ResolveSelectorAsync(s, sel, [&](AppState&, act::SelectorMatch m) {
+            called = true;
+            got = std::move(m);
+        });
+        AsPump([&] { return called; }, 3000);
+        Check(called && got.reason == "tag_in_results" && right.SelectedCount() == 3,
+              L"selector: a tag in content search results says why and changes nothing");
+        json::Parse(R"({"pane":1,"name":"a"})", args);
+        act::ParseSelector(args, now, sel, error);
+        Check(!act::ResolveSelectorAsync(s, sel, [](AppState&, act::SelectorMatch) {}),
+              L"selector: a folder is matched at once, not through the store");
+        right.ClearSelection();
+        right.content_results.reset();
+        right.current_path = keep_path;
+        right.SetSnapshot(keep_rows);
+    }
+
+    // ---- Caps -----------------------------------------------------------------
+    {
+        auto many = std::make_shared<std::vector<fs::DirEntry>>();
+        for (int i = 0; i < 250; ++i)
+            many->push_back(AsEntry((L"f" + std::to_wstring(1000 + i) + L".txt").c_str(), 1, now));
+        tab.SetSnapshot(many);
+        tab.SelectAll();
+        Tab& right = lt.panes[1]->view;
+        right.SetSnapshot(many);
+        right.SelectAll();
+        const std::wstring dir = kOpsTestRoot + L"\\action_state";
+        CreateDirectoryW(kOpsTestRoot.c_str(), nullptr);
+        CreateDirectoryW(dir.c_str(), nullptr);
+        std::vector<std::wstring> staged;
+        for (int i = 0; i < 12; ++i) {
+            const std::wstring p = dir + L"\\tray" + std::to_wstring(i) + L".txt";
+            HANDLE h = CreateFileW(p.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+            staged.push_back(p);
+        }
+        s.tray.Collect(staged, false);
+        const json::Value state = act::StateSnapshot(s);
+        const json::Value& left = AsPane(state, 0);
+        const json::Value& other = AsPane(state, 1);
+        const json::Value* lsel = left.find("selected");
+        const json::Value* osel = other.find("selected");
+        Check(lsel && AsInt(lsel->find("count")) == 250 && lsel->find("paths") &&
+                  lsel->find("paths")->items().size() == act::kStateFocusedPaths &&
+                  lsel->find("paths")->items()[0].as_string() == "C:\\AsT\\Downloads\\f1000.txt",
+              L"state: the focused pane lists 200 of 250 selected paths and the count");
+        Check(osel && AsInt(osel->find("count")) == 250 && osel->find("names") &&
+                  osel->find("names")->items().size() == act::kStateOtherNames && !osel->find("paths"),
+              L"state: other panes list 20 names");
+        const json::Value* tray = state.find("tray");
+        Check(tray && AsInt(tray->find("count")) == 12 && tray->find("names") &&
+                  tray->find("names")->items().size() == act::kStateTrayNames,
+              L"state: the tray gives its count and 10 names");
+        Check(left.get_string("view") == "tiles" && left.find("sort") &&
+                  left.find("sort")->items().size() == 2 && left.find("sort")->items()[0].as_string() == "size" &&
+                  left.find("sort")->items()[1].as_string() == "desc" && state.find("tab") &&
+                  state.find("tab")->get_string("layout") == "side_by_side",
+              L"state: view, sort and layout use the names get_state documents");
+        s.tray.Clear();
+        for (const std::wstring& p : staged) DeleteFileW(p.c_str());
+        RemoveDirectoryW(dir.c_str());
+    }
+
+    // ---- Waiting ----------------------------------------------------------------
+    {
+        act::WaitSpec spec;
+        std::string error;
+        json::Value args;
+        json::Parse(R"({"wait":"preview_open","timeout_ms":99999})", args);
+        Check(act::ParseWait(args, spec, error) && spec.kind == act::WaitKind::PreviewOpen && spec.timeout_ms == 10000,
+              L"wait: timeouts are capped per kind");
+        json::Parse(R"({"wait":"listing_loaded"})", args);
+        Check(act::ParseWait(args, spec, error) && spec.timeout_ms == 5000, L"wait: listing_loaded waits 5 s by default");
+        json::Parse(R"({"wait":"soon"})", args);
+        Check(!act::ParseWait(args, spec, error), L"wait: an unknown kind is rejected");
+
+        tab.loading = true;
+        spec = {};
+        spec.kind = act::WaitKind::ListingLoaded;
+        spec.timeout_ms = 3000;
+        bool called = false;
+        json::Value got;
+        ULONGLONG loaded_at = 0;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        const bool returned_at_once = !called;
+        AsPump([&] { return called; }, 4000, [&](ULONGLONG elapsed) {
+            if (elapsed >= 150 && tab.loading) { tab.loading = false; loaded_at = GetTickCount64(); }
+        });
+        Check(returned_at_once && called && got.get_bool("ok") && AsInt(got.find("loaded")) == 250 &&
+                  loaded_at && GetTickCount64() - loaded_at < 1000,
+              L"wait: listing_loaded returns soon after the listing arrives, without blocking");
+
+        tab.loading = true;
+        spec.timeout_ms = 200;
+        called = false;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        AsPump([&] { return called; }, 3000);
+        Check(called && !got.get_bool("ok") && got.get_bool("timed_out") && AsInt(got.find("loaded")) == 250,
+              L"wait: a timeout reports how far it got, not an error");
+        tab.loading = false;
+
+        spec = {};
+        spec.kind = act::WaitKind::OpFinished;
+        called = false;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        Check(called && got.get_bool("ok"), L"wait: op_finished with nothing running returns at once");
+    }
+    {
+        const std::wstring dir = kOpsTestRoot + L"\\action_state_ops";
+        CreateDirectoryW(kOpsTestRoot.c_str(), nullptr);
+        CreateDirectoryW(dir.c_str(), nullptr);
+        CreateDirectoryW((dir + L"\\dst").c_str(), nullptr);
+        const std::wstring src = dir + L"\\copy-me.bin";
+        HANDLE h = CreateFileW(src.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            std::vector<char> block(1 << 20, 'p');
+            DWORD written = 0;
+            for (int i = 0; i < 4; ++i) WriteFile(h, block.data(), static_cast<DWORD>(block.size()), &written, nullptr);
+            CloseHandle(h);
+        }
+        s.ops.Start([] {});
+        Sleep(800);  // the ops worker brings up pulse_shell.exe
+        ops::OpRequest r;
+        r.type = ops::OpType::Copy;
+        r.sources.push_back(src);
+        r.dest_dir = dir + L"\\dst";
+        const uint64_t task = s.ops.Submit(std::move(r));
+        act::WaitSpec spec;
+        spec.kind = act::WaitKind::OpFinished;
+        spec.task = task;
+        spec.timeout_ms = 30000;
+        bool called = false;
+        json::Value got;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        AsPump([&] { return called; }, 35000);
+        Check(task && called && got.get_bool("ok") && got.get_string("phase") == "completed" &&
+                  AsInt(got.find("task")) == static_cast<int64_t>(task) && Exists(dir + L"\\dst\\copy-me.bin"),
+              L"wait: op_finished returns a real copy's result");
+        spec.task = 1;  // long gone or never this run's
+        called = false;
+        act::WaitFor(s, spec, nullptr, [&](AppState&, json::Value out) { called = true; got = std::move(out); });
+        Check(task <= 1 || (called && !got.get_bool("ok")), L"wait: an old task number does not hang");
+        s.ops.Stop();
+        DeleteFileW((dir + L"\\dst\\copy-me.bin").c_str());
+        DeleteFileW(src.c_str());
+        RemoveDirectoryW((dir + L"\\dst").c_str());
+        RemoveDirectoryW(dir.c_str());
+    }
+}
+
+void TestIntegrationCompat() {
+    AppPrefs prefs;
+    prefs.persist = false;
+    ContextMenuPrefs context;
+    context.persist = false;
+    pulse::index::IndexClient index;
+    pulse::index::NetworkAgentClient network;
+    SettingsController settings;
+    settings.BindUi(prefs, context, index, network, {});
+    AppPrefs fresh;
+    fresh.FromJson(L"{}");
+    Check(!fresh.integration_folders_compat, L"compat: off by default");
+    settings.IntegrationAction(0);
+    Check(prefs.integration_enabled && prefs.open_folders_in_pulse && settings.IntegrationState() == 1,
+          L"compat: the master switch registers the folder verb by default");
+    settings.IntegrationAction(9);
+    Check(prefs.integration_folders_compat && !prefs.open_folders_in_pulse && prefs.integration_folders &&
+              prefs.take_over_win_e && prefs.take_over_this_pc && settings.IntegrationState() == 1,
+          L"compat: on drops only the folder verb and reads healthy");
+    AppPrefs loaded;
+    loaded.FromJson(prefs.ToJson());
+    Check(loaded.integration_folders_compat && loaded.integration_folders,
+          L"compat: the choice round trips through app.json");
+    settings.IntegrationAction(7);
+    settings.IntegrationAction(7);
+    Check(!prefs.open_folders_in_pulse && settings.IntegrationState() == 1,
+          L"compat: re-applying another scope leaves the folder verb off");
+    settings.IntegrationAction(9);
+    Check(!prefs.integration_folders_compat && prefs.open_folders_in_pulse && settings.IntegrationState() == 1,
+          L"compat: off registers the folder verb again");
+    settings.IntegrationAction(0);
+    settings.IntegrationAction(9);
+    Check(!prefs.integration_enabled && !prefs.open_folders_in_pulse && prefs.integration_folders_compat &&
+              settings.IntegrationState() == 0,
+          L"compat: with the master off it is only a saved choice");
 }
 
 void TestQuickAccessPinReorder() {
@@ -4891,7 +6762,7 @@ void TestQuickAccess() {
         state.sidebarQuickAccessHiddenMask = 0x1Fu;
         state.sidebarHiddenMask = 1u << static_cast<int>(SidebarSectionId::QuickAccess);
         ToggleSidebarSection(state, static_cast<int>(SidebarSectionId::QuickAccess));
-        Check(state.sidebarQuickAccessHiddenMask == 0,
+        Check(state.sidebarQuickAccessHiddenMask == kDefaultQuickAccessHiddenMask,
               L"sidebar sections: unhiding quick access restores its built-in links");
         SetEverySidebarSectionCollapsed(state, true);
         Check(state.sidebarCollapsedMask == (1u << kSidebarSectionCount) - 1u,
@@ -5129,6 +7000,16 @@ void TestQuickAccess() {
               L"quick access: badge text and color survive a restart");
         WriteUtf8FileAtomic(test_dir + L"\\places.json", L"{\"starred_items\":[]}");
         Check(loaded.Load() && loaded.quick_access_paths.empty(), L"quick access: old profile defaults empty");
+        // Deleting every tag sticks: a saved empty list is not re-seeded on the
+        // next start, while a profile that never saved tags still gets them.
+        // No writer may outlive the fixture directory, so nothing is queued.
+        loaded.persist = false;
+        WriteUtf8FileAtomic(test_dir + L"\\places.json", L"{}");
+        WriteUtf8FileAtomic(test_dir + L"\\tags.json",
+                            L"{\"version\":2,\"tags_generation\":\"5\",\"tags\":[\n  ]\n}\n");
+        Check(loaded.Load() && loaded.tags.empty(), L"tags: a saved empty tag list stays empty after a restart");
+        DeleteFileW((test_dir + L"\\tags.json").c_str());
+        Check(loaded.Load() && loaded.tags.size() == 7, L"tags: a profile without saved tags gets the defaults");
     }
     SetEnvironmentVariableW(L"PULSE_TEST_DATA_DIR", previous[0] ? previous : nullptr);
     cat.persist = false;
@@ -5828,18 +7709,23 @@ void TestViewLayouts() {
           L"view: icon and filename share the cell center axis");
     ui::ViewLayout hidpiIcons(ui::ViewMode::ExtraLargeIcons,
         D2D1::RectF(0, 0, 900, 700), 20, 0, 0, 1.5f);
-    // e922dbc: the tier keeps 240 device pixels of artwork; cells are at least
-    // that plus 16 DIP and share the row's leftover (900 px: 3 x 300).
+    // e922dbc: the tier keeps 240 device pixels of artwork. Cells are that plus
+    // 8 DIP, absorb at most 16 DIP of the leftover and the row is centred
+    // (900 px at 150%: 3 x 276 with 9 px gaps, 27 px margins).
     const auto& xl = hidpiIcons.Metrics();
-    Check(std::abs(xl.icon_size - 240.0f) < 0.01f && xl.cell_width + 0.01f >= 240.0f + 16.0f * 1.5f &&
-          std::abs(xl.cell_width * static_cast<float>(xl.columns) - 900.0f) < 0.01f,
+    const D2D1_RECT_F xl_first = hidpiIcons.ItemRect(0);
+    const D2D1_RECT_F xl_last = hidpiIcons.ItemRect(xl.columns - 1);
+    Check(std::abs(xl.icon_size - 240.0f) < 0.01f && xl.columns == 3 &&
+          xl.cell_width + 0.01f >= 240.0f + 8.0f * 1.5f &&
+          xl.cell_width <= 240.0f + 24.0f * 1.5f + 0.01f &&
+          std::abs(xl_first.left - (900.0f - xl_last.right)) < 0.01f,
           L"view: extra-large Explorer tier remains capped in physical pixels");
     Check(hidpiIcons.NameRect(0).top >= hidpiIcons.IconRect(0).bottom,
           L"view: extra-large filename never overlaps icon bounds");
     ui::ViewLayout hidpiLarge(ui::ViewMode::LargeIcons,
         D2D1::RectF(0, 0, 900, 700), 20, 0, 0, 1.5f);
     Check(std::abs(hidpiLarge.Metrics().icon_size - 144.0f) < 0.01f &&
-          hidpiLarge.Metrics().cell_width >= 180.0f &&
+          hidpiLarge.Metrics().cell_width + 0.01f >= 144.0f + 8.0f * 1.5f &&
           hidpiLarge.NameRect(0).top >= hidpiLarge.IconRect(0).bottom,
           L"view: large icons scale with DPI and keep filename below image");
     ui::ViewLayout hidpiMedium(ui::ViewMode::MediumIcons,
@@ -5847,16 +7733,67 @@ void TestViewLayouts() {
     Check(std::abs(hidpiMedium.Metrics().icon_size - 72.0f) < 0.01f &&
           hidpiMedium.NameRect(0).top >= hidpiMedium.IconRect(0).bottom,
           L"view: medium icons scale with DPI and keep filename below image");
+    // Icon grid density: more columns than the old fill-the-row grid (medium
+    // at 620 DIP: 5 -> 6, large at 1000 DIP: 8 -> 9), blank gaps, centred rows.
+    ui::ViewLayout medium620(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 620, 600), 60, 0, 0, 1.0f);
+    ui::ViewLayout large1000(ui::ViewMode::LargeIcons, D2D1::RectF(0, 0, 1000, 600), 60, 0, 0, 1.0f);
+    Check(medium620.Metrics().columns == 6 && large1000.Metrics().columns == 9,
+          L"view: icon grids fit more columns (medium 620: 6, large 1000: 9)");
+    const D2D1_RECT_F m0 = medium620.ItemRect(0), m1 = medium620.ItemRect(1), m6 = medium620.ItemRect(6);
+    Check(std::abs(m1.left - m0.right - 6.0f) < 0.01f && std::abs(m6.top - m0.bottom - 2.0f) < 0.01f &&
+          medium620.HitTest(m0.right + 3.0f, (m0.top + m0.bottom) * 0.5f) == -1,
+          L"view: icon grid gaps are 6 x 2 DIP and blank to hit-testing");
+    ui::ViewLayout spare(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 380, 600), 3, 0, 0, 1.0f);
+    const auto& sm = spare.Metrics();
+    Check(sm.columns == 3 && std::abs(sm.cell_width - 106.0f) < 0.01f &&
+          std::abs(spare.ItemRect(0).left - (380.0f - spare.ItemRect(2).right)) < 0.01f,
+          L"view: a wide leftover centres the row instead of stretching cells past +16 DIP");
+    Check(std::abs(spare.ThumbnailRect(0).top - spare.ItemRect(0).top - 4.0f) < 0.01f &&
+          std::abs(spare.NameRect(0).top - spare.ThumbnailRect(0).bottom - 4.0f) < 0.01f &&
+          spare.NameRect(0).bottom <= spare.ItemRect(0).bottom,
+          L"view: icon cells keep thumbnail and two name lines inside the tighter cell");
+    // A folder's names get 1..4 lines; the name block resizes the cells.
+    {
+        std::vector<int> short_names(20, 1), with_dirs(20, 1), very_long(10, 5);
+        std::vector<int> mixed(19, 1), long_names{1, 2, 3, 3, 3, 3, 3, 3};
+        mixed.push_back(2);
+        Check(ui::AutoIconNameLines(short_names, false) == 1 && ui::AutoIconNameLines(with_dirs, true) == 2 &&
+              ui::AutoIconNameLines(mixed, false) == 2 && ui::AutoIconNameLines(long_names, false) == 3 &&
+              ui::AutoIconNameLines(very_long, false) == 4,
+              L"view: folder name lines follow the 75th/95th percentile rule (1..4)");
+        ui::ViewLayout two(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 620, 600), 60, 0, 0, 1.0f);
+        ui::ViewLayout three(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 620, 600), 60, 0, 0, 1.0f,
+                             ui::IconGridNameBlockDip(3));
+        const D2D1_RECT_F name3 = three.NameRect(0), size3 = three.FolderSizeRect(0);
+        Check(two.Metrics().name_lines == 2 && three.Metrics().name_lines == 3 &&
+              std::abs(three.Metrics().cell_height - two.Metrics().cell_height - 18.0f) < 0.01f &&
+              std::abs(name3.bottom - name3.top - 56.0f) < 0.01f && name3.bottom <= three.ItemRect(0).bottom &&
+              std::abs(size3.top - name3.top - 36.0f) < 0.01f &&
+              three.Metrics().columns == two.Metrics().columns,
+              L"view: a three-line folder grows cells by one line and keeps the size on the last line");
+        ui::ViewLayout wide(ui::ViewMode::MediumIcons, D2D1::RectF(0, 0, 380, 600), 3, 0, 0, 1.0f);
+        Check(std::abs(ui::IconGridNameWidth(ui::ViewMode::MediumIcons, 1.0f) - 100.0f) < 0.01f &&
+              std::abs(ui::IconGridNameWidth(ui::ViewMode::LargeIcons, 1.0f) - 114.0f) < 0.01f &&
+              std::abs(ui::IconGridNameWidth(ui::ViewMode::ExtraLargeIcons, 1.5f) - 267.0f) < 0.01f &&
+              two.NameRect(0).right - two.NameRect(0).left <= ui::IconGridNameWidth(ui::ViewMode::MediumIcons, 1.0f) &&
+              std::abs(wide.NameRect(0).right - wide.NameRect(0).left -
+                       ui::IconGridNameWidth(ui::ViewMode::MediumIcons, 1.0f)) < 0.01f,
+              L"view: folder name lines are measured at the widest cell width");
+    }
     ui::ViewLayout list(ui::ViewMode::List, viewport, 1000, 0, 0, 1.0f);
     Check(list.MaxScrollX() > 0 && list.MaxScrollY() == 0,
           L"view: list is column-major with horizontal scrolling");
     auto menu = BuildViewMenu(ui::ViewMode::Details);
-    Check(menu.size() == 9 && menu[5].radio && !menu[0].radio &&
-          menu[8].command == CmdDetailsPanel,
-          L"view: menu has eight view choices plus details panel");
+    Check(menu.size() == 10 && menu[5].radio && !menu[0].radio && !menu[8].radio &&
+          menu[8].command == CmdViewWall && menu[9].command == CmdDetailsPanel,
+          L"view: menu has eight view choices, the photo wall, and the details panel");
+    const auto wall_menu = BuildViewMenu(ui::ViewMode::LargeIcons, false, false, true);
+    const auto wall_details = BuildViewMenu(ui::ViewMode::Details, false, false, true);
+    Check(wall_menu[8].radio && !wall_menu[1].radio && wall_details[5].radio && !wall_details[8].radio,
+          L"view: the photo wall row is checked only while an icon view shows the wall");
     const auto folder_menu = BuildViewMenu(ui::ViewMode::Details, false, true);
-    Check(folder_menu.size() == 10 && folder_menu.back().command == CmdApplyViewToAllFolders &&
-          folder_menu[8].separator_after,
+    Check(folder_menu.size() == 11 && folder_menu.back().command == CmdApplyViewToAllFolders &&
+          folder_menu[9].separator_after,
           L"view: real folders offer apply view and sort to all folders");
     Check(menu[0].glyph_scale > menu[1].glyph_scale &&
           menu[1].glyph_scale > menu[2].glyph_scale,
@@ -5945,7 +7882,8 @@ void TestListColumns() {
         ui::PaneViewModel vm;
         vm.view_mode = ui::ViewMode::Details;
         vm.is_search = true;
-        Check(r.ListRowHeightDip(vm, pane(700.0f)) >= 42.0f && r.ListRowHeightDip(vm, pane(1000.0f)) < 42.0f,
+        Check(r.ListRowHeightDip(vm, pane(700.0f)).row_height_dip >= 42.0f &&
+              r.ListRowHeightDip(vm, pane(1000.0f)).row_height_dip < 42.0f,
               L"columns: only the two-line search layout grows the row height");
         std::array<float, 4> search_dividers{};
         search_dividers = r.ResizeSearchColumnDivider(pane(1000.0f), search_dividers, 0,
@@ -6026,6 +7964,26 @@ void TestOptionalColumns() {
     }
     Check(order_kept && filled,
           L"optional columns: narrowing drops accessed, created, type, then modified");
+    // 状态: chosen by default, drawn only for cloud folders, right after the name.
+    r.SetDetailsColumns(ui::kDetailsColumnsDefault);
+    const auto cloud = r.DetailsColumns(pane(1200.0f), {}, false, {}, true);
+    const auto plain = r.DetailsColumns(pane(1200.0f), {}, false, {}, false);
+    const auto cloud_search = r.DetailsColumns(pane(1200.0f), {}, true, {}, true);
+    Check(cloud.count == 5 && cloud.kinds[1] == K::Status && cloud.kinds[2] == K::Date && fills(cloud) &&
+              !plain.Has(K::Status) && plain.count == 4 && !cloud_search.Has(K::Status),
+          L"cloud status: shown after the name in cloud folders only, never in search results");
+    bool status_order = true;
+    for (float w = 260.0f; w <= 1200.0f; w += 20.0f) {
+        const auto c = r.DetailsColumns(pane(w), {}, false, {}, true);
+        status_order &= fills(c) && (c.Has(K::Status) || !c.Has(K::Type)) && (c.Has(K::Date) || !c.Has(K::Status));
+    }
+    Check(status_order, L"cloud status: narrowing drops type, then status, then modified");
+    ui::DetailsColumnWidths status_widths{};
+    status_widths = r.ResizeDetailsColumnDivider(pane(1200.0f), status_widths, 1,
+                                                 cloud.DividerX(1) + 30.0f * scale, true);
+    Check(status_widths[0] > 1.0f && status_widths[1] <= 1.0f,
+          L"cloud status: the divider after status resizes modified, status keeps its fitted width");
+    r.SetDetailsColumns(ui::kDetailsColumnsAll);
     const auto search = r.DetailsColumns(pane(1600.0f), {}, true);
     Check(!search.Has(K::Created) && !search.Has(K::Accessed) && search.Has(K::Path) &&
           search.Has(K::Date) && fills(search),
@@ -6121,17 +8079,18 @@ void TestOptionalColumns() {
     // Header menu.
     const auto menu = BuildDetailsColumnMenu(ui::kDetailsColumnsDefault);
     const int created_cmd = kDetailsColumnToggleBase + static_cast<int>(K::Created);
-    Check(menu.size() == 7 && menu[0].checked && !menu[0].enabled && menu[1].checked &&
+    Check(menu.size() == 8 && menu[0].checked && !menu[0].enabled && menu[1].checked &&
           menu[2].command == created_cmd && !menu[2].checked && menu[5].checked &&
-          menu[5].separator_after && menu[6].command == kDetailsColumnsReset && !menu[6].enabled,
-          L"optional columns: header menu lists name (fixed), the five columns and reset");
+          menu[6].command == kDetailsColumnToggleBase + static_cast<int>(K::Status) && menu[6].checked &&
+          menu[6].separator_after && menu[7].command == kDetailsColumnsReset && !menu[7].enabled,
+          L"optional columns: header menu lists name (fixed), the six columns and reset");
     const uint32_t with_created = ApplyDetailsColumnCommand(ui::kDetailsColumnsDefault, created_cmd);
     Check(with_created == (ui::kDetailsColumnsDefault | ui::kDetailsColumnCreated) &&
           ApplyDetailsColumnCommand(with_created, created_cmd) == ui::kDetailsColumnsDefault &&
           ApplyDetailsColumnCommand(with_created, kDetailsColumnsReset) == ui::kDetailsColumnsDefault &&
           ApplyDetailsColumnCommand(with_created, kDetailsColumnToggleBase) == with_created &&
           ApplyDetailsColumnCommand(with_created, 0) == with_created &&
-          BuildDetailsColumnMenu(with_created)[2].checked && BuildDetailsColumnMenu(with_created)[6].enabled,
+          BuildDetailsColumnMenu(with_created)[2].checked && BuildDetailsColumnMenu(with_created)[7].enabled,
           L"optional columns: header menu toggles a column, resets, and ignores name / dismiss");
     const uint32_t drawn = (1u << static_cast<uint32_t>(K::Name)) | ui::kDetailsColumnsDefault;
     const auto narrow_menu = BuildDetailsColumnMenu(with_created, drawn, false);
@@ -6142,6 +8101,19 @@ void TestOptionalColumns() {
           search_menu[2].badge_text == l10n::Get(l10n::StringId::DetailsColumnNotInSearch) &&
           BuildDetailsColumnMenu(with_created)[2].badge_text.empty(),
           L"optional columns: a chosen column the pane cannot show says why");
+    const uint32_t drawn_plain = drawn & ~ui::kDetailsColumnStatus;
+    Check(BuildDetailsColumnMenu(with_created, drawn_plain, false)[6].badge_text ==
+              l10n::Get(l10n::StringId::DetailsColumnCloudOnly) &&
+              BuildDetailsColumnMenu(with_created, drawn, false)[6].badge_text.empty(),
+          L"cloud status: outside cloud folders the menu says it is for cloud folders only");
+    AppPrefs legacy;
+    legacy.persist = false;
+    legacy.FromJson(L"{\"details_columns\":28}");
+    AppPrefs current;
+    current.persist = false;
+    current.FromJson(L"{\"details_columns\":28,\"details_columns_v\":2}");
+    Check(legacy.details_columns == (28u | ui::kDetailsColumnStatus) && current.details_columns == 28u,
+          L"cloud status: masks saved before v2 get status once, newer masks are kept");
 
     // Sort menu: the new dates appear for folders, not for search results.
     BackgroundViewOptions folder_options;
@@ -6243,144 +8215,59 @@ void TestTrayStack() {
               std::abs(deck.cards[2].depth - 2.0f) < 0.05f,
               L"tray stack: top card first, two layers peek underneath");
 
-        // Scan the panel: only the top card is interactive, the close zone
-        // addresses its batch item, and the footer pager is present.
-        const D2D1_RECT_F panel = state->renderer.StagingTrayRect(vm, 1000.0f, 700.0f);
-        Check(panel.bottom - panel.top > 60.0f, L"tray stack: panel has room for the stack");
-        float cx0 = 1e9f, cy0 = 1e9f, cx1 = -1e9f, cy1 = -1e9f;
-        POINT close_pt{-1, -1}, prev_pt{-1, -1}, next_pt{-1, -1};
-        bool foreign_card = false, close_ok = true;
-        for (float y = panel.top; y < panel.bottom; y += 2.0f) {
-            for (float x = panel.left; x < panel.right; x += 2.0f) {
-                const auto hit = state->renderer.HitTest(vm, D2D1::RectF(0, 0, 1000, 700), x, y);
-                if (hit.region == ui::HitTestResult::TrayCard) {
-                    if (hit.index != 0) foreign_card = true;
-                    cx0 = std::min(cx0, x); cy0 = std::min(cy0, y);
-                    cx1 = std::max(cx1, x); cy1 = std::max(cy1, y);
-                } else if (hit.region == ui::HitTestResult::TrayItemRemove) {
-                    if (hit.index != deck.cards[0].batch || hit.sub_index != deck.cards[0].sub)
-                        close_ok = false;
-                    if (close_pt.x < 0) close_pt = POINT{ static_cast<LONG>(x + 3), static_cast<LONG>(y + 3) };
-                } else if (hit.region == ui::HitTestResult::TrayPrev && prev_pt.x < 0) {
-                    prev_pt = POINT{ static_cast<LONG>(x + 3), static_cast<LONG>(y + 3) };
-                } else if (hit.region == ui::HitTestResult::TrayNext && next_pt.x < 0) {
-                    next_pt = POINT{ static_cast<LONG>(x + 3), static_cast<LONG>(y + 3) };
-                }
-            }
-        }
-        Check(cx1 > cx0 + 100.0f && cy1 > cy0 + 30.0f && !foreign_card,
-              L"tray stack: only the top card hit-tests as a card");
-        Check(close_pt.x >= 0 && close_ok && close_pt.y < (cy0 + cy1) * 0.5f &&
-              close_pt.x > (cx0 + cx1) * 0.5f,
-              L"tray stack: close badge sits top-right and addresses the top item");
-        Check(prev_pt.x >= 0 && next_pt.x > prev_pt.x, L"tray stack: footer pager present");
-
-        const int mx = static_cast<int>((cx0 + cx1) * 0.5f);
-        const int my = static_cast<int>((cy0 + cy1) * 0.5f);
+        // The panel is the shelf (b7b1cd5): a fan of the staged items to drag
+        // out, the release split button, and a chevron that lists every item.
         BYTE saved_keys[256]{};
         GetKeyboardState(saved_keys);
-        BYTE drag_keys[256]{};
-        memcpy(drag_keys, saved_keys, sizeof(drag_keys));
-        drag_keys[VK_LBUTTON] |= 0x80;
-
-        // Short drag, then stop: springs home, order unchanged.
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(mx, my));
-        Check(state->trayDrag.pending && GetCapture() == hwnd,
-              L"tray stack: pressing the top card arms the gesture");
-        SetKeyboardState(drag_keys);
-        SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(mx + 20, my + 4));
-        Check(state->trayDrag.active && std::abs(state->trayDrag.dx - 20.0f) < 0.5f,
-              L"tray stack: card follows the pointer past the slop");
-        Sleep(120);
-        SetKeyboardState(saved_keys);
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(mx + 20, my + 4));
-        Check(TrayStackTop(*state) == 0 && !state->trayDrag.active && GetCapture() != hwnd &&
-              state->trayCards[deck.cards[0].path].motion == AppState::TrayMotion::Spring,
-              L"tray stack: a short drag springs back without reordering");
-        TrayStackSettle(*state, 500);
-
-        // Fling to the right: the top card goes to the back. The pointer stays
-        // inside the sidebar: leaving it turns the gesture into a real OLE
-        // drag-out, whose modal loop never ends under synthetic input.
-        const std::wstring thrown = deck.cards[0].path;
-        RECT fling_client{};
-        GetClientRect(hwnd, &fling_client);
-        const int sidebar_right = static_cast<int>(state->renderer.SidebarRect(
-            static_cast<float>(fling_client.right), static_cast<float>(fling_client.bottom)).right);
-        const int fling_step = std::clamp((sidebar_right - 4 - mx) / 6, 8, 25);
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(mx, my));
-        SetKeyboardState(drag_keys);
-        for (int step = 1; step <= 6; ++step) {
-            Sleep(10);
-            SendMessageW(hwnd, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(mx + step * fling_step, my + step * 2));
-        }
-        SetKeyboardState(saved_keys);
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(mx + 6 * fling_step, my + 12));
-        Check(TrayStackTop(*state) == 1 &&
-              state->trayCards[thrown].motion == AppState::TrayMotion::ThrowOut,
-              L"tray stack: fling sends the top card to the back");
-        Check(state->trayCards[thrown].to_fly > 1.0f, L"tray stack: fling direction follows the drag");
-        TrayStackSettle(*state, 900);
+        const auto scan_shelf = [&](const ui::WindowViewModel& model, std::map<int, D2D1_RECT_F>& zones) {
+            zones.clear();
+            const D2D1_RECT_F area = state->renderer.StagingTrayRect(model, 1000.0f, 700.0f);
+            for (float y = area.top; y < area.bottom; y += 2.0f) {
+                for (float x = area.left; x < area.right; x += 2.0f) {
+                    const auto hit = state->renderer.HitTest(model, D2D1::RectF(0, 0, 1000, 700), x, y);
+                    if (hit.region != ui::HitTestResult::TrayShelf) continue;
+                    auto [it, fresh] = zones.emplace(hit.index, D2D1::RectF(x, y, x, y));
+                    if (!fresh) {
+                        it->second.left = std::min(it->second.left, x); it->second.top = std::min(it->second.top, y);
+                        it->second.right = std::max(it->second.right, x); it->second.bottom = std::max(it->second.bottom, y);
+                    }
+                }
+            }
+        };
+        const auto zone_list = [](const std::map<int, D2D1_RECT_F>& zones) {
+            std::wstring text;
+            for (const auto& [k, rc] : zones) text += L" " + std::to_wstring(k);
+            return text;
+        };
+        const auto has_zone = [](const std::map<int, D2D1_RECT_F>& zones, ui::TrayShelfHit h) {
+            return zones.count(static_cast<int>(h)) != 0;
+        };
+        const auto click_zone = [&](const std::map<int, D2D1_RECT_F>& zones, ui::TrayShelfHit h) {
+            const auto it = zones.find(static_cast<int>(h));
+            if (it == zones.end()) return;
+            const LPARAM pt = MAKELPARAM(static_cast<int>((it->second.left + it->second.right) * 0.5f),
+                                         static_cast<int>((it->second.top + it->second.bottom) * 0.5f));
+            SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, pt);
+            SendMessageW(hwnd, WM_LBUTTONUP, 0, pt);
+        };
+        const D2D1_RECT_F panel = state->renderer.StagingTrayRect(vm, 1000.0f, 700.0f);
+        Check(panel.bottom - panel.top > 60.0f, L"tray stack: panel has room for the stack");
+        std::map<int, D2D1_RECT_F> zones;
+        scan_shelf(vm, zones);
+        Check(has_zone(zones, ui::TrayShelfHit::Fan) && has_zone(zones, ui::TrayShelfHit::Release) &&
+              has_zone(zones, ui::TrayShelfHit::ReleaseMenu) && has_zone(zones, ui::TrayShelfHit::Expand),
+              (L"tray shelf: fan, release split button and expand hit-test (zones" + zone_list(zones) + L")").c_str());
+        click_zone(zones, ui::TrayShelfHit::Expand);
+        Check(state->trayView.open, L"tray shelf: expand opens the item list");
+        TrayStackSettle(*state, 600);
         vm = BuildVm(*state, false);
-        const auto second = TrayDeckEntries(state->tray, 1, 1);
-        Check(!second.empty() && vm.tray_deck.cards[0].path == second.front().item->path &&
-              vm.tray_deck.cards[0].depth < 0.05f,
-              L"tray stack: next card rises into the top slot");
-
-        // Wheel: up brings the thrown card back, down throws again.
-        const LPARAM wheel_pt = MAKELPARAM(mx, my);
-        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), wheel_pt);
-        Check(TrayStackTop(*state) == 0 && state->trayRaisePath == thrown,
-              L"tray stack: wheel up brings the last card back on top");
-        TrayStackSettle(*state, 700);
-        HandleMouseWheel(state.get(), hwnd, WM_MOUSEWHEEL,
-                         MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA)), wheel_pt);
-        Check(TrayStackTop(*state) == 1, L"tray stack: wheel down throws the top card");
-        TrayStackSettle(*state, 900);
-
-        // Footer pager.
+        scan_shelf(vm, zones);
+        Check(has_zone(zones, ui::TrayShelfHit::Row) && has_zone(zones, ui::TrayShelfHit::Collapse),
+              (L"tray shelf: open list shows item rows and collapse (zones" + zone_list(zones) + L")").c_str());
+        click_zone(zones, ui::TrayShelfHit::Collapse);
+        Check(!state->trayView.open, L"tray shelf: collapse returns to the shelf");
+        TrayStackSettle(*state, 600);
         vm = BuildVm(*state, false);
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(prev_pt.x, prev_pt.y));
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(prev_pt.x, prev_pt.y));
-        Check(TrayStackTop(*state) == 0, L"tray stack: previous button steps back");
-        TrayStackSettle(*state, 700);
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(next_pt.x, next_pt.y));
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(next_pt.x, next_pt.y));
-        Check(TrayStackTop(*state) == 1, L"tray stack: next button throws the top card");
-        TrayStackSettle(*state, 900);
-        state->trayDeckOffset = 0;
-        TrayStackSettle(*state, 900);
-
-        // Dismiss with the close badge: item removed, tumbling ghost + smoke.
-        vm = BuildVm(*state, false);
-        const std::wstring dismissed = vm.tray_deck.cards[0].path;
-        state->hoverRegion = ui::HitTestResult::TrayCard;
-        SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(close_pt.x, close_pt.y));
-        SendMessageW(hwnd, WM_LBUTTONUP, 0, MAKELPARAM(close_pt.x, close_pt.y));
-        Check(TrayItemTotalCount(state->tray) == 4 && state->trayPuffs.size() == 10,
-              L"tray stack: close badge dismisses the top item with smoke");
-        Sleep(70); // puffs start staggered over the first 60 ms
-        TickTrayDeck(*state);
-        vm = BuildVm(*state, false);
-        bool tumbling = false;
-        for (const auto& c : vm.tray_deck.cards)
-            if (c.ghost && c.path == dismissed) tumbling = true;
-        {
-            int ghost_n = 0;
-            for (const auto& c : vm.tray_deck.cards) if (c.ghost) ++ghost_n;
-            Check(tumbling, (L"tray stack: dismissed card leaves as a ghost (ghosts=" +
-                  std::to_wstring(ghost_n) + L" cards=" + std::to_wstring(vm.tray_deck.cards.size()) +
-                  L" anims=" + std::to_wstring(state->trayCards.size()) + L")").c_str());
-            Check(!vm.tray_deck.puffs.empty(), (L"tray stack: smoke plays (state puffs=" +
-                  std::to_wstring(state->trayPuffs.size()) + L")").c_str());
-            Check(vm.tray_deck.total_count == 4, L"tray stack: footer count drops to four");
-        }
-        TrayStackSettle(*state, 1000);
-        vm = BuildVm(*state, false);
-        bool lingering = false;
-        for (const auto& c : vm.tray_deck.cards)
-            if (c.ghost) lingering = true;
-        Check(!lingering && vm.tray_deck.puffs.empty(), L"tray stack: exit animations finish");
 
         // Clear: every visible card tumbles off, staggered; nothing lingers.
         std::vector<std::wstring> all;
@@ -6791,6 +8678,182 @@ void TestSessionLayoutTabs() {
         Check(ParseLayoutTabs(L"[{\"panes\":[{}]}]", out) && out.size() == 1 &&
               out[0].panes.size() == 1 && out[0].panes[0].path.empty(),
               L"layouttabs: empty object tolerated");
+    }
+}
+
+// Settings > 快捷键: the keymap table, prefs lines, translation and checks.
+void TestKeymap() {
+    namespace k = pulse::app;
+    using k::KeyChord;
+    using k::KeyAction;
+    using T = k::Keymap::Translation;
+    const uint8_t C = k::kKeyCtrl, A = k::kKeyAlt, S = k::kKeyShift;
+    auto chord = [](const wchar_t* text) { KeyChord c{}; k::ParseChord(text, c); return c; };
+
+    k::Keymap map;
+    Check(map.AllDefault() && map.ToPrefs().empty(), L"keymap: defaults store nothing");
+    Check(map.Translate(KeyChord{static_cast<uint8_t>(C | S), 'C'}).kind == T::Pass &&
+          map.Translate(KeyChord{0, VK_F4}).kind == T::Pass &&
+          map.Translate(KeyChord{A, 'D'}).kind == T::Pass,
+          L"keymap: default keys pass through untouched");
+    bool ids_ok = true;
+    for (int i = 0; i < k::kKeyActionCount; ++i) {
+        const auto& info = k::ActionInfo(static_cast<KeyAction>(i));
+        ids_ok = ids_ok && info.action == static_cast<KeyAction>(i) && k::ActionFromId(info.id) == info.action;
+    }
+    Check(ids_ok, L"keymap: table order and ids match KeyAction");
+    Check(k::ActionFromId("NoSuchAction") == KeyAction::Count, L"keymap: unknown id");
+
+    // Every default key reaches exactly its own action (no duplicates in the table).
+    bool unique = true;
+    for (int i = 0; i < k::kKeyActionCount; ++i) {
+        const auto action = static_cast<KeyAction>(i);
+        if (k::ActionInfo(action).kind == k::KeyKind::Global) continue;
+        for (const KeyChord c : map.EffectiveChords(action)) {
+            const auto owner = map.Find(c);
+            if (owner.action != action) {
+                unique = false;
+                LogLine(L"  keymap duplicate: %s -> %d (want %d)\n", k::FormatChord(c).c_str(),
+                        static_cast<int>(owner.action), i);
+            }
+        }
+    }
+    Check(unique, L"keymap: default keys are unique");
+
+    for (const wchar_t* text : {L"Ctrl+Alt+Shift+C", L"F8", L"Shift+F10", L"Ctrl+#C0", L"Alt+Left", L"Ctrl+Tab", L"Apps"}) {
+        KeyChord c{};
+        const bool ok = k::ParseChord(text, c) && k::FormatChord(c) == text;
+        if (!ok) LogLine(L"  keymap round trip failed: %s\n", text);
+        Check(ok, L"keymap: chord text round trip");
+    }
+    KeyChord bad{};
+    Check(!k::ParseChord(L"Ctrl+", bad) && !k::ParseChord(L"C+Ctrl", bad) && !k::ParseChord(L"Ctrl+Shift", bad) &&
+          !k::ParseChord(L"F25", bad) && !k::ParseChord(L"", bad) && !k::ParseChord(L"Ctrl+Bogus", bad),
+          L"keymap: malformed chords rejected");
+    Check(chord(L"ctrl+shift+c") == KeyChord{static_cast<uint8_t>(C | S), 'C'}, L"keymap: parsing ignores case");
+
+    // 复制到目标栏 moved to F8 (the reported Ctrl+Alt+C conflict).
+    map.SetBindings(KeyAction::CopyToTarget, {KeyChord{0, VK_F8}});
+    const auto lines = map.ToPrefs();
+    Check(lines.size() == 1 && lines[0] == L"CopyToTarget=F8", L"keymap: only the change is stored");
+    const k::Keymap reread = k::Keymap::FromPrefs(lines);
+    Check(reread.Bindings(KeyAction::CopyToTarget) == std::vector<KeyChord>{KeyChord{0, VK_F8}} &&
+          !reread.IsDefault(KeyAction::CopyToTarget) && reread.IsDefault(KeyAction::MoveToTarget),
+          L"keymap: prefs lines read back");
+    const T moved = map.Translate(KeyChord{0, VK_F8});
+    Check(moved.kind == T::Rewrite && moved.target == KeyChord{static_cast<uint8_t>(C | A), 'C'} &&
+          moved.action == KeyAction::CopyToTarget, L"keymap: the new key becomes the default key");
+    const T old_key = map.Translate(KeyChord{static_cast<uint8_t>(C | A), 'C'});
+    Check(old_key.kind == T::Swallow && old_key.action == KeyAction::CopyToTarget,
+          L"keymap: the old default key no longer acts");
+    map.Reset(KeyAction::CopyToTarget);
+    Check(map.AllDefault(), L"keymap: reset restores the default");
+
+    // A second key next to the default, and an action without any key.
+    map.SetBindings(KeyAction::Refresh, {KeyChord{0, VK_F5}, KeyChord{C, 'R'}});
+    Check(map.Translate(KeyChord{C, 'R'}).kind == T::Rewrite && map.Translate(KeyChord{0, VK_F5}).kind == T::Pass,
+          L"keymap: extra key beside the default");
+    const k::Keymap cleared = k::Keymap::FromPrefs({L"CopyPath="});
+    Check(cleared.Bindings(KeyAction::CopyPath).empty() &&
+          cleared.Translate(KeyChord{static_cast<uint8_t>(C | S), 'C'}).kind == T::Swallow &&
+          cleared.ToPrefs() == std::vector<std::wstring>{L"CopyPath="},
+          L"keymap: an action can be left without a key");
+    const k::Keymap junk = k::Keymap::FromPrefs({L"Bogus=F8", L"CopyPath=Nope", L"=", L"Layout=Shift", L"Open=F9"});
+    Check(junk.AllDefault(), L"keymap: unknown, malformed and fixed entries are ignored");
+
+    // Numbered groups: only the modifiers move.
+    k::Keymap ranges;
+    ranges.SetRangeMods(KeyAction::TabNumber, A);
+    const T tab3 = ranges.Translate(KeyChord{A, '3'});
+    Check(tab3.kind == T::Rewrite && tab3.target == KeyChord{C, '3'} && tab3.action == KeyAction::TabNumber,
+          L"keymap: Alt+3 reaches tab 3");
+    Check(ranges.Translate(KeyChord{C, '3'}).kind == T::Swallow, L"keymap: Ctrl+3 is free after the move");
+    Check(ranges.ToPrefs() == std::vector<std::wstring>{L"TabNumber=Alt"} &&
+          k::Keymap::FromPrefs({L"TabNumber=Alt"}).RangeMods(KeyAction::TabNumber) == A,
+          L"keymap: range modifiers stored");
+
+    // Shift steps backwards for Ctrl+Tab and the window switcher.
+    k::Keymap tabs;
+    tabs.SetBindings(KeyAction::NextTab, {KeyChord{C, VK_NEXT}});
+    const T back = tabs.Translate(KeyChord{static_cast<uint8_t>(C | S), VK_NEXT});
+    Check(back.kind == T::Rewrite && back.target == KeyChord{static_cast<uint8_t>(C | S), VK_TAB},
+          L"keymap: Shift with the new key steps backwards");
+    Check(tabs.Translate(KeyChord{static_cast<uint8_t>(C | S), VK_TAB}).kind == T::Swallow,
+          L"keymap: Ctrl+Shift+Tab moves with Ctrl+Tab");
+
+    // Conflict checks.
+    k::ShortcutEnv env;
+    env.taken = {KeyChord{static_cast<uint8_t>(C | A), 'C'}, KeyChord{static_cast<uint8_t>(C | A), 'X'}};
+    env.chinese_ime = true;
+    k::Keymap m;
+    auto issue = [&](KeyAction action, const wchar_t* text) { return k::CheckChord(m, action, chord(text), env).issue; };
+    using I = k::ChordIssue;
+    Check(issue(KeyAction::CopyPath, L"Alt+F4") == I::Reserved, L"keymap check: Alt+F4 reserved");
+    Check(k::CheckChord(m, KeyAction::CopyPath, KeyChord{0, 'Q'}, env).issue == I::PlainKey &&
+          k::CheckChord(m, KeyAction::CopyPath, KeyChord{S, '5'}, env).issue == I::PlainKey,
+          L"keymap check: single letters and digits rejected");
+    Check(issue(KeyAction::CopyPath, L"Win+F") == I::WinKey && issue(KeyAction::GlobalSearch, L"Win+Shift+F") == I::None,
+          L"keymap check: Win only for the global hotkey");
+    Check(issue(KeyAction::CopyToTarget, L"Ctrl+Alt+X") == I::Taken, L"keymap check: another program's hotkey");
+    const auto dup = k::CheckChord(m, KeyAction::CopyPath, chord(L"Ctrl+Shift+F"), env);
+    Check(dup.issue == I::Duplicate && dup.level == k::ChordLevel::Warn && dup.other.action == KeyAction::AdvancedSearch,
+          L"keymap check: another action's key can be replaced");
+    Check(issue(KeyAction::CopyPath, L"Ctrl+3") == I::DuplicateFixed && issue(KeyAction::CopyPath, L"Down") == I::DuplicateFixed,
+          L"keymap check: numbered groups and fixed keys cannot be replaced");
+    m.SetBindings(KeyAction::AdvancedSearch, {chord(L"Ctrl+Alt+F")});
+    Check(issue(KeyAction::CopyPath, L"Ctrl+Shift+F") == I::Ime, L"keymap check: IME key warns");
+    env.ime_ignored = {chord(L"Ctrl+Shift+F")};
+    Check(issue(KeyAction::CopyPath, L"Ctrl+Shift+F") == I::None, L"keymap check: dismissed IME warning");
+    env.ime_ignored.clear();
+    Check(issue(KeyAction::CopyPath, L"Ctrl+Y") == I::TextEdit, L"keymap check: text editing key is a note");
+    Check(issue(KeyAction::CopyPath, L"Ctrl+Shift+C") == I::Same, L"keymap check: same key");
+    Check(issue(KeyAction::SwitchWindow, L"Alt+Q") == I::NeedsCtrl && issue(KeyAction::SwitchWindow, L"Ctrl+Shift+Q") == I::ShiftReserved,
+          L"keymap check: the switcher needs Ctrl, Shift steps back");
+    Check(issue(KeyAction::NextTab, L"Ctrl+Shift+PgDn") == I::ShiftReserved, L"keymap check: Shift reserved for backwards");
+    Check(issue(KeyAction::GlobalSearch, L"Alt+Space") != I::Reserved && issue(KeyAction::CopyPath, L"Alt+Space") == I::Reserved,
+          L"keymap check: Alt+Space only for the global hotkey");
+
+    const auto overlap = k::CheckRange(m, KeyAction::ViewMode, C, env);
+    Check(overlap.issue == I::RangeBad && overlap.bad == 8, L"keymap range: Ctrl+1-8 collide with tabs");
+    Check(k::CheckRange(m, KeyAction::TabNumber, S, env).issue == I::RangeNeedsMod, L"keymap range: needs Ctrl or Alt");
+    const auto free_range = k::CheckRange(m, KeyAction::Layout, static_cast<uint8_t>(A | S), env);
+    Check(free_range.level == k::ChordLevel::Ok && free_range.digits.size() == 4, L"keymap range: Alt+Shift+1-4 free");
+    Check(k::CheckRange(m, KeyAction::Layout, static_cast<uint8_t>(C | A), env).issue == I::RangeSame,
+          L"keymap range: current modifiers");
+
+    k::Keymap fresh;
+    const auto issues = k::CollectIssues(fresh, env);
+    Check(issues.size() == 3 && issues[0].level == k::ChordLevel::Block && issues[1].level == k::ChordLevel::Block &&
+          issues[2].issue == I::Ime && issues[2].action == KeyAction::AdvancedSearch,
+          L"keymap: issues list (taken first, then the IME)");
+    const auto suggestions = k::SuggestChords(fresh, KeyAction::CopyToTarget, env);
+    bool suggestions_ok = suggestions.size() == 3;
+    for (const KeyChord c : suggestions)
+        suggestions_ok = suggestions_ok && k::CheckChord(fresh, KeyAction::CopyToTarget, c, env).level == k::ChordLevel::Ok;
+    Check(suggestions_ok && suggestions[0] == chord(L"Ctrl+Alt+Shift+C"), L"keymap: three free suggestions");
+    const auto probe = k::ProbeCandidates(fresh);
+    Check(std::find(probe.begin(), probe.end(), chord(L"Ctrl+Alt+C")) != probe.end() && probe.size() > 60,
+          L"keymap: probe list covers the keys in effect");
+
+    // Messages the handlers expect.
+    Check(k::KeyMessageFor(chord(L"Alt+D")) == WM_SYSKEYDOWN && k::KeyMessageFor(chord(L"Ctrl+Alt+C")) == WM_KEYDOWN,
+          L"keymap input: Alt alone arrives as a system key");
+    const LPARAM lp = k::KeyMessageLParam(KeyChord{C, k::SwitcherVirtualKey()}, 1);
+    Check(((lp >> 16) & 0xFF) == 0x29 && !(lp & (LPARAM{1} << 29)), L"keymap input: switcher key keeps scan code 0x29");
+    Check((k::KeyMessageLParam(chord(L"Alt+Left"), 1) & (LPARAM{1} << 29)) &&
+          (k::KeyMessageLParam(chord(L"Alt+Left"), 1) & (LPARAM{1} << 24)),
+          L"keymap input: context and extended bits");
+    {
+        BYTE before[256]{};
+        GetKeyboardState(before);
+        {
+            k::ModifierOverride over(static_cast<uint8_t>(C | A));
+            Check((GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_MENU) & 0x8000) && !(GetKeyState(VK_SHIFT) & 0x8000),
+                  L"keymap input: modifiers reported while handled");
+        }
+        Check(((GetKeyState(VK_CONTROL) & 0x8000) != 0) == ((before[VK_CONTROL] & 0x80) != 0) &&
+              ((GetKeyState(VK_MENU) & 0x8000) != 0) == ((before[VK_MENU] & 0x80) != 0),
+              L"keymap input: modifiers restored");
     }
 }
 
@@ -7336,6 +9399,13 @@ int RunSelfTest1B2() {
         return passed ? 0 : 1;
     }
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"keymap") == 0) {
+        TestKeymap();
+        LogLine(L"\n== keymap: %d passed, %d failed ==\n", g_pass, g_fail);
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return g_fail ? 1 : 0;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"audit-tabs") == 0) {
         TestAuditTabs();
         LogLine(L"\n== audit-tabs: %d passed, %d failed ==\n", g_pass, g_fail);
@@ -7423,6 +9493,11 @@ int RunSelfTest1B2() {
     }
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"folder-views") == 0) {
+        TestViewZoomChain();
+        TestContinuousIconSize();
+        TestViewZoomAnchor();
+        TestInlineRename();
+        TestWallRows();
         TestFolderViews();
         TestFolderSorts();
         TestStartupLocation();
@@ -7456,6 +9531,20 @@ int RunSelfTest1B2() {
         return g_fail ? 1 : 0;
     }
     if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"quick-access") == 0) {
+        TestQuickAccess();
+        LogLine(L"\n== quick-access: %d passed, %d failed ==\n", g_pass, g_fail);
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return g_fail ? 1 : 0;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"integration-compat") == 0) {
+        TestIntegrationCompat();
+        LogLine(L"\n== integration-compat: %d passed, %d failed ==\n", g_pass, g_fail);
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return g_fail ? 1 : 0;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
         wcscmp(test_case, L"snapshot-patch") == 0) {
         TestSnapshotPatch();
         TestSnapshotPatchBatch();
@@ -7474,6 +9563,16 @@ int RunSelfTest1B2() {
         wcscmp(test_case, L"release-panels-hidden") == 0) {
         TestDetailsPreviewInteraction();
         TestHiddenFiles();
+        if (g_log) { fclose(g_log); g_log = nullptr; }
+        return g_fail ? 1 : 0;
+    }
+    if (GetEnvironmentVariableW(L"PULSE_SELFTEST_CASE", test_case, ARRAYSIZE(test_case)) &&
+        wcscmp(test_case, L"action-state") == 0) {
+        TestActionState();
+        TestActionPolicy();
+        TestActionArgs();
+        TestFilePlans();
+        TestMcpRunActions();
         if (g_log) { fclose(g_log); g_log = nullptr; }
         return g_fail ? 1 : 0;
     }
@@ -7600,6 +9699,9 @@ int RunSelfTest1B2() {
     TestAdvancedEditClicks();
     TestCtrlDragSelection();
     TestDirWatch();
+    TestViewZoomChain();
+    TestContinuousIconSize();
+    TestViewZoomAnchor();
     TestFolderViews();
     TestFolderSorts();
     TestStartupLocation();
@@ -7618,12 +9720,18 @@ int RunSelfTest1B2() {
     TestUniqueName();
     TestMultiSelect();
     TestSplitLayout();
+    TestActionState();
+    TestActionPolicy();
+    TestActionArgs();
+    TestFilePlans();
+    TestMcpRunActions();
     TestViewLayouts();
     TestListColumns();
     TestOptionalColumns();
     TestTrayStack();
     TestHiddenFiles();
     TestQuickAccess();
+    TestIntegrationCompat();
     TestPlacesAndIndex();
     TestRecycleAndBatchRename();
     TestLinkResolve();
@@ -7634,6 +9742,7 @@ int RunSelfTest1B2() {
     TestFindGroupRun();
     TestSessionLayoutTabs();
     TestTabShortcuts();
+    TestKeymap();
     TestStagingTrayDeletion();
     TestStagingTraySession();
     TestLayoutOwnedTabs();
@@ -7641,6 +9750,9 @@ int RunSelfTest1B2() {
     TestColorPickerModel();
     TestBloomAccentGeometry();
     TestBloomSpring();
+    TestLayerAlphas();
+    TestTreeGuides();
+    TestTreeSticky();
     TestOpsThroughShell();
 
     // Cleanup: real-delete the whole sandbox via the ops layer is overkill;

@@ -40,7 +40,8 @@ int main() {
     root.first=std::make_unique<SplitContainer>(); root.first->pane=a;
     root.second=std::make_unique<SplitContainer>(); root.second->pane=b;
     for (float scale : {1.0f,1.25f,1.5f,2.0f}) {
-        const float desired=4*112*scale-1;
+        // Just under four medium columns: 90 DIP cells, 6 DIP gaps, 8 DIP margins.
+        const float desired=(4*90+3*6+16)*scale-1;
         const D2D1_RECT_F bounds{285,200,285+desired*2+8*scale,1100};
         root.ratio=0.5f;
         std::vector<std::pair<Pane*,D2D1_RECT_F>> painted;

@@ -6,7 +6,7 @@ namespace pulse {
 std::wstring GlobalSearchHandoffPath(const GlobalSearchHandoff& request) {
     if (request.query.empty()) return {};
     if (!request.content)
-        return app::MakeSearchPath(app::CompileNameQueryInput(request.query, request.folder));
+        return app::MakeSearchPath(app::CompileNameQueryInput(request.query + request.filters, request.folder));
     app::AdvancedSearchSpec spec;
     spec.content = request.query;
     spec.current_folder = request.folder;

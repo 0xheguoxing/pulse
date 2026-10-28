@@ -178,6 +178,9 @@ int wmain(int argc, wchar_t** argv) {
         result.response.kind == pulse::ipc::PreviewContentKind::Bitmap && !result.pixels.empty(),
         "production host uses fresh online metadata and decodes image");
     host.Stop();
-    Check(SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_NORMAL) && DeleteFileW(file.c_str()) && RemoveDirectoryW(root.c_str()), "exclusive fixture cleaned up");
+    // The fixture folder also holds the Diagnostics log written above.
+    const bool image_deleted = SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_NORMAL) && DeleteFileW(file.c_str());
+    std::filesystem::remove_all(root, ec);
+    Check(image_deleted && !ec && !std::filesystem::exists(root), "exclusive fixture cleaned up");
     return failures ? 1 : 0;
 }

@@ -26,7 +26,24 @@ struct DirNotifyEvent {
     DWORD action = 0;
     std::wstring name;
     std::wstring old_name;
+    // Only on the lone event of the overflow a stamp_arm watch reports once its
+    // read is armed: when that was (WatchClock). A listing begun later holds
+    // every change before it, so the overflow then asks for nothing (ArmedAt).
+    uint64_t armed_at = 0;
 };
+
+// Clock of armed_at and of listing start times (steady, process-wide).
+uint64_t WatchClock() noexcept;
+// The arm time of an overflow that only reports a newly armed watch, else 0.
+inline uint64_t ArmedAt(bool overflow, const std::vector<DirNotifyEvent>& events) noexcept {
+    return overflow && events.size() == 1 ? events.front().armed_at : 0;
+}
+// Before listing a folder: while a stamp_arm watch on it is starting, wait
+// for it to arm so the listing begins after that. A watch whose thread is not
+// running within start_ms (a busy startup) is not waited for; one that runs
+// gets up to arm_ms more.
+void WaitForStartingWatch(const std::wstring& path, DWORD start_ms, DWORD arm_ms);
+
 template<class Queue>
 void QueueDirectoryNotification(Queue& queue, const std::wstring& path, bool overflow,
                                 std::vector<DirNotifyEvent> events) {
@@ -47,7 +64,10 @@ public:
     DirWatch();
     ~DirWatch();
 
-    bool Start(const std::wstring& path, ChangeCallback cb, bool subtree = false);
+    // stamp_arm: the overflow reported once the read is armed carries the arm
+    // time (DirNotifyEvent::armed_at), and WaitForStartingWatch waits for it.
+    bool Start(const std::wstring& path, ChangeCallback cb, bool subtree = false,
+               bool stamp_arm = false);
     void Stop();
     bool Armed() const;
     const std::wstring& path() const { return path_; }

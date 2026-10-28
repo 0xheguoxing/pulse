@@ -1,12 +1,19 @@
 #include "app_internal.h"
 #include "../common/windows_compat.h"
 #include "../common/localization.h"
+#include "../ui/settings_page_ids.h"
 #include "about_info.h"
 #include "app_hover_preview.h"
 #include "../ui/preview_format_catalog.h"
 #include "../ui/folder_picker_dialog.h"
 #include "../common/preview_packs.h"
 #include "system_ctx_model.h"
+#include "shortcut_page.h"
+#include "content_scope_mode.h"
+#include "content_pack_ui.h"
+#include "ai_pack_ui.h"
+#include "ai_settings_ui.h"
+#include "../ui/ui_renderer.h"
 #include <shellapi.h>
 #include <shlobj.h>
 #include <algorithm>
@@ -47,33 +54,51 @@ int Dropdown(AppState& s, int index, std::vector<ui::FluentMenuItem> items) {
 }
 struct SettingDestination { I title;int page;unsigned expanded; };
 constexpr SettingDestination destinations[]={
-    {I::SettingsTheme,0,0},{I::SettingsThemeColor,0,0},{I::SettingsWindowEffect,0,0},{I::MenuAcrylic,0,0},{I::SettingsLanguage,0,0},{I::SettingsTextRender,0,0},{I::SettingsUiFontSize,0,0},
-    {I::SettingsIntegration,0,0},{I::SettingsDefaultManager,0,0},{I::SettingsLaunch,0,0},{I::SettingsStartInTray,0,0},{I::SettingsKeepRunning,0,0},{I::SettingsNotifyIcon,0,0},
-    {I::SettingsHomeFolder,0,0},{I::SettingsStartupOpen,0,0},{I::SettingsNewTabOpen,0,0},{I::SettingsExternalOpen,0,0},{I::SettingsCloseLastTab,0,0},{I::SettingsCloseTabDoubleClick,0,0},{I::SettingsRowHeight,0,0},{I::SettingsShowPerformance,0,0},
-    {I::ListSmartDate,0,0},{I::ListZebraRows,0,0},{I::ListSizeBar,0,0},{I::ListTagNameColor,0,0},{I::ListSelectionOutline,0,0},{I::ListThumbnailBadges,0,0},{I::SettingsFolderSort,0,0},{I::SettingsConfirmDelete,0,0},
-    {I::SettingsWallpaper,0,1},{I::SettingsWallpaperLook,0,1},{I::SettingsWallpaperBlur,0,1},{I::SettingsTrayIcon,0,1},{I::SettingsShowHidden,0,1},{I::SettingsShowProtected,0,1},{I::PinnedNames,0,1},{I::SettingsVerticalTabs,0,1},{I::SettingsHints,0,1},{I::SettingsHintsReset,0,1},
-    {I::SettingsBlankClickBack,0,1},{I::SettingsChangeTracking,0,1},{I::SettingsOpenFolders,0,0},{I::SettingsWinE,0,0},{I::SettingsThisPc,0,0},{I::SettingsRecycleBin,0,0},{I::SettingsExplorerWindows,0,0},{I::SettingsShellTags,0,1},
-    {I::GlobalSearch,1,0},{I::GlobalSearchHotkey,1,0},{I::SearchPinyin,1,0},{I::ContentIndexManage,1,0},{I::IndexLocation,1,2},{I::LocalDrives,1,2},
-    {I::Exclusions,1,2},{I::ServerFolders,1,2},{I::SettingsContextMenu,2,0},{I::SettingsDuplicates,4,0},{I::QuickPreview,5,4},{I::SettingsAboutDiagnostics,3,0},{I::SettingsAutoUpdate,3,0},
+    // 0 外观
+    {I::SettingsTheme,0,0},{I::SettingsThemeColor,0,0},{I::AccentCustomTitle,0,32},{I::SettingsWindowEffect,0,0},{I::SettingsFrameLook,0,0},{I::MenuAcrylic,0,0},
+    {I::SettingsWallpaper,0,0},{I::SettingsWallpaperLook,0,0},{I::SettingsWallpaperBlur,0,0},
+    {I::SettingsLanguage,0,0},{I::SettingsTextRender,0,0},{I::SettingsUiFontSize,0,0},
+    // 9 文件列表
+    {I::SettingsClickOpen,9,0},{I::SettingsItemCheckboxes,9,0},{I::SettingsBlankClickBack,9,0},
+    {I::SettingsShowHidden,9,0},{I::SettingsShowProtected,9,0},{I::SettingsFolderSort,9,0},
+    {I::SettingsRowHeight,9,0},{I::ListZebraRows,9,0},{I::ListSmartDate,9,0},{I::ListSizeBar,9,0},{I::ListTagNameColor,9,0},
+    {I::ListSelectionOutline,9,0},{I::ListThumbnailBadges,9,0},{I::ThumbCache,9,0},{I::AliasMark,9,0},{I::SettingsTreeSticky,9,0},
+    {I::ListMtimeHint,9,0},{I::ListMtimeRange,9,0},{I::ListMtimePalette,9,0},{I::SyncOneDrive,9,0},{I::SyncSvn,9,0},
+    // 10 标签页与窗口
+    {I::SettingsHomeFolder,10,0},{I::SettingsStartupOpen,10,0},{I::SettingsNewTabOpen,10,0},{I::SettingsExternalOpen,10,0},
+    {I::SettingsVerticalTabs,10,0},{I::PinnedNames,10,0},{I::SettingsCloseTabDoubleClick,10,0},{I::SettingsCloseLastTab,10,0},
+    // 11 启动与集成
+    {I::SettingsIntegration,11,0},{I::SettingsDefaultManager,11,0},{I::SettingsOpenFolders,11,0},{I::SettingsWinE,11,0},{I::SettingsThisPc,11,0},
+    {I::SettingsRecycleBin,11,0},{I::SettingsExplorerWindows,11,0},
+    {I::SettingsLaunch,11,0},{I::SettingsStartInTray,11,0},{I::SettingsKeepRunning,11,0},{I::SettingsNotifyIcon,11,0},{I::SettingsShellTags,11,0},
+    // 12 文件操作
+    {I::SettingsConfirmDelete,12,0},{I::SettingsTrayIcon,12,0},{I::TrayHideWhenEmpty,12,0},
+    {I::SettingsLanDiscovery,12,0},{I::SettingsLanCache,12,0},{I::SettingsNetworkRecent,12,0},{I::NetworkShowHiddenShares,12,0},
+    {I::SettingsClearNetwork,12,0},{I::SettingsChangeTracking,12,0},
+    {I::GlobalSearch,1,0},{I::GlobalSearchHotkey,1,0},{I::GlobalSearchDoubleCtrl,1,0},{I::GlobalSearchDoubleCtrlGap,1,0},{I::GlobalSearchApps,1,0},{I::DialogJumpBar,1,0},{I::DialogJumpAuto,1,0},{I::SearchPinyin,1,0},{I::JumpHistory,1,0},{I::ContentIndexManage,1,0},{I::IndexLocation,1,2},{I::LocalDrives,1,2},
+    {I::Exclusions,1,2},{I::ServerFolders,1,2},{I::SettingsContextMenu,2,0},{I::SettingsDuplicates,4,0},{I::QuickPreview,5,4},{I::PreviewPacks,8,0},
+    {I::SettingsAboutDiagnostics,3,0},{I::SettingsShowPerformance,3,0},{I::SettingsHints,3,0},{I::SettingsHintsReset,3,0},{I::SettingsTransfer,3,0},{I::SettingsAutoUpdate,3,0},
 };
 std::vector<ui::FluentMenuItem> FilterSettings(const std::wstring& query) {
     std::wstring needle=query;std::transform(needle.begin(),needle.end(),needle.begin(),towlower);
     std::vector<ui::FluentMenuItem> items;
-    const I pages[]={I::SettingsGeneral,I::SettingsSearchIndex,I::SettingsContextMenu,I::SettingsAboutDiagnostics,I::SettingsDuplicates,I::QuickPreview};
+    const I pages[]={I::SettingsAppearance,I::SettingsSearchIndex,I::SettingsContextMenu,I::SettingsAboutDiagnostics,I::SettingsDuplicates,I::QuickPreview,
+                     I::SettingsContextMenu,I::KeyboardShortcuts,I::PreviewPacks,I::SettingsFileList,I::SettingsPageTabs,
+                     I::SettingsPageSystem,I::SettingsPageFileOps};
     for(size_t i=0;i<std::size(destinations);++i) {
         auto item=Item(static_cast<int>(i)+1,destinations[i].title);
         item.shortcut=l10n::Get(pages[destinations[i].page]);
         std::wstring haystack=item.text+L" "+item.shortcut;
-        if (destinations[i].page == 5) {
+        if (destinations[i].page == 5 || destinations[i].page == 8) {
             // Translate each visible heading separately: the Traditional Chinese
             // phrase table deliberately does not translate unknown concatenations.
             const std::wstring aliases[] = {
-                l10n::Pick(L"支持的格式", L"Supported formats"),
-                l10n::Pick(L"预览增强包", L"Preview packs"),
-                l10n::Pick(L"系统扩展", L"System extensions"),
-                l10n::Pick(L"现代图像格式", L"Modern image formats"),
-                l10n::Pick(L"RAW 相机照片", L"RAW camera photos"),
-                l10n::Pick(L"压缩包", L"Archives")};
+                l10n::Get(l10n::StringId::SupportedFormats).c_str(),
+                l10n::Get(l10n::StringId::PreviewPacks).c_str(),
+                l10n::Get(l10n::StringId::SystemExtensions).c_str(),
+                l10n::Get(l10n::StringId::ModernImageFormats).c_str(),
+                l10n::Get(l10n::StringId::RAWCameraPhotos).c_str(),
+                l10n::Get(l10n::StringId::ArcFamArchive).c_str()};
             for (const auto& alias : aliases) haystack += L" " + alias;
         }
         std::transform(haystack.begin(),haystack.end(),haystack.begin(),towlower);
@@ -106,9 +131,32 @@ void ContentOptions(AppState& s) {
     if (config.roots.empty()) return;
     const I encodings[]={I::ContentIndexAutoEncoding,I::ContentIndexUtf8Encoding,I::ContentIndexSystemEncoding,I::ContentIndexGbEncoding};
     std::vector<ui::FluentMenuItem> items;
+    // Where unscoped searches look (content_scope_mode.h). Only the shared
+    // all-drives configuration has a choice; picked roots are the scope.
+    if (config.shared_scope) {
+        auto zh=[](const wchar_t* chinese,const wchar_t* english) {
+            return l10n::IsChinese() ? l10n::HantText(chinese) : std::wstring(english);
+        };
+        auto scope=[&](int command,std::wstring text,bool selected) {
+            ui::FluentMenuItem item;item.command=command;item.text=std::move(text);
+            item.radio_group=true;item.radio=selected;items.push_back(std::move(item));
+        };
+        const bool all=s.appPrefs.content_scope==static_cast<int>(app::ContentScopeMode::AllDrives);
+        scope(11,zh(L"搜索个人文件夹（桌面、文档、下载）",L"Search personal folders (Desktop, Documents, Downloads)"),!all);
+        scope(12,zh(L"搜索所有驱动器",L"Search all drives"),all);
+        items.back().separator_after=true;
+    }
     for(int i=0;i<4;++i) items.push_back(Item(i+1,encodings[i],std::all_of(config.roots.begin(), config.roots.end(),
         [&](const auto& root) { return static_cast<int>(root.encoding) == i; })));
     const int command=Popup(s,std::move(items));
+    if(command==11 || command==12) {
+        s.appPrefs.content_scope=command==11 ? static_cast<int>(app::ContentScopeMode::UserFolders)
+                                             : static_cast<int>(app::ContentScopeMode::AllDrives);
+        if(!s.isolatedTest) s.appPrefs.Save();
+        app::SetContentScopeMode(s.appPrefs.content_scope);
+        InvalidateRect(s.hwnd,nullptr,FALSE);
+        return;
+    }
     if(command<1 || command>4) return;
     config=s.contentSearch.GetConfig();
     config.default_encoding=static_cast<text::Encoding>(command-1);
@@ -146,19 +194,19 @@ void SysCtxRowMenu(AppState& s,int row) {
     };
     const size_t slash=file.find_last_of(L"\\/");
     const std::wstring folder=slash==std::wstring::npos ? std::wstring() : file.substr(0,slash);
-    add(1,l10n::Pick(L"复制注册表路径",L"Copy registry path"),!key.empty());
-    add(2,l10n::Pick(L"复制程序路径",L"Copy program path"),!file.empty());
-    add(3,l10n::Pick(L"在新标签页打开所在文件夹",L"Open its folder in a new tab"),!folder.empty());
+    add(1,l10n::Get(l10n::StringId::CopyRegistryPath).c_str(),!key.empty());
+    add(2,l10n::Get(l10n::StringId::CopyProgramPath).c_str(),!file.empty());
+    add(3,l10n::Get(l10n::StringId::OpenItsFolderInANewTab).c_str(),!folder.empty());
     if(!pulse_key.empty()) {
         items.back().separator_after=true;
-        add(4,l10n::Pick(L"只在 Pulse 右键菜单中隐藏",L"Hide in Pulse's menu only"),true);
+        add(4,l10n::Get(l10n::StringId::HideInPulseSMenuOnly).c_str(),true);
         items.back().checked=model.RowPulseHidden(row);
     }
     if(model.RowDeletable(row)) {
         items.back().separator_after=true;
         const bool deleting=model.RowDeleting(row);
-        add(5,deleting ? l10n::Pick(L"取消删除",L"Keep it")
-                       : l10n::Pick(L"删除残留项（点“应用更改”后生效）",L"Delete leftover (on Apply changes)"),true);
+        add(5,deleting ? l10n::Get(l10n::StringId::KeepIt).c_str()
+                       : l10n::Get(l10n::StringId::DeleteLeftoverOnApplyChanges).c_str(),true);
     }
     const int command=Popup(s,std::move(items));
     if(command==1) app::CopyTextToClipboard(s.hwnd,key);
@@ -177,9 +225,9 @@ void SysCtxOpenFolder(AppState& s,const std::wstring& file) {
 void SysCtxRestoreAll(AppState& s) {
     std::vector<ui::FluentMenuItem> items;
     ui::FluentMenuItem item;item.command=1;
-    item.text=l10n::Pick(L"撤销这次打开 Pulse 以来的全部改动",L"Undo every change made since Pulse started");
+    item.text=l10n::Get(l10n::StringId::UndoEveryChangeMadeSincePulseStarted).c_str();
     items.push_back(std::move(item));
-    ui::FluentMenuItem cancel;cancel.command=0;cancel.text=l10n::Pick(L"取消",L"Cancel");items.push_back(std::move(cancel));
+    ui::FluentMenuItem cancel;cancel.command=0;cancel.text=l10n::Get(l10n::StringId::Cancel).c_str();items.push_back(std::move(cancel));
     if(Popup(s,std::move(items))==1) s.settings.SystemCtx().RestoreAll();
 }
 void SysCtxAction(AppState& s,int index) {
@@ -258,6 +306,11 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
     case H::SettingsToggle: {
         // Pulse menu preview: pressing a movable row arms a drag (app_input
         // follows the pointer and drops); the fixed rows do nothing.
+        if(hit.index==45) {  // 清除记录 beside 记住常去的位置
+            s.core.jumpHistory->Clear();
+            InvalidateRect(s.hwnd,nullptr,FALSE);
+            return true;
+        }
         if(hit.index<ui::kSettingsMenuFixedHit) return false;
         if(hit.index<ui::kSettingsMenuRowHit) return true;
         const auto vm=BuildVm(s,false);
@@ -280,8 +333,22 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         s.settings.SetScroll(s.settings.scroll(),maximum);break;
     }
     case H::SettingsIntegration: s.settings.IntegrationAction(hit.index);break;
+    case H::SettingsAccentCustom: {
+        // 主题色 › 自定义: start the sliders from the colour in use.
+        s.settingsExpanded^=32u;
+        if(s.settingsExpanded & 32u) {
+            const auto c=s.accentColor;
+            const auto channel=[](float v) { return static_cast<uint32_t>(std::lround(std::clamp(v,0.0f,1.0f)*255.0f)); };
+            s.settings.SyncCustomAccent((channel(c.r)<<16)|(channel(c.g)<<8)|channel(c.b));
+        }
+        auto vm=BuildVm(s,false);
+        const float maximum=s.renderer.SettingsMaxScroll(vm,static_cast<float>(s.compositor.Width()),static_cast<float>(s.compositor.Height()));
+        s.settings.SetScroll(s.settings.scroll(),maximum);break;
+    }
     case H::SettingsPreviewStore: ui::OpenPreviewCodecStore(s.hwnd,hit.index);break;
     case H::SettingsSysCtx: SysCtxAction(s,hit.index);break;
+    case H::SettingsShortcuts: ShortcutsAction(s,hit.index);break;
+    case H::SettingsAi: pulse::AiSettingsAction(s,hit.index);break;
     case H::SettingsPackAction: {
         bool refresh=false;
         switch(static_cast<ui::PackAction>(hit.index)) {
@@ -305,6 +372,21 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
         case ui::PackAction::UseDetected: refresh=s.settings.UseDetectedFfmpeg();break;
         case ui::PackAction::RemoveOnUninstall: s.settings.ToggleRemovePacksOnUninstall();break;
         case ui::PackAction::AutoUpdate: s.settings.ToggleAutoUpdatePacks();break;
+        case ui::PackAction::UpdateAll: {
+            const auto state=s.settings.Packs();   // a copy: each update refreshes it
+            if(!state.update_version.empty()) refresh|=s.settings.UpdatePack(packs::PackId::Media,s.hwnd);
+            if(!state.images_update_version.empty()) refresh|=s.settings.UpdatePack(packs::PackId::Images,s.hwnd);
+            if(!state.raw_update_version.empty()) refresh|=s.settings.UpdatePack(packs::PackId::Raw,s.hwnd);
+            if(!state.archive_update_version.empty()) refresh|=s.settings.UpdatePack(packs::PackId::Archives,s.hwnd);
+            break;
+        }
+        case ui::PackAction::ManagePacks: OpenSettingsTab(s,8); return true;
+        case ui::PackAction::ContentInstall: OfferContentPack(s); return true;
+        case ui::PackAction::ContentManage: OpenSettingsTab(s,1); return true;
+        case ui::PackAction::AiInstall: OfferAiPack(s); InvalidateRect(s.hwnd,nullptr,FALSE); return true;
+        case ui::PackAction::AiRemove: ConfirmRemoveAiPack(s); InvalidateRect(s.hwnd,nullptr,FALSE); return true;
+        case ui::PackAction::AiCancel: CancelAiPackInstall(); return true;
+        case ui::PackAction::AiManage: OpenSettingsTab(s,ui::kSettingsPageAi); return true;
         case ui::PackAction::TriggerHover:
         case ui::PackAction::TriggerSpace:
             s.settings.PreviewTrigger(hit.index-static_cast<int>(ui::PackAction::TriggerHover));
@@ -320,7 +402,7 @@ bool HandleSettingsControl(AppState& s,const H& hit) {
             s.settings.HoverCardSize(hit.index-static_cast<int>(ui::PackAction::HoverSizeSmall));break;
         case ui::PackAction::Browse: {
             ui::FolderPickerSpec spec;spec.mode=ui::PickerMode::File;
-            spec.title=l10n::Pick(L"选择 ffmpeg.exe",L"Choose ffmpeg.exe");
+            spec.title=l10n::Get(l10n::StringId::ChooseFfmpegExe).c_str();
             spec.filters={{L"ffmpeg.exe",L"ffmpeg.exe"}};
             const auto& state=s.settings.Packs();
             const std::wstring& current=!state.custom_path.empty() ? state.custom_path : state.detected_path;

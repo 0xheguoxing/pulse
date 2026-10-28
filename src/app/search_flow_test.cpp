@@ -1,8 +1,10 @@
 #include "app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "app_input.h"
 #include "search_query.h"
 #include "../ui/address_search_layout.h"
 #include "../ui/toolbar_layout.h"
+#include "../ui/ui_renderer.h"
 #include "../common/localization.h"
 #include <fstream>
 #include <filesystem>
@@ -672,9 +674,7 @@ int RunToolbarLayoutTest(AppState& s, const wchar_t* output) {
                   region(controls.close) == ui::HitTestResult::AddressSearchClose,
                 "search controls remain reachable across window sizes");
             const auto create = s.renderer.NewCommandRect(w);
-            const auto split = s.renderer.SplitCommandRect(w);
-            check(create.top > address.bottom && split.right < w &&
-                  region(create) == ui::HitTestResult::NewButton && region(split) == ui::HitTestResult::SplitButton,
+            check(create.top > address.bottom && region(create) == ui::HitTestResult::NewButton,
                 "second toolbar row and popup anchors match hit targets");
             const auto new_arrow = s.renderer.NewArrowRect(w);
             check(new_arrow.left > create.left && new_arrow.right == create.right &&

@@ -13,8 +13,10 @@
 #include "index_config.h"
 #include "index_query.h"
 #include "index_delta.h"
+#include "index_overlay.h"
 #include "change_tracking.h"
 #include "change_feed_history.h"
+#include "index_types.h"
 #include <atomic>
 #include <bit>
 #include <cstdint>
@@ -35,62 +37,6 @@
 #include <winioctl.h>
 
 namespace pulse::index {
-
-inline constexpr size_t kSearchPageCap = 100000;
-// Consecutive base-merge failures back off 5 s, 10 s, 20 s ... capped at ten
-// minutes, so a deterministic failure cannot rewrite the full base every 5 s.
-constexpr ULONGLONG MergeRetryDelayMs(uint32_t consecutive_failures) noexcept {
-    constexpr ULONGLONG base = 5000, cap = 10ull * 60ull * 1000ull;
-    if (consecutive_failures == 0) return 0;
-    const uint32_t shift = consecutive_failures - 1 < 7 ? consecutive_failures - 1 : 7;
-    const ULONGLONG delay = base << shift;
-    return delay < cap ? delay : cap;
-}
-inline constexpr size_t kSearchUiPageSize = 2048;
-
-struct Hit {
-    std::wstring path;
-    std::wstring name;
-    bool is_dir = false;
-    uint64_t size = 0;
-    uint64_t mtime = 0; // FILETIME as u64
-};
-
-enum class ResultSort : uint8_t { Index, Name, Size, Mtime };
-
-struct Query {
-    uint64_t session_id = 0;
-    bool subscribe = false;
-    std::wstring needle;
-    std::wstring path_prefix;
-    bool folders_only = false;
-    size_t offset = 0;
-    size_t limit = 48;
-    bool rank = true;
-    ResultSort sort = ResultSort::Index;
-    bool sort_desc = false;
-};
-
-struct SearchResult {
-    uint64_t revision = 0;
-    std::vector<Hit> hits;
-    size_t total = 0;
-    DWORD error = 0;
-    // Filtered searches: parent folders DirVisibility could not answer yet.
-    // No hits are produced until every one of them has been checked.
-    std::vector<std::pair<int32_t, std::wstring>> unchecked_dirs;
-    uint64_t layout = 0;  // Engine::LayoutEpoch() the node ids above belong to
-};
-
-// Optional per-caller filter for Engine::Search. A match is returned only
-// when the caller may list its parent folder, since that listing is what
-// would show the name to the caller in Explorer. Node ids passed to State()
-// are stable for one Engine::LayoutEpoch().
-class DirVisibility {
-public:
-    virtual ~DirVisibility() = default;
-    virtual int State(int32_t dir) const = 0;  // 1 listable, 0 not, -1 unknown
-};
 
 #pragma pack(push, 1)
 struct Node {
@@ -257,13 +203,6 @@ private:
         MappedFile& operator=(const MappedFile&) = delete;
     };
 
-    struct QueryShard {
-        std::wstring volume_id;
-        int32_t first = 0;
-        int32_t last = 0;
-        std::unique_ptr<MappedFile> mapped;
-    };
-
     struct VolState {
         std::unordered_map<uint64_t, std::wstring> tracking_paths;
         wchar_t letter = 0;
@@ -278,6 +217,11 @@ private:
         const DiskFrn* frn_base = nullptr;
         uint32_t frn_base_n = 0;
         std::vector<DiskFrn> frn_new;
+        // O(1) FRN lookup over frn_new. A stalled merge can leave hundreds of
+        // thousands of entries here, and every USN record looks FRNs up 2-5
+        // times; a linear scan made each record cost ~1 ms of CPU.
+        std::unordered_map<uint64_t, uint32_t> frn_new_tail; // FRN -> newest frn_new slot
+        std::vector<uint32_t> frn_new_prev;                   // older slot with the same FRN
         std::vector<std::pair<uint64_t, int32_t>> frn_build; // MFT rebuild only
     };
 
@@ -359,18 +303,8 @@ private:
     bool FlattenLocked(Store& out, std::vector<VolState>& vols_out) const;
     bool WriteIndexFile(const std::wstring& path, const Store& s,
                         const std::vector<VolState>& vols, uint64_t built_unix) const;
-    void WriteVolumeShards(const Store& aggregate, const std::vector<VolState>& vols,
-                           uint64_t built_unix) const;
     bool MapIndexFile(const std::wstring& path, std::unique_ptr<MappedFile>& out) const;
     void AdoptMappedLocked(std::unique_ptr<MappedFile> mapped);
-    void RefreshQueryShardsLocked();
-    const QueryShard* QueryShardForLocked(int32_t id) const;
-    Node QueryNodeAtLocked(int32_t id) const;
-    Attr QueryAttrAtLocked(int32_t id) const;
-    std::wstring_view QueryNameOfLocked(int32_t id) const;
-    std::wstring BuildQueryPathLocked(int32_t id) const;
-    bool MatchQueryNodeLocked(int32_t id, const CompiledQuery& query, int32_t prefix_node,
-                              bool folders_only, bool use_attrs) const;
     void RebuildChildMapLocked();
     bool CommitMappedFile(const std::wstring& path);
 
@@ -394,6 +328,10 @@ private:
     bool CatchUpVolume(VolState& v, bool* changed, bool* structural = nullptr);
     enum class UsnApply : uint8_t { None, Attr, Structure };
     UsnApply ApplyUsnLocked(VolState& v, const USN_RECORD_V2* rec);
+    enum class UsnBatch : uint8_t { Done, Stopped, InvalidParent };
+    UsnBatch ApplyUsnBatchLocked(VolState& v, const BYTE* begin, const BYTE* end,
+                                 uint64_t& applied, bool& any_struct, bool& any_attr);
+    static std::vector<uint8_t> SupersededUsnRecords(const BYTE* begin, const BYTE* end);
     bool IsIndexNoiseLocked(const VolState& v, const USN_RECORD_V2* rec) const;
     void ResolveIndexDirFrn();
     bool InSubtreeLocked(int32_t node, int32_t ancestor) const;
@@ -460,15 +398,13 @@ private:
     std::wstring status_;
 
     std::unique_ptr<MappedFile> map_;
-    std::vector<QueryShard> query_shards_;
-    bool query_shards_ready_ = false;
     Store live_;  // tests: full store; after mmap: delta only
     Store build_;
     std::vector<VolState> vols_;
     std::vector<VolState> build_vols_;
     std::vector<int32_t> inactive_volume_roots_;
-    std::unordered_set<int32_t> tombstones_;
-    std::unordered_map<int32_t, Patch> patches_;
+    OverlaySet tombstones_;
+    OverlayMap<Patch> patches_;
     std::unordered_multimap<uint64_t, int32_t> child_map_;
     std::unordered_map<wchar_t, std::unique_ptr<DeltaLog>> delta_logs_;
     size_t deleted_ = 0;
@@ -488,7 +424,8 @@ private:
     ULONGLONG last_delta_flush_tick_ = 0;
     std::unordered_map<std::wstring, ULONGLONG> volume_retry_after_;
     std::unordered_map<std::wstring, ULONGLONG> volume_recovered_after_;
-    FilenameTiming filename_timing_;
+    // mutable: the const WriteIndexFile samples its memory stages (diagnostics only).
+    mutable FilenameTiming filename_timing_;
 
     struct WalkWatch {
         std::wstring path;

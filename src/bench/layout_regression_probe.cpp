@@ -1,6 +1,8 @@
 #ifdef PULSE_WITH_SELFTEST
 #include "../app/app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "../app/app_input.h"
+#include "../ui/ui_renderer.h"
 #include <windowsx.h>
 #include <fstream>
 #include <filesystem>
@@ -144,8 +146,10 @@ int RunLayoutRegressionProbe(pulse::AppState& s, const wchar_t* output) {
         const auto list = s.renderer.PaneListRect(slot.pane, slot.rect);
         ui::ViewLayout geometry(mode, list, entries->size(), 0, 0, 1);
         const auto metrics = geometry.Metrics();
+        // Icon grids: the gap after the first column (rows are centred, so the
+        // right remainder may be narrower than the scrollbar).
         const float x = mode == ui::ViewMode::List ? list.left + 30 :
-            list.left + metrics.columns * metrics.cell_width + 5;
+            list.left + metrics.origin_x + metrics.cell_width + 3;
         const float y = mode == ui::ViewMode::List ? list.top + metrics.rows_per_column * metrics.cell_height + 2 : list.top + 20;
         const D2D1_RECT_F window{0, 0, 1180, 735};
         const auto hit = s.renderer.HitTest(vm, window, x, y);

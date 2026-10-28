@@ -27,10 +27,39 @@ void MainRenderer::DrawPaneHeaderIcon(const D2D1_RECT_F& rc, PaneHeaderIcon icon
     case PaneHeaderIcon::Filter: command = I::Filter; break;
     case PaneHeaderIcon::SwapHorizontal: command = I::SwapHorizontal; break;
     case PaneHeaderIcon::SwapVertical: command = I::SwapVertical; break;
+    case PaneHeaderIcon::Size: command = I::Sliders; break;
+    case PaneHeaderIcon::Wall: break;  // drawn below
     }
     MakeBrush(dc, color, brText_);
-    command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command,
-                        command_icons::CenteredBounds(rc, 18.0f * scale_));
+    // In the toolbar the layout icons stand with the command icons.
+    const float box_dip = icon_stroke_px_ > 0.0f ? icon_box_dip_ : 18.0f;
+    D2D1_RECT_F bounds = command_icons::CenteredBounds(rc, box_dip * scale_);
+    if (icon_stroke_px_ > 0.0f) {
+        const float side = bounds.right - bounds.left;
+        bounds.left = std::round(bounds.left);
+        bounds.top = std::round(bounds.top);
+        bounds.right = bounds.left + side;
+        bounds.bottom = bounds.top + side;
+    }
+    if (icon == PaneHeaderIcon::Wall) {
+        // Photo wall: two justified rows (the prototype's glyph) on the command
+        // icons' canvas and stroke; one button needs no shared Icon entry.
+        const float k = (bounds.right - bounds.left) / command_icons::kCanvas;
+        D2D1_MATRIX_3X2_F previous{};
+        dc->GetTransform(&previous);
+        dc->SetTransform(D2D1::Matrix3x2F::Scale(k, k) *
+                         D2D1::Matrix3x2F::Translation(bounds.left, bounds.top) * previous);
+        for (const D2D1_RECT_F& box : {D2D1::RectF(3, 3, 13, 10), D2D1::RectF(15, 3, 21, 10),
+                                       D2D1::RectF(3, 14, 9, 21), D2D1::RectF(11, 14, 21, 21)})
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(box, 1.5f, 1.5f), brText_.get(),
+                                     command_icons::kStroke, paneHeaderStroke_.get());
+        dc->SetTransform(previous);
+        return;
+    }
+    const float side = bounds.right - bounds.left;
+    const float width = icon_stroke_px_ > 0.0f && side > 0.0f
+        ? icon_stroke_px_ * command_icons::kCanvas / side : command_icons::kStroke;
+    command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command, bounds, 1.0f, width);
 }
 
 } // namespace pulse::ui

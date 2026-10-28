@@ -19,7 +19,6 @@
 #include "index_paths.h"
 #include "index_path_service.h"
 #include "network_agent_host.h"
-#include "content_agent.h"
 #include "../common/current_user_security.h"
 #include <windows.h>
 #include <sddl.h>
@@ -54,6 +53,14 @@ namespace {
 constexpr UINT WM_ENGINE_NOTIFY = WM_APP + 1;
 constexpr UINT WM_QUIT_HOST = WM_APP + 2;
 constexpr DWORD kServiceReloadControl = 128;
+// The search master switch (Settings > Search). Interactive users may send
+// user-defined controls and start the service, so turning search off needs no
+// elevation: the service records the switch itself and stops. Started with
+// --disable-search it does the same without running; --enable-search clears it.
+constexpr DWORD kServiceDisableControl = 129;
+constexpr DWORD kServiceDisablePurgeControl = 130;
+enum class SearchSwitchRequest { None, Disable, DisablePurge, Enable };
+std::atomic<SearchSwitchRequest> g_switch_request{SearchSwitchRequest::None};
 constexpr UINT kIdleTimer = 1;
 constexpr UINT kBroadcastTimer = 2;
 constexpr UINT kIdleMs = 15000;
@@ -91,7 +98,9 @@ struct Client {
             const auto found = dirs.find(dir);
             return found == dirs.end() ? -1 : (found->second ? 1 : 0);
         }
+        bool TopFirst() const override { return top_first; }
         std::unordered_map<int32_t, bool> dirs;
+        bool top_first = false;
         uint64_t layout = 0;
         ULONGLONG since = 0;
     } visibility;
@@ -103,6 +112,9 @@ struct SearchTask {
     uint32_t id = 0;
     Query query;
     std::shared_ptr<std::atomic<uint32_t>> latest;
+    // A ranked page was sent with a partial total; this pass checks the
+    // remaining folders for the exact one and yields to queued searches.
+    bool finishing = false;
 };
 
 struct ClientWorker {
@@ -446,15 +458,25 @@ struct ListCheck {
     }
 };
 
+// New searches only: finishing passes never wait on each other.
+bool SearchesWaiting() {
+    std::lock_guard<std::mutex> lock(g.search_mu);
+    return std::any_of(g.search_queue.begin(), g.search_queue.end(),
+                       [](const SearchTask& queued) { return !queued.finishing; });
+}
+
 // A broad first query can name tens of thousands of folders; each check is
-// one kernel open, so they are spread over a few threads.
-void CheckDirs(Client& c, const SearchTask& task,
+// one kernel open, so they are spread over a few threads. Finishing passes
+// stop when another search is queued (answers so far are kept): false then.
+bool CheckDirs(Client& c, const SearchTask& task,
                const std::vector<std::pair<int32_t, std::wstring>>& dirs) {
     std::vector<int8_t> state(dirs.size(), -1);
     std::atomic<size_t> next{0};
+    std::atomic<bool> yielded{false};
     auto work = [&] {
         for (size_t i; (i = next.fetch_add(1)) < dirs.size();) {
             if (!c.alive || task.latest->load() != task.id) return;
+            if (task.finishing && (i & 15) == 15 && SearchesWaiting()) { yielded = true; return; }
             state[i] = CallerCanList(c.caller_token, dirs[i].second) ? 1 : 0;
         }
     };
@@ -466,14 +488,22 @@ void CheckDirs(Client& c, const SearchTask& task,
     for (auto& thread : pool) thread.join();
     for (size_t i = 0; i < dirs.size(); ++i)
         if (state[i] >= 0) c.visibility.dirs[dirs[i].first] = state[i] != 0;
+    return !yielded;
 }
 
-SearchResult SearchForCaller(Client& c, const SearchTask& task) {
+// `yielded` is set when a finishing pass gave way to a queued search.
+SearchResult SearchForCaller(Client& c, const SearchTask& task, bool& yielded) {
+    yielded = false;
     if (!CallerFilter()) return g.engine.Search(task.query, task.latest.get(), task.id);
     auto& vis = c.visibility;
     const ULONGLONG now = GetTickCount64();
     if (!vis.since || now - vis.since > kVisibilityTtlMs) { vis.dirs.clear(); vis.since = now; }
-    for (int round = 0; round < 4; ++round) {
+    // Ranked pages check the deciding folders first. Names in hidden folders
+    // push more candidates up; after a dozen such rounds check them all.
+    vis.top_first = !task.finishing && task.query.rank && task.query.limit > 0;
+    const int rounds = vis.top_first ? 16 : 4;
+    for (int round = 0; round < rounds; ++round) {
+        if (round == 12) vis.top_first = false;
         SearchResult sr = g.engine.Search(task.query, task.latest.get(), task.id, &vis);
         if (sr.layout && sr.layout != vis.layout) {
             // Node ids were renumbered, so earlier answers describe other folders.
@@ -483,10 +513,20 @@ SearchResult SearchForCaller(Client& c, const SearchTask& task) {
             if (stale) continue;
         }
         if (sr.unchecked_dirs.empty()) return sr;
-        CheckDirs(c, task, sr.unchecked_dirs);
+        if (!CheckDirs(c, task, sr.unchecked_dirs)) { yielded = true; return {}; }
         if (!c.alive || task.latest->load() != task.id) return {};
     }
     return {};
+}
+
+void Requeue(SearchTask task) {
+    std::lock_guard<std::mutex> lock(g.search_mu);
+    // A newer request of this session replaced the page meanwhile.
+    if (std::any_of(g.search_queue.begin(), g.search_queue.end(), [&](const SearchTask& queued) {
+            return queued.client == task.client && queued.query.session_id == task.query.session_id; }))
+        return;
+    g.search_queue.push_back(std::move(task));
+    g.search_cv.notify_one();
 }
 
 void SearchThread() {
@@ -505,7 +545,9 @@ void SearchThread() {
         auto& c = task.client;
         if (!c || !c->alive || task.latest->load() != task.id) continue;
         TraceSearch("filename_query_begin", g.engine.Revision());
-        SearchResult sr = SearchForCaller(*c, task);
+        bool yielded = false;
+        SearchResult sr = SearchForCaller(*c, task, yielded);
+        if (yielded) { Requeue(std::move(task)); continue; }
         sr.revision = g.engine.Revision();
         TraceSearch("filename_query_done", sr.revision);
         if (!c->alive || task.latest->load() != task.id) continue;
@@ -513,6 +555,20 @@ void SearchThread() {
         if (out.size() > kIndexMaxPayload) {
             sr.hits.clear();
             out = SearchPayload(sr);
+        }
+        if (sr.partial) {
+            // The page is final, the total is not yet: send it now and count
+            // the remaining folders after any queued searches. A partial page
+            // never counts as sent, so the exact one always follows.
+            WriteFrame(*c, RSP_IDX_SEARCH, task.id, out);
+            if (task.query.subscribe) {
+                std::lock_guard lock(c->subscriptions_mu);
+                auto found = c->subscriptions.find(task.query.session_id);
+                if (found != c->subscriptions.end() && found->second.id == task.id) found->second.sent_hash = 0;
+            }
+            task.finishing = true;
+            Requeue(std::move(task));
+            continue;
         }
         if (task.query.subscribe) {
             // Live refreshes rerun on every engine notification. Rows identical
@@ -874,6 +930,49 @@ HWND CreateMsgWindow() {
                            HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
 }
 
+// Empties the index folder after the engine let go of it. Only the folder the
+// service validated as private (service-owned) is touched; links are removed
+// without following them, and the folder itself stays.
+void PurgeIndexContents(const std::wstring& root) {
+    if (root.size() < 4) return;
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileExW((root + L"\\*").c_str(), FindExInfoBasic, &data,
+                                   FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring name = data.cFileName;
+        if (name == L"." || name == L"..") continue;
+        const std::wstring path = root + L"\\" + name;
+        const DWORD attributes = data.dwFileAttributes;
+        if (attributes & FILE_ATTRIBUTE_READONLY)
+            SetFileAttributesW(path.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY);
+        if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!(attributes & FILE_ATTRIBUTE_REPARSE_POINT)) PurgeIndexContents(path);
+            RemoveDirectoryW(path.c_str());
+        } else {
+            DeleteFileW(path.c_str());
+        }
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
+
+// Runs as SYSTEM after the engine stopped (or before it ever started).
+void ApplySearchSwitch(SearchSwitchRequest request, const std::wstring& validated_index_path) {
+    if (request == SearchSwitchRequest::None) return;
+    IndexConfig config;
+    if (!LoadMachineConfig(config, nullptr)) return;
+    const bool enable = request == SearchSwitchRequest::Enable;
+    if (config.search_enabled != enable) {
+        config.search_enabled = enable;
+        if (!SaveMachineConfig(config, nullptr)) ServiceTrace(L"search switch not saved");
+    }
+    if (request == SearchSwitchRequest::DisablePurge && !validated_index_path.empty() &&
+        CompareStringOrdinal(validated_index_path.c_str(), -1, config.index_path.c_str(), -1, TRUE) == CSTR_EQUAL) {
+        PurgeIndexContents(validated_index_path);
+        ServiceTrace(L"index files removed with the search switch");
+    }
+}
+
 int RunHost(bool as_service, bool test_mode = false,
             std::wstring pipe_name = kPipeName,
             std::wstring mutex_name = kMutexName, std::wstring fixture_root = {}) {
@@ -888,6 +987,7 @@ int RunHost(bool as_service, bool test_mode = false,
     ServiceTrace(L"RunHost entered");
     SetMachineIndexScope(as_service);
     PrivateIndexDirectoryLock index_directory_lock;
+    std::wstring validated_index_path;
     if (as_service) {
         (void)MachineDataRoot();
         IndexConfig config;
@@ -895,6 +995,26 @@ int RunHost(bool as_service, bool test_mode = false,
             ServiceTrace(L"Cannot load index directory configuration");
             SetSvc(SERVICE_STOPPED, ERROR_INVALID_DATA);
             return ERROR_INVALID_DATA;
+        }
+        const auto start_request = g_switch_request.exchange(SearchSwitchRequest::None);
+        if (start_request == SearchSwitchRequest::Enable) {
+            ApplySearchSwitch(start_request, {});
+            config.search_enabled = true;
+        }
+        const bool switch_off = start_request == SearchSwitchRequest::Disable ||
+                                start_request == SearchSwitchRequest::DisablePurge;
+        if (switch_off || !config.search_enabled) {
+            // Search is off: record a pending request, then stop cleanly (exit
+            // code 0, so no recovery restart) without building or opening the index.
+            std::wstring purge_path;
+            if (start_request == SearchSwitchRequest::DisablePurge &&
+                index_directory_lock.Acquire(std::filesystem::path(config.index_path)) &&
+                ProtectIndexDirectory(config.index_path))
+                purge_path = config.index_path;
+            if (switch_off) ApplySearchSwitch(start_request, purge_path);
+            ServiceTrace(L"search is turned off; the service stays stopped");
+            SetSvc(SERVICE_STOPPED);
+            return 0;
         }
         if (!CreateDirectoryW(config.index_path.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) {
             const DWORD failure = GetLastError();
@@ -918,6 +1038,7 @@ int RunHost(bool as_service, bool test_mode = false,
             return static_cast<int>(kIndexDirectoryNotPrivate);
         }
         SetActiveIndexDirectory(config.index_path);
+        validated_index_path = config.index_path;
         const std::wstring probe = config.index_path + L"\\.pulse-write-check-" +
             std::to_wstring(GetCurrentProcessId());
         HANDLE check = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
@@ -1007,6 +1128,7 @@ int RunHost(bool as_service, bool test_mode = false,
     g.engine.Stop();
     TraceSearch("filename_shutdown_engine_done");
     ServiceTrace(L"engine stopped");
+    if (as_service) ApplySearchSwitch(g_switch_request.exchange(SearchSwitchRequest::None), validated_index_path);
     if (g.mutex) {
         ReleaseMutex(g.mutex);
         CloseHandle(g.mutex);
@@ -1026,7 +1148,11 @@ DWORD WINAPI SvcCtrl(DWORD ctrl, DWORD, LPVOID, LPVOID) {
         g.engine.RequestRebuild();
         return NO_ERROR;
     }
-    if (ctrl == SERVICE_CONTROL_STOP || ctrl == SERVICE_CONTROL_SHUTDOWN) {
+    if (ctrl == kServiceDisableControl || ctrl == kServiceDisablePurgeControl)
+        g_switch_request = ctrl == kServiceDisablePurgeControl ? SearchSwitchRequest::DisablePurge
+                                                               : SearchSwitchRequest::Disable;
+    if (ctrl == SERVICE_CONTROL_STOP || ctrl == SERVICE_CONTROL_SHUTDOWN ||
+        ctrl == kServiceDisableControl || ctrl == kServiceDisablePurgeControl) {
         SetSvc(SERVICE_STOP_PENDING);
         g.running = false;
         {
@@ -1038,7 +1164,16 @@ DWORD WINAPI SvcCtrl(DWORD ctrl, DWORD, LPVOID, LPVOID) {
     return NO_ERROR;
 }
 
-VOID WINAPI SvcMain(DWORD, LPWSTR*) {
+VOID WINAPI SvcMain(DWORD argc, LPWSTR* argv) {
+    // StartService arguments follow the service name.
+    bool purge = false;
+    for (DWORD i = 1; argv && i < argc; ++i) if (argv[i] && wcscmp(argv[i], L"--purge-index") == 0) purge = true;
+    for (DWORD i = 1; argv && i < argc; ++i) {
+        if (!argv[i]) continue;
+        if (wcscmp(argv[i], L"--enable-search") == 0) g_switch_request = SearchSwitchRequest::Enable;
+        if (wcscmp(argv[i], L"--disable-search") == 0)
+            g_switch_request = purge ? SearchSwitchRequest::DisablePurge : SearchSwitchRequest::Disable;
+    }
     g.svc = RegisterServiceCtrlHandlerExW(kServiceName, SvcCtrl, nullptr);
     SetSvc(SERVICE_START_PENDING);
     RunHost(true);
@@ -1276,7 +1411,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     const bool service_mode = a1 == L"--service";
     const auto role = service_mode ? pulse::crash::ProcessRole::IndexService
         : a1 == L"--network-agent" ? pulse::crash::ProcessRole::NetworkAgent
-        : a1 == L"--content-agent" ? pulse::crash::ProcessRole::ContentAgent
         : pulse::crash::ProcessRole::IndexHelper;
     pulse::crash::Initialize({role, service_mode, {}});
 
@@ -1296,10 +1430,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
     if (a1 == L"--network-agent") return RunNetworkAgent();
     if (a1 == L"--test-network-agent" && args.size() == 3) return RunNetworkAgentTest(args[2]);
-    if (a1 == L"--content-instant-agent" && args.size() == 4) return RunPersistentContentAgent(args[2], wcstoul(args[3].c_str(), nullptr, 10), ContentAgentMode::Instant);
-    if (a1 == L"--content-index-agent" && args.size() == 4) return RunPersistentContentAgent(args[2], wcstoul(args[3].c_str(), nullptr, 10));
-    if (a1 == L"--content-index-observer" && args.size() == 4) return RunPersistentContentAgent(args[2], wcstoul(args[3].c_str(), nullptr, 10), true);
-    if (a1 == L"--content-agent" && args.size() == 3) return RunContentAgent(args[2]);
+    // Content search moved to Pulse.Content.exe (the content enhancement
+    // pack). Refuse its roles here rather than starting a helper host.
+    if (a1.rfind(L"--content-", 0) == 0) return ERROR_NOT_SUPPORTED;
     if (a1 == L"--test-host" && args.size() >= 3) {
         const std::wstring& token = args[2];
         const bool valid = !token.empty() && token.size() <= 64 &&

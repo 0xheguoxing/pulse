@@ -39,6 +39,17 @@ public:
             summary.has_deleted |= item.kind == ChangeKind::Deleted;
         }
     }
+    // Takes back what Commit() added for the same events, before the identity
+    // is committed again with newer ones. Its ancestors and times only grow,
+    // so last_change stays a valid maximum; has_deleted follows its count.
+    void Retract() const {
+        for (const auto& item : items_) {
+            auto& summary = *item.summary;
+            --summary.count;
+            --summary.counts[static_cast<uint32_t>(item.kind)];
+            summary.has_deleted = summary.counts[static_cast<uint32_t>(ChangeKind::Deleted)] != 0;
+        }
+    }
 private:
     struct Item {
         ChangeSummary* summary;

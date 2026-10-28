@@ -35,7 +35,8 @@ bool Exact(const std::filesystem::path& path) {
 }
 int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
-    pulse::l10n::SetLanguage(L"zh-CN");  // assertions compare Simplified error text
+    // Assertions compare Simplified error text from the embedded string table.
+    pulse::l10n::Initialize(GetModuleHandleW(nullptr), L"zh-CN");
     const auto root = std::filesystem::absolute(std::filesystem::path(L"bench_data") /
         (L"rename-ops-" + std::to_wstring(GetCurrentProcessId())));
     std::filesystem::create_directories(root / L"child");

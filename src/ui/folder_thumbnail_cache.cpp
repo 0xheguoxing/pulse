@@ -133,6 +133,7 @@ PreviewDrawResult FolderThumbnailCache::Draw(ID2D1DeviceContext* dc,
         request.id = cache_.next_id_++; request.generation = generation;
         request.pixels = pixel_size; request.attrs = attrs;
         request.path = path; request.key = key; request.identity = identity;
+        request.modified = modified; request.size = size;
         request.epoch = cache_.epoch_.load(std::memory_order_relaxed);
         request.timeout_ms = 1500;
         request.flags = ipc::kPreviewRequestFlagFolderThumbnail;

@@ -2,6 +2,7 @@
 #include "../common/windows_compat.h"
 #include "../common/localization.h"
 #include "typography.h"
+#include "../app/keymap.h"
 #include <windowsx.h>
 #include <algorithm>
 #include <array>
@@ -11,7 +12,9 @@
 namespace pulse::ui {
 namespace {
 using Id = l10n::StringId;
-struct HelpRow { Id label; std::wstring keys; };
+// `actions`: the keymap actions the row shows; once the user changes one of
+// them the row lists the user's keys instead of `keys`.
+struct HelpRow { Id label; std::wstring keys; std::vector<app::KeyAction> actions = {}; };
 struct HelpGroup { Id title; std::vector<HelpRow> rows; };
 
 // What the key below Esc types on this keyboard layout; the same label the
@@ -30,68 +33,82 @@ std::wstring SwitcherKey() {
 // the left column; tabs and windows stay side by side on the right.
 constexpr size_t kLeftGroups = 3;
 std::vector<HelpGroup> HelpGroups() {
-    return {
+    using K = app::KeyAction;
+    std::vector<HelpGroup> groups = {
         {Id::HelpGroupNav, {
-            {Id::HelpOpen, l10n::Pick(L"Enter / 双击", L"Enter / Double-click")},
-            {Id::HelpBackForward, L"Backspace / Alt ← / →"},
-            {Id::Up, L"Alt ↑"},
-            {Id::HelpGoToPath, L"Ctrl L / Alt D / F4"},
-            {Id::Refresh, L"F5"},
+            {Id::HelpOpen, l10n::Get(l10n::StringId::EnterDoubleClick).c_str()},
+            {Id::HelpBackForward, L"Backspace / Alt ← / →", {K::Back, K::Forward}},
+            {Id::Up, L"Alt ↑", {K::Up}},
+            {Id::HelpGoToPath, L"Ctrl L / Alt D / F4", {K::GoToPath}},
+            {Id::Refresh, L"F5", {K::Refresh}},
             {Id::HelpMoveFocus, L"↑ ↓ PgUp PgDn Home End"},
         }},
         {Id::HelpGroupFiles, {
-            {Id::QuickPreview, L"Space"},
-            {Id::HelpClipboard, L"Ctrl C / X / V"},
-            {Id::CopyPath, L"Ctrl Shift C"},
-            {Id::Undo, L"Ctrl Z"},
-            {Id::Rename, L"F2"},
-            {Id::BatchRename, L"Ctrl Shift R"},
-            {Id::NewFolder, L"Ctrl Shift N / F7"},
-            {Id::Delete, L"Delete / Ctrl D"},
-            {Id::PermanentDelete, L"Shift Delete"},
-            {Id::Properties, L"Alt Enter"},
-            {Id::HelpContextMenu, L"Shift F10"},
-            {Id::HelpToggleTag, L"Ctrl Alt Shift 1–7"},
+            {Id::QuickPreview, L"Space", {K::QuickPreview}},
+            {Id::HelpClipboard, L"Ctrl C / X / V", {K::Copy, K::Cut, K::Paste}},
+            {Id::CopyPath, L"Ctrl Shift C", {K::CopyPath}},
+            {Id::Undo, L"Ctrl Z", {K::Undo}},
+            {Id::Rename, L"F2", {K::Rename}},
+            {Id::BatchRename, L"Ctrl Shift R", {K::BatchRename}},
+            {Id::NewFolder, L"Ctrl Shift N / F7", {K::NewFolder}},
+            {Id::Delete, L"Delete / Ctrl D", {K::Delete}},
+            {Id::PermanentDelete, L"Shift Delete", {K::PermanentDelete}},
+            {Id::Properties, L"Alt Enter", {K::Properties}},
+            {Id::HelpContextMenu, L"Shift F10", {K::ContextMenu}},
+            {Id::HelpToggleTag, L"Alt 1–9", {K::ToggleTag}},
+            {Id::HelpClearTags, L"Alt 0", {K::ClearTags}},
+            {Id::HelpTagPanel, L"Alt T", {K::TagPanel}},
         }},
         {Id::HelpGroupSelect, {
-            {Id::SelectAll, L"Ctrl A"},
-            {Id::InvertSelection, L"Ctrl I"},
-            {Id::HelpSelectPattern, L"Ctrl Shift A"},
+            {Id::SelectAll, L"Ctrl A", {K::SelectAll}},
+            {Id::InvertSelection, L"Ctrl I", {K::InvertSelection}},
+            {Id::HelpSelectPattern, L"Ctrl Shift A", {K::SelectPattern}},
             {Id::SelectionHint, l10n::Get(Id::SelectionKeys)},
         }},
         {Id::HelpGroupSearch, {
-            {Id::Search, L"Ctrl K"},
-            {Id::HelpCommandBar, L"Ctrl Shift K"},
-            {Id::HelpProject, L"Ctrl P"},
-            {Id::HelpFilter, L"Ctrl F / Ctrl E / F3"},
-            {Id::AdvancedSearch, L"Ctrl Shift F"},
+            {Id::Search, L"Ctrl K", {K::Search}},
+            {Id::HelpCommandBar, L"Ctrl Shift K", {K::CommandBar}},
+            {Id::HelpProject, L"Ctrl P", {K::Project}},
+            {Id::HelpFilter, L"Ctrl F / Ctrl E / F3", {K::Filter}},
+            {Id::AdvancedSearch, L"Ctrl Shift F", {K::AdvancedSearch}},
         }},
         {Id::HelpGroupTabs, {
-            {Id::TooltipNewTab, L"Ctrl T"},
-            {Id::TabClose, L"Ctrl W"},
-            {Id::HelpSwitchTab, L"Ctrl Tab / Ctrl 1–9"},
-            {Id::SplitLayout, L"Ctrl Alt 1 / 2 / 3 / 4"},
-            {Id::HelpViewMode, L"Ctrl Shift 1–8"},
-            {Id::HelpNextPane, L"F6"},
-            {Id::HelpMarkTarget, L"Ctrl Alt D"},
-            {Id::HelpTransferTarget, L"Ctrl Alt C / X"},
-            {Id::HelpSidebar, L"Ctrl B"},
-            {Id::Maximize, L"F11"},
+            {Id::TooltipNewTab, L"Ctrl T", {K::NewTab}},
+            {Id::TabClose, L"Ctrl W", {K::CloseTab}},
+            {Id::HelpSwitchTab, L"Ctrl Tab / Ctrl 1–9", {K::NextTab, K::TabNumber}},
+            {Id::SplitLayout, L"Ctrl Alt 1 / 2 / 3 / 4", {K::Layout}},
+            {Id::HelpViewMode, L"Ctrl Shift 1–8", {K::ViewMode}},
+            {Id::HelpNextPane, L"F6", {K::NextPane}},
+            {Id::HelpMarkTarget, L"Ctrl Alt D", {K::MarkTarget}},
+            {Id::HelpTransferTarget, L"Ctrl Alt C / X", {K::CopyToTarget, K::MoveToTarget}},
+            {Id::HelpSidebar, L"Ctrl B", {K::Sidebar}},
+            {Id::Maximize, L"F11", {K::Maximize}},
         }},
         {Id::HelpGroupWindows, {
-            {Id::HelpNewWindow, L"Ctrl N"},
-            {Id::HelpCloseWindow, L"Ctrl Shift W / Alt F4"},
-            {Id::HelpTabToWindow, L"Ctrl Shift M"},
-            {Id::HelpReopenClosed, L"Ctrl Shift T"},
-            {Id::HelpSwitchWindow, L"Ctrl " + SwitcherKey()},
-            {Id::HelpWindowOverview, L"Ctrl Shift O"},
+            {Id::HelpNewWindow, L"Win E", {K::NewWindow}},
+            {Id::HelpCloseWindow, L"Ctrl Shift W / Alt F4", {K::CloseWindow}},
+            {Id::HelpTabToWindow, L"Ctrl Shift M", {K::TabToWindow}},
+            {Id::HelpReopenClosed, L"Ctrl Shift T", {K::ReopenClosed}},
+            {Id::HelpSwitchWindow, L"Ctrl " + SwitcherKey(), {K::SwitchWindow}},
+            {Id::HelpWindowOverview, L"Ctrl Shift O", {K::Overview}},
+            {Id::HelpMergeWindows, L"Ctrl Shift J", {K::MergeWindows}},
         }},
     };
+    for (auto& group : groups) {
+        for (auto& row : group.rows) {
+            std::wstring keys = app::CustomizedKeysText(row.actions);
+            if (keys.empty()) continue;
+            if (row.label == Id::HelpCloseWindow) keys += L" / Alt F4";  // fixed
+            row.keys = std::move(keys);
+        }
+    }
+    return groups;
 }
 
 // Compact metrics in DIPs, shared by layout and drawing so the scroll extent
-// always matches what is painted.
-constexpr float kPad = 24, kHeader = 86, kFooter = 40, kRowH = 28, kGroupH = 32,
+// always matches what is painted. 26 DIP rows (22 DIP key chips) keep all
+// groups unscrolled in a 1600x900 window now that tags have keys.
+constexpr float kPad = 24, kHeader = 86, kFooter = 40, kRowH = 26, kGroupH = 32,
                 kColumnGap = 32;
 float GroupHeightDip(const HelpGroup& g) {
     return kGroupH + kRowH * static_cast<float>(g.rows.size());

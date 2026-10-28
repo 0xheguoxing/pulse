@@ -1,15 +1,16 @@
 #pragma once
 #include "../fs/fs_enum.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include <string>
 #include <vector>
 
 namespace pulse::app {
 
 // File Explorer keeps the rows on screen where they are while files change
-// underneath them (#13): a renamed or modified item stays in its row, a new
-// item lands at the end of its group, and only an explicit refresh, a new
-// sort or reopening the folder puts the list back in sort order.
+// underneath them (#13): a renamed or modified item stays in its row, and
+// only an explicit refresh, a new sort or reopening the folder puts the list
+// back in sort order. Unlike Explorer, a new item (pasted, extracted,
+// downloaded) goes straight to its sort position rather than the end.
 //
 // Grouping comes from the ScopedEntryGrouping active on this thread, as for
 // EntryLess. Held listings stay group-contiguous; an item whose group changes
@@ -23,8 +24,8 @@ bool SameEntryGroup(const fs::DirEntry& a, const fs::DirEntry& b,
 bool GroupBefore(const fs::DirEntry& a, const fs::DirEntry& b,
                  ui::SortColumn col, ui::SortDirection dir);
 
-// Inserts `entry` after the last row of its group, or before the first row of
-// a later group; at the very end when ungrouped.
+// Inserts `entry` before the first row that sorts after it (EntryLess, so
+// grouping included): its sort position. The name predates that.
 void InsertAtGroupEnd(std::vector<fs::DirEntry>& entries, fs::DirEntry entry,
                       ui::SortColumn col, ui::SortDirection dir);
 
@@ -42,11 +43,18 @@ struct EntryRename {
 // Merges a freshly enumerated listing (`fresh`, in sort order) into the order
 // on screen (`shown`): rows still present keep their place with fresh
 // metadata, a renamed row (`renames`) keeps its old row, removed rows drop
-// out, and new rows go to the end of their group in sort order.
+// out, and new rows merge in at their sort position.
 std::vector<fs::DirEntry> KeepEntryOrder(const std::vector<fs::DirEntry>& shown,
                                          const std::vector<fs::DirEntry>& fresh,
                                          const std::vector<EntryRename>& renames,
                                          ui::SortColumn col, ui::SortDirection dir);
+
+// True when `fresh` lists the rows shown in the same order and groups, so
+// KeepEntryOrder would return `fresh` unchanged. A rescan of an unchanged
+// folder takes this path instead of rebuilding the listing.
+bool SameEntryOrder(const std::vector<fs::DirEntry>& shown,
+                    const std::vector<fs::DirEntry>& fresh,
+                    ui::SortColumn col, ui::SortDirection dir);
 
 // Points selection names at their new names when `fresh` shows the rename
 // landed (the old name is gone, the new one present), so a refresh that

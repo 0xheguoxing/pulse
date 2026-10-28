@@ -6,9 +6,62 @@
 #include "../../third_party/pdfium/include/fpdf_text.h"
 #include <array>
 #include <vector>
+#if __has_include("pdfium_pin.h")
+#include "pdfium_pin.h"
+#include <bcrypt.h>
+#include <cwchar>
+#include <cwctype>
+#pragma comment(lib, "bcrypt.lib")
+#endif
 
 namespace pulse::index {
 namespace {
+#ifdef PULSE_PDFIUM_SHA256
+bool FileSha256Is(HANDLE file, const wchar_t* expected) {
+    BCRYPT_ALG_HANDLE algorithm = nullptr; BCRYPT_HASH_HANDLE hash = nullptr;
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) return false;
+    bool ok = BCRYPT_SUCCESS(BCryptCreateHash(algorithm, &hash, nullptr, 0, nullptr, 0, 0));
+    std::vector<unsigned char> buffer(1 << 20);
+    while (ok) {
+        DWORD read = 0;
+        if (!ReadFile(file, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr)) ok = false;
+        else if (!read) break;
+        else ok = BCRYPT_SUCCESS(BCryptHashData(hash, buffer.data(), read, 0));
+    }
+    unsigned char digest[32]{};
+    ok = ok && BCRYPT_SUCCESS(BCryptFinishHash(hash, digest, sizeof(digest), 0));
+    if (hash) BCryptDestroyHash(hash);
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    if (!ok || wcslen(expected) != 64) return false;
+    static const wchar_t kHex[] = L"0123456789abcdef";
+    for (size_t i = 0; i < 32; ++i) {
+        if (towlower(expected[2 * i]) != kHex[digest[i] >> 4] || towlower(expected[2 * i + 1]) != kHex[digest[i] & 15])
+            return false;
+    }
+    return true;
+}
+
+// From the content enhancement pack (%LOCALAPPDATA%) Pulse.Document.exe uses
+// the pdfium.dll of the install directory pulse.exe names in PULSE_PDFIUM_DIR,
+// and only the exact build this version ships: the variable is inherited, so
+// it is never trusted for anything else. The file stays open without write
+// sharing from hashing until it is mapped.
+HMODULE LoadInstallPdfium() {
+    wchar_t dir[32768]{}; const DWORD n = GetEnvironmentVariableW(L"PULSE_PDFIUM_DIR", dir, ARRAYSIZE(dir));
+    if (!n || n >= ARRAYSIZE(dir)) return nullptr;
+    std::wstring dll(dir, n);
+    if (dll.back() != L'\\' && dll.back() != L'/') dll += L'\\';
+    dll += L"pdfium.dll";
+    const HANDLE file = CreateFileW(dll.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                    FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return nullptr;
+    HMODULE module = nullptr;
+    if (FileSha256Is(file, PULSE_PDFIUM_SHA256))
+        module = LoadLibraryExW(dll.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    CloseHandle(file);
+    return module;
+}
+#endif
 struct Api {
     HMODULE module = nullptr;
 #define PDF_FUNCTION(name) decltype(&name) name##_fn = nullptr
@@ -26,7 +79,12 @@ struct Api {
         std::wstring dll(path, n); const auto slash = dll.find_last_of(L"\\/");
         if (slash == std::wstring::npos) return;
         dll.resize(slash + 1); dll += L"pdfium.dll";
-        module = LoadLibraryExW(dll.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (GetFileAttributesW(dll.c_str()) != INVALID_FILE_ATTRIBUTES)
+            module = LoadLibraryExW(dll.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+#ifdef PULSE_PDFIUM_SHA256
+        else
+            module = LoadInstallPdfium();
+#endif
         if (!module) return;
 #define LOAD_PDF(name) name##_fn = reinterpret_cast<decltype(name##_fn)>(GetProcAddress(module, #name)); if (!name##_fn) return
         LOAD_PDF(FPDF_InitLibraryWithConfig); LOAD_PDF(FPDF_DestroyLibrary);

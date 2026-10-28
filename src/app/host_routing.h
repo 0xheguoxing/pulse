@@ -41,6 +41,7 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_SHELL_VERBS,            // static verb reads (process-wide cache)
     WM_RECYCLE_INFO,           // Recycle Bin occupancy query
     WM_NETWORK_LOCATIONS,      // network locations read
+    WM_LAN_DISCOVERY,          // LAN device discovery (network page)
     WM_UPDATE_RESULT,          // update check
     WM_UPDATE_DOWNLOADED,      // update download
     WM_CHANGE_TRACKING,        // change tracking client
@@ -53,8 +54,12 @@ inline constexpr UINT kHostRoutedMessages[] = {
     WM_EXPLORER_TAKEOVER,      // Explorer window takeover (opens in the most recent window)
     WM_SHELLCTX_ITEMS,         // shell context menu rows (M4a: the menu is open in the active window)
     WM_NETWORK_LIVE_SEARCH,    // a tab's live network walk (M6f: the tab may have moved to another window)
+    WM_DEVICES_CHANGED,        // phone list (DeviceRegistry, device thread)
+    WM_UI_KICK,                // folder changes / folder sizes ready (shared AppCore queues)
     TrayController::kCallbackMessage,  // notification icon (owned by the host)
     WM_HOTKEY,                 // global search hotkey (registered on the host)
+    WM_DOUBLE_CTRL,            // global search double Ctrl (posted to the host)
+    WM_DIALOG_JUMP_CONTEXT,    // Open / Save dialog jump bar context request
 };
 
 constexpr bool IsHostRoutedMessage(UINT message) noexcept {
@@ -66,7 +71,12 @@ constexpr bool IsHostRoutedMessage(UINT message) noexcept {
 // System broadcasts with a Pulse handler (M3c). The shared part (theme flag,
 // drive list, places) runs once; the per-window part (accent, DWM chrome,
 // repaint) runs for every window.
-enum class SystemBroadcast { None, Theme, Volumes, QueryEndSession, EndSession };
+enum class SystemBroadcast { None, Theme, Volumes, Devices, QueryEndSession, EndSession };
+
+// GUID_DEVINTERFACE_WPD: phones and cameras (MTP / PTP). DeviceRegistry
+// registers for these; volume broadcasts reach every window anyway.
+inline constexpr GUID kPortableDeviceInterfaceClass = {
+    0x6AC27878, 0xA6FA, 0x4155, {0xBA, 0x85, 0xF9, 0x8F, 0x49, 0x1D, 0x4F, 0x33}};
 
 inline SystemBroadcast ClassifySystemBroadcast(UINT message, WPARAM wparam, LPARAM lparam) noexcept {
     switch (message) {
@@ -80,8 +90,14 @@ inline SystemBroadcast ClassifySystemBroadcast(UINT message, WPARAM wparam, LPAR
         // A USB stick, a mounted image, or any new volume changes the drive list.
         if (wparam != DBT_DEVICEARRIVAL && wparam != DBT_DEVICEREMOVECOMPLETE) return SystemBroadcast::None;
         const auto* header = reinterpret_cast<const DEV_BROADCAST_HDR*>(lparam);
-        return !header || header->dbch_devicetype == DBT_DEVTYP_VOLUME ? SystemBroadcast::Volumes
-                                                                       : SystemBroadcast::None;
+        if (!header || header->dbch_devicetype == DBT_DEVTYP_VOLUME) return SystemBroadcast::Volumes;
+        // A phone came or went (its storages are not volumes).
+        if (header->dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE &&
+            header->dbch_size >= sizeof(DEV_BROADCAST_DEVICEINTERFACE_W) &&
+            IsEqualGUID(reinterpret_cast<const DEV_BROADCAST_DEVICEINTERFACE_W*>(header)->dbcc_classguid,
+                        kPortableDeviceInterfaceClass))
+            return SystemBroadcast::Devices;
+        return SystemBroadcast::None;
     }
     case WM_QUERYENDSESSION: return SystemBroadcast::QueryEndSession;
     case WM_ENDSESSION: return SystemBroadcast::EndSession;

@@ -32,7 +32,10 @@ constexpr uint16_t kNumber = 0x0203;
 constexpr uint16_t kLabel = 0x0204;
 constexpr uint16_t kBoolErr = 0x0205;
 constexpr uint16_t kString = 0x0207;
+constexpr uint16_t kArray = 0x0221;
+constexpr uint16_t kTable = 0x0236;
 constexpr uint16_t kRk = 0x027E;
+constexpr uint16_t kShrFmla = 0x04BC;
 constexpr uint16_t kBof = 0x0809;
 
 void SetError(std::wstring* error, const wchar_t* text) {
@@ -338,6 +341,11 @@ bool ReadXlsModel(const std::wstring& path, int rows, int cols, SheetModel& mode
                 }
             }
             break;
+        case kShrFmla: case kArray: case kTable:
+            // Shared / array / table formula definitions sit between the
+            // first FORMULA of their range and its STRING result: keep
+            // waiting, or whole columns of text formulas read empty.
+            continue;
         case kString:
             if (pending_string) put(pending_row, pending_col, RecordString(s, b, end, biff8, codepage));
             break;

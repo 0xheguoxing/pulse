@@ -16,9 +16,8 @@
 | --- | --- | --- |
 | Windows 版（64位） | Windows 10 / Windows 11 | `PulseSetup-版本.exe` |
 | Windows 8.1 兼容版（64位） | Windows 8.1 | `PulseSetup-版本-win81.exe` |
-| 免安装版（64位） | Windows 10 / Windows 11 | `Pulse-版本-portable-win-x64.zip` |
 
-运行安装包，按向导完成安装。安装时可以启用 PulseIndex 服务，用于全盘索引搜索。免安装版解压即可运行，配置仍保存在用户应用数据目录；全盘索引服务需要通过安装版部署。
+运行安装包，按向导完成安装。安装时可以启用 PulseIndex 服务，用于全盘索引搜索。从 1.0.58 起不再提供免安装版。
 
 界面提供简体中文、繁體中文和 English，默认跟随 Windows，也可以在「设置 → 显示语言」中切换。
 

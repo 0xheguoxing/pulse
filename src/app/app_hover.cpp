@@ -2,19 +2,28 @@
 #include "app_runtime.h"
 #include "app_change_tracking.h"
 #include "app_hover_preview.h"
+#include "../ui/ui_renderer.h"
 
 namespace pulse {
-bool UpdatePointerHover(AppState& s, const ui::HitTestResult& hit, POINT point) {
+bool UpdatePointerHover(AppState& s, const ui::HitTestResult& pointer_hit, POINT point) {
+    // On a folder's hover card the card keeps the pointer (its list scrolls):
+    // the rows under it get no hover, and its own row stays the hovered one.
+    static const ui::HitTestResult kNoHit{};
+    const bool on_card = HoverPreviewHoldsPointer(s, point);
+    const ui::HitTestResult& hit = on_card ? kNoHit : pointer_hit;
     const bool target_changed = static_cast<int>(hit.region) != s.hoverRegion ||
         hit.index != s.hoverControlIndex || hit.sub_index != s.hoverSubIndex ||
-        hit.pane_index != s.hoverPaneIndex || hit.path != s.hoverPath || hit.label != s.hoverLabel;
-    const int row = (hit.region == ui::HitTestResult::Row ||
+        (!on_card && hit.pane_index != s.hoverPaneIndex) || hit.path != s.hoverPath || hit.label != s.hoverLabel;
+    const int row = on_card ? s.hoverRow : (hit.region == ui::HitTestResult::Row ||
         hit.region == ui::HitTestResult::RowStar ||
+        hit.region == ui::HitTestResult::RowTagDot ||
         hit.region == ui::HitTestResult::RowFolderSize ||
         hit.region == ui::HitTestResult::RowNewTab ||
         hit.region == ui::HitTestResult::ChangeBadge ||
-        hit.region == ui::HitTestResult::RowMore) ? hit.index : -1;
-    const bool row_changed = row != s.hoverRow || hit.pane_index != s.hoverPaneIndex;
+        hit.region == ui::HitTestResult::RowMore ||
+        hit.region == ui::HitTestResult::RowCheck) ? hit.index : -1;
+    const int row_pane = on_card ? s.hoverPaneIndex : hit.pane_index;
+    const bool row_changed = row != s.hoverRow || row_pane != s.hoverPaneIndex;
     const int crumb = hit.region == ui::HitTestResult::BreadcrumbSegment ? hit.index : -1;
     const bool crumb_changed = crumb != s.breadcrumbHover;
     const bool sidebar_hot = hit.region == ui::HitTestResult::Scrollbar && hit.sub_index == 2;
@@ -23,7 +32,7 @@ bool UpdatePointerHover(AppState& s, const ui::HitTestResult& hit, POINT point) 
     if (target_changed) ApplyHoverTarget(s, hit);
     if (row_changed) {
         s.hoverRow = row;
-        s.hoverPaneIndex = hit.pane_index;
+        s.hoverPaneIndex = row_pane;
         s.ctxHoverSince = row >= 0 ? GetTickCount64() : 0;
         if (row < 0) s.ctxHoverPrefetched.clear();
         NoteHoverPreviewRow(s);

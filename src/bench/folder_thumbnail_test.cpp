@@ -93,7 +93,7 @@ int wmain(int argc, wchar_t** argv) {
         Check(decode(),"real WIC content renders");
         std::cout<<"[TIME] "<<i+1<<" cards "<<std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-begin).count()<<" ms\n";
         Check(w==256&&h==256&&stride==1024&&pixels.size()==256*256*4,"complete square PBGRA output");
-        Check(pixels[3]==0&&pixels[(255*256+255)*4+3]==0,"transparent canvas corners");
+        Check(pixels.size()==256*256*4&&pixels[3]==0&&pixels[(255*256+255)*4+3]==0,"transparent canvas corners");
         Check(prior.empty()||pixels!=prior,"adding an image changes the fan");
         Check(SavePng(root/(L"fan_"+std::to_wstring(i+1)+L".png"),pixels,256),"render fixture saved");
         prior=pixels;

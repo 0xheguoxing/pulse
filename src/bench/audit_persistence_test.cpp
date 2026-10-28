@@ -23,7 +23,7 @@ int main() {
     app::fixture = dir.wstring();
     const auto file = app::fixture + L"\\context_menu.json";
     app::ContextMenuPrefs original;
-    original.share = true;
+    original.share = false;
     original.SetItemEnabled(L"h:{11111111-2222-3333-4444-555555555555}", false);
     Check(original.Save(), "AUD-014 save nondefault fixture");
     std::wstring before;
@@ -37,9 +37,9 @@ int main() {
     std::wstring after;
     ReadUtf8File(file, after);
     Check(before == after, "AUD-014 bytes retained");
-    Check(loaded.Load() && !loaded.load_failed && loaded.share && loaded.Save(), "AUD-014 reread unlocks persistence");
-    WriteUtf8FileAtomic(file, L"{\"share\":false,");
-    Check(!loaded.Load() && loaded.share && !loaded.Save(), "AUD-014 truncated JSON retains live state and blocks save");
+    Check(loaded.Load() && !loaded.load_failed && !loaded.share && loaded.Save(), "AUD-014 reread unlocks persistence");
+    WriteUtf8FileAtomic(file, L"{\"share\":true,");
+    Check(!loaded.Load() && !loaded.share && !loaded.Save(), "AUD-014 truncated JSON retains live state and blocks save");
     HANDLE invalid = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
     const unsigned char bytes[] = {0xff, 0xfe, 0xff};
     DWORD written = 0;

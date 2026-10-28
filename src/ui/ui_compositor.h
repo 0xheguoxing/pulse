@@ -50,10 +50,25 @@ public:
     ~Compositor();
 
     bool Init(HWND hwnd);
+    // Starts creating the process's first D3D11 device on a worker thread;
+    // the first Init on any thread takes it (waiting if needed) instead of
+    // creating its own. Driver loading dominates that call (about 250 ms on
+    // NVIDIA), so calling this early takes it off the startup critical path.
+    static void PrefetchSharedDevice();
     const std::wstring& InitializationError() const { return initialization_error_; }
     void Shutdown();
     void Resize(int width, int height);
-    void Present();
+    // dirty: the only client rect this frame drew (partial redraw); null for
+    // a whole frame. Ignored unless CanPresentPartial().
+    void Present(const RECT* dirty = nullptr);
+    // Partial redraw (plans/Pulse_局部重绘方案.md): the swap chain keeps its
+    // buffers (FLIP_SEQUENTIAL) and the last frame reached the screen whole,
+    // so the next one may redraw part of it. PULSE_PARTIAL_REDRAW=0 turns it off.
+    static bool PartialRedrawEnabled();
+    bool CanPresentPartial() const { return partial_swap_ && !full_next_ && !device_lost_; }
+    void ForceFullFrame() { full_next_ = true; }
+    // A lost device, or a swap chain that could not be resized: the next
+    // Recover() rebuilds the window's graphics.
     void NotifyDeviceLost(HRESULT reason);
     bool Recover();
     bool NeedsRecovery() const { return device_lost_; }
@@ -76,6 +91,15 @@ public:
                       const D2D1_RECT_F& bounds, const D2D1_COLOR_F& foreground,
                       const D2D1_COLOR_F& background,
                       DWRITE_TEXT_ALIGNMENT alignment = DWRITE_TEXT_ALIGNMENT_LEADING);
+    // dc->DrawTextLayout, with LumaText glyphs when the UI text uses LumaText
+    // (same look as the file list); DirectWrite draws otherwise.
+    void DrawTextLayout(D2D1_POINT_2F origin, IDWriteTextLayout* layout,
+                        ID2D1SolidColorBrush* brush,
+                        D2D1_DRAW_TEXT_OPTIONS options = D2D1_DRAW_TEXT_OPTIONS_NONE);
+    bool DrawLumaTextSplit(std::wstring_view text, IDWriteTextFormat* format,
+                           const D2D1_RECT_F& bounds, const D2D1_COLOR_F& foreground,
+                           std::uint32_t split, const D2D1_COLOR_F& split_foreground,
+                           const D2D1_COLOR_F& background);
     bool MeasureLumaText(std::wstring_view text, IDWriteTextFormat* format,
                          float& width, float* height = nullptr);
     bool PaintLumaEdit(HWND hwnd, HDC hdc, IDWriteTextFormat* format,
@@ -100,6 +124,27 @@ public:
     static void SetFrameCopyEnabled(bool enabled) noexcept;
     static bool FrameCopyEnabled() noexcept;
     ID2D1Bitmap1* FrameCopy() const { return frameCopy_.get(); }
+    // Counts the copies, so a reader can tell the frame has changed.
+    unsigned long long FrameCopySerial() const { return frameCopySerial_; }
+
+    // Dialog acrylic (window_helpers BeginSurface): the Pulse window right
+    // under a dialog, blurred like menu acrylic. window_material registers
+    // the builder; targets built without it keep the plain dialog surface.
+    using AcrylicPlateBuilder = bool (*)(ID2D1DeviceContext* dc, ID2D1Bitmap1* frame, POINT frame_origin,
+                                         const RECT& card, float scale, bool dark, ComPtr<ID2D1Bitmap1>& plate);
+    static void SetAcrylicPlateBuilder(AcrylicPlateBuilder builder) noexcept;
+    static AcrylicPlateBuilder GetAcrylicPlateBuilder() noexcept;
+    // The window of this thread whose frame copy shows right under `dialog`
+    // (screen rect `area`); null when another program's window is in between
+    // or nothing of ours is there.
+    static Compositor* FrameSourceUnder(HWND dialog, const RECT& area);
+
+    // Theme reveal: the next Present() also keeps that frame in HeldFrame()
+    // until ReleaseHeldFrame() (or a resize / device loss drops it).
+    void CaptureNextFrame() { captureNext_ = true; }
+    void CancelCaptureNextFrame() { captureNext_ = false; }
+    ID2D1Bitmap1* HeldFrame() const { return held_.get(); }
+    void ReleaseHeldFrame() { held_.reset(); }
 
     // Whole-window zoom on the DirectComposition root visual (runs on the
     // compositor thread, so no frames are pumped). origin is in client pixels.
@@ -134,6 +179,9 @@ private:
     ComPtr<ID2D1DeviceContext> dc_;
     ComPtr<ID2D1Bitmap1> targetBitmap_;
     ComPtr<ID2D1Bitmap1> frameCopy_;
+    unsigned long long frameCopySerial_ = 0;
+    ComPtr<ID2D1Bitmap1> held_;
+    bool captureNext_ = false;
     ComPtr<IDWriteFactory2> dwriteFactory_;
     ComPtr<IDWriteRenderingParams2> textRenderingParams_;
     ComPtr<IDWriteTextFormat> textFormat_;
@@ -148,6 +196,8 @@ private:
     int text_params_mode_ = 0;
     bool transparentComposition_ = false;
     bool device_lost_ = false;
+    bool partial_swap_ = false;   // FLIP_SEQUENTIAL: buffers keep their pixels
+    bool full_next_ = true;       // new buffers, a skipped or occluded present
 };
 
 } // namespace pulse::ui

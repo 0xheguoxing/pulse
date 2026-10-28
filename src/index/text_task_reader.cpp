@@ -1,4 +1,5 @@
 #include "text_task_reader.h"
+#include "../fs/cloud_state.h"
 #include <algorithm>
 #include <array>
 #include <cwctype>
@@ -198,7 +199,7 @@ bool TaskTextLiteralReader::Read(const std::wstring& path, uint64_t maximum_byte
         return fail(GetLastError());
     const uint64_t size = (uint64_t(before.nFileSizeHigh) << 32) | before.nFileSizeLow;
     constexpr DWORD unsafe = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT |
-        FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000;
+        FILE_ATTRIBUTE_DEVICE | ::pulse::fs::kCloudPlaceholderAttrs;
     if (before.dwFileAttributes & unsafe) return fail(ERROR_ACCESS_DENIED);
     if (size > maximum_bytes) return fail(ERROR_FILE_TOO_LARGE);
     wchar_t version[64]{};

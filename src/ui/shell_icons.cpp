@@ -1,9 +1,11 @@
 // shell_icons.cpp
 #include "shell_icons.h"
 #include "../common/path_utils.h"
+#include "../common/shell_id.h"
 
 #include <commoncontrols.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <commctrl.h>
 #include <wincodec.h>
 #include <cwctype>
@@ -28,7 +30,29 @@ std::wstring LowerExt(const std::wstring& name) {
     return ext;
 }
 
+// 网盘 program icons: a CLSID without a registered DefaultIcon would come
+// back from the shell as a generic icon, so such a lookup fails instead.
+bool HasRegisteredIcon(const std::wstring& clsid) {
+    if (clsid.size() != 38 || clsid.front() != L'{' || clsid.back() != L'}') return false;
+    const std::wstring sub = L"CLSID\\" + clsid + L"\\DefaultIcon";
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, sub.c_str(), 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS)
+        return false;
+    RegCloseKey(key);
+    return true;
+}
+
+// "shell:::{CLSID}" = a This PC launcher row: the regitem under This PC.
+// "::{CLSID}" = a navigation-pane root: the regitem on the desktop. Empty
+// when the program registered no icon (the lookup then fails).
 std::wstring ShellPath(const std::wstring& path) {
+    if (path.starts_with(L"shell:::")) {
+        const std::wstring clsid = path.substr(8);
+        return HasRegisteredIcon(clsid)
+            ? L"::{20D04FE0-3AEA-1069-A2D8-08002B30309D}\\::" + clsid : std::wstring();
+    }
+    if (path.starts_with(L"::{"))
+        return HasRegisteredIcon(path.substr(2)) ? path : std::wstring();
     return pulse::path::StripExtendedPathPrefix(path);
 }
 
@@ -80,6 +104,40 @@ bool ConvertIconPixels(uint64_t key, std::unordered_map<int, IImageList*>& lists
 } // namespace
 
 ShellIconCache::ShellIconCache() = default;
+
+void ShellIconCache::PrewarmSystemImageList() {
+    try {
+        std::thread([] {
+            const HRESULT com_hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_WIN95_CLASSES };
+            InitCommonControlsEx(&icc);
+            // The folder and plain-file icons at the list's two usual sizes:
+            // the first GetIcon loads the shell's icon cache for the process.
+            int indices[2] = {-1, -1};
+            const DWORD attrs[2] = {FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL};
+            for (int i = 0; i < 2; ++i) {
+                SHFILEINFOW info{};
+                if (SHGetFileInfoW(L"dummy", attrs[i], &info, sizeof(info),
+                                   SHGFI_SYSICONINDEX | SHGFI_USEFILEATTRIBUTES))
+                    indices[i] = info.iIcon;
+            }
+            for (const int list_id : {SHIL_SMALL, SHIL_LARGE}) {
+                IImageList* list = nullptr;
+                if (FAILED(SHGetImageList(list_id, IID_IImageList, reinterpret_cast<void**>(&list))) || !list)
+                    continue;
+                for (const int index : indices) {
+                    HICON icon = nullptr;
+                    if (index >= 0 && SUCCEEDED(list->GetIcon(index, ILD_TRANSPARENT, &icon)) && icon)
+                        DestroyIcon(icon);
+                }
+                list->Release();
+            }
+            if (SUCCEEDED(com_hr)) CoUninitialize();
+        }).detach();
+    } catch (...) {
+        // No thread: the first frame loads the cache itself, as before.
+    }
+}
 
 ShellIconCache::~ShellIconCache() {
     Reset();
@@ -240,7 +298,11 @@ void ShellIconCache::WorkerLoop() {
             IconPixels pixels;
             const bool ok = ConvertIconPixels(convert_key, worker_lists, worker_wic,
                                               pixels.width, pixels.height, pixels.data);
-            if (ok) pixels.bounds = MeasureIconArtwork(pixels.data, pixels.width, pixels.height);
+            if (ok) {
+                pixels.bounds = MeasureIconArtwork(pixels.data, pixels.width, pixels.height);
+                if (static_cast<int>(static_cast<uint32_t>(convert_key >> 32)) == SHIL_JUMBO)
+                    CropUndersizedIcon(pixels.data, pixels.width, pixels.height, pixels.bounds);
+            }
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 convert_pending_.erase(convert_key);
@@ -275,7 +337,20 @@ void ShellIconCache::WorkerLoop() {
         } else {
             const UINT flags = SHGFI_SYSICONINDEX | SHGFI_SMALLICON;
             const std::wstring query = ShellPath(path);
-            if (SHGetFileInfoW(query.c_str(), 0, &info, sizeof(info), flags)) {
+            bool found = false;
+            if (query.starts_with(L"::") || query.starts_with(L"shell:")) {
+                // Regitems and shell: monikers (Start menu apps, "shell:AppsFolder\<id>")
+                // parse through the shell namespace, not as a path.
+                PIDLIST_ABSOLUTE pidl = nullptr;
+                if (SUCCEEDED(shell_id::ParseId(query, &pidl)) && pidl) {
+                    found = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(pidl), 0, &info, sizeof(info),
+                                           flags | SHGFI_PIDL) != 0;
+                    CoTaskMemFree(pidl);
+                }
+            } else if (!query.empty()) {
+                found = SHGetFileInfoW(query.c_str(), 0, &info, sizeof(info), flags) != 0;
+            }
+            if (found) {
                 index = info.iIcon;
                 if (info.hIcon) DestroyIcon(info.hIcon);
             }
@@ -310,7 +385,7 @@ void ShellIconCache::WorkerLoop() {
     if (SUCCEEDED(com_hr)) CoUninitialize();
 }
 
-ComPtr<ID2D1Bitmap> ShellIconCache::BitmapFromIcon(HICON icon, IconArtworkBounds& bounds) {
+ComPtr<ID2D1Bitmap> ShellIconCache::BitmapFromIcon(HICON icon, IconArtworkBounds& bounds, bool jumbo) {
     ComPtr<ID2D1Bitmap> bitmap;
     if (!icon || !dc_ || !EnsureWic()) return bitmap;
     ComPtr<IWICBitmap> wicBitmap;
@@ -333,6 +408,7 @@ ComPtr<ID2D1Bitmap> ShellIconCache::BitmapFromIcon(HICON icon, IconArtworkBounds
     if (FAILED(converter->CopyPixels(nullptr, width * 4u,
         static_cast<UINT>(pixels.size()), pixels.data()))) return bitmap;
     bounds = MeasureIconArtwork(pixels, width, height);
+    if (jumbo) CropUndersizedIcon(pixels, width, height, bounds);
     const auto props = D2D1::BitmapProperties(
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
     dc_->CreateBitmap(D2D1::SizeU(width, height), pixels.data(), width * 4u, props, &bitmap);
@@ -352,7 +428,7 @@ ID2D1Bitmap* ShellIconCache::BitmapForIndex(int index, int list_id) {
         return nullptr;
     }
     IconArtworkBounds bounds;
-    ComPtr<ID2D1Bitmap> bitmap = BitmapFromIcon(icon, bounds);
+    ComPtr<ID2D1Bitmap> bitmap = BitmapFromIcon(icon, bounds, list_id == SHIL_JUMBO);
     DestroyIcon(icon);
     return StoreBitmap(key, std::move(bitmap), bounds);
 }
@@ -418,7 +494,22 @@ bool ShellIconCache::Draw(ID2D1DeviceContext* dc, const D2D1_RECT_F& dest,
     const float desired = std::max(dest.right - dest.left, dest.bottom - dest.top);
     ID2D1Bitmap* bitmap = BitmapFor(path, name, is_dir, attrs, desired);
     if (!bitmap) return false;
-    dc->DrawBitmap(bitmap, &dest, opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
+    // An icon with only a small image: at most twice its size, centered.
+    D2D1_RECT_F target = dest;
+    for (const auto& [key, cached] : bitmaps_) {
+        if (cached.get() != bitmap) continue;
+        const auto bounds = artwork_bounds_.find(key);
+        if (bounds != artwork_bounds_.end() && bounds->second.native_side) {
+            const float width = dest.right - dest.left, height = dest.bottom - dest.top;
+            const float side = IconDrawSide((std::min)(width, height), bounds->second.native_side);
+            target.left = dest.left + std::round((width - side) * 0.5f);
+            target.top = dest.top + std::round((height - side) * 0.5f);
+            target.right = target.left + side;
+            target.bottom = target.top + side;
+        }
+        break;
+    }
+    dc->DrawBitmap(bitmap, &target, opacity, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC,
                    nullptr, nullptr);
     return true;
 }
@@ -450,6 +541,23 @@ ID2D1Bitmap* ShellIconCache::CachedBitmapFor(const std::wstring& path, const std
     return key ? bitmaps_.at(*key).get() : nullptr;
 }
 
+ID2D1Bitmap* ShellIconCache::ExactBitmapFor(const std::wstring& path, float desired_dips) {
+    if (path.empty()) return nullptr;
+    int index = -1;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (const auto it = exact_index_.find(path); it != exact_index_.end()) {
+            index = it->second;
+            last_used_[path] = ++access_clock_;
+        }
+    }
+    if (index < 0) {
+        RequestExact(path);  // throttled: a failed lookup waits before a retry
+        return nullptr;
+    }
+    return BitmapForIndex(index, ImageListId(desired_dips));
+}
+
 D2D1_RECT_F ShellIconCache::CachedArtworkBounds(const std::wstring& path,
     const std::wstring& name, bool is_dir, DWORD attrs, float desired_dips) {
     (void)attrs;
@@ -461,6 +569,15 @@ D2D1_RECT_F ShellIconCache::CachedArtworkBounds(const std::wstring& path,
         }
     }
     return D2D1::RectF(0.0f, 0.0f, 1.0f, 1.0f);
+}
+
+uint32_t ShellIconCache::CachedNativeSide(const std::wstring& path, const std::wstring& name,
+                                          bool is_dir, DWORD attrs, float desired_dips) {
+    (void)attrs;
+    const auto key = CachedBitmapKey(path, name, is_dir, desired_dips, false);
+    if (!key) return 0;
+    const auto it = artwork_bounds_.find(*key);
+    return it == artwork_bounds_.end() ? 0 : it->second.native_side;
 }
 
 std::optional<uint64_t> ShellIconCache::CachedBitmapKey(const std::wstring& path,

@@ -64,6 +64,7 @@ ui::ReleaseNoteView ParseNote(const wchar_t* version, const std::wstring& text) 
         pos = end + 1;
         if (line.empty() || line.rfind(L"![", 0) == 0 || line.rfind(L"<!--", 0) == 0) continue;
         bool bullet = false;
+        bool heading = false;
         if (line.size() >= 2 && (line[0] == L'-' || line[0] == L'*' || line[0] == L'+') &&
             line[1] == L' ') {
             bullet = true;
@@ -72,11 +73,18 @@ ui::ReleaseNoteView ParseNote(const wchar_t* version, const std::wstring& text) 
             size_t hashes = 0;
             while (hashes < line.size() && line[hashes] == L'#') ++hashes;
             if (hashes) line = line.substr(hashes);
+            heading = hashes > 0;
         }
+        // Before StripInline, which reads "[tag](url)" as a link.
+        std::wstring tag_label;
+        const ui::ReleaseTag tag = bullet ? ui::TakeReleaseTag(line, tag_label) : ui::ReleaseTag::None;
         line = StripInline(line);
         if (line.empty()) continue;
         note.lines.push_back(std::move(line));
         note.bullets.push_back(bullet);
+        note.headings.push_back(heading);
+        note.tags.push_back(tag);
+        note.tag_labels.push_back(std::move(tag_label));
     }
     return note;
 }
@@ -187,6 +195,9 @@ const std::vector<ui::ReleaseNoteView>& EmbeddedReleaseNotes() {
             auto notes = chinese;
             for (auto& note : notes)
                 for (auto& line : note.lines) line = l10n::ToTraditional(line);
+            for (auto& note : notes)
+                for (auto& label : note.tag_labels)
+                    if (!label.empty()) label = l10n::ToTraditional(label);
             return notes;
         }();
         return traditional;

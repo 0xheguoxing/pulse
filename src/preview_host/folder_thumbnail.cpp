@@ -1,4 +1,7 @@
 #include "folder_thumbnail.h"
+#include "shell_bitmap.h"
+#include "shared_image_file.h"
+#include "../fs/cloud_state.h"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <shobjidl.h>
@@ -18,7 +21,7 @@ namespace {
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
 constexpr DWORD kSkip = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM |
-    FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000;
+    FILE_ATTRIBUTE_REPARSE_POINT | ::pulse::fs::kCloudPlaceholderAttrs;
 constexpr uint64_t kCacheLimit = 64ull * 1024 * 1024;
 #ifdef PULSE_FOLDER_THUMBNAIL_TESTING
 thread_local DWORD test_budget_ms = 450;
@@ -106,7 +109,7 @@ bool LocalFolder(std::wstring path, WIN32_FILE_ATTRIBUTE_DATA& info) {
     for (size_t end = 3; ; ) {
         const auto prefix = std::wstring(L"\\\\?\\") + path.substr(0, end);
         const DWORD attrs = GetFileAttributesW(prefix.c_str());
-        if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | 0x00040000 | 0x00400000))) return false;
+        if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & (FILE_ATTRIBUTE_REPARSE_POINT | ::pulse::fs::kCloudPlaceholderAttrs))) return false;
         if (end >= path.size()) break;
         end = path.find_first_of(L"\\/", end + 1);
         if (end == std::wstring::npos) end = path.size();
@@ -152,19 +155,25 @@ bool CachedPicture(IWICImagingFactory* factory, const std::wstring& path, UINT c
     if (FAILED(thumbnail_status) || !shared) return false;
     HBITMAP bitmap = nullptr;
     if (FAILED(shared->GetSharedBitmap(&bitmap)) || !bitmap) return false;
-    ComPtr<IWICBitmap> source;
     WTS_ALPHATYPE alpha = WTSAT_UNKNOWN;
-    shared->GetFormat(&alpha);
-    const auto alpha_mode = alpha == WTSAT_RGB ? WICBitmapIgnoreAlpha : WICBitmapUsePremultipliedAlpha;
-    return SUCCEEDED(factory->CreateBitmapFromHBITMAP(bitmap, nullptr, alpha_mode, &source)) &&
+    if (FAILED(shared->GetFormat(&alpha))) alpha = WTSAT_UNKNOWN;
+    // Straight-alpha cache entries labelled ARGB were read as premultiplied
+    // (washed-out pictures); shell_bitmap.h settles what the alpha means.
+    std::vector<uint8_t> pbgra;
+    UINT width = 0, height = 0, stride = 0;
+    if (!ShellBitmapToPbgra(bitmap, alpha, pbgra, width, height, stride)) return false;
+    ComPtr<IWICBitmap> source;
+    return SUCCEEDED(factory->CreateBitmapFromMemory(width, height, GUID_WICPixelFormat32bppPBGRA,
+               stride, static_cast<UINT>(pbgra.size()), pbgra.data(), &source)) &&
         Pixels(factory, source.Get(), cap, out);
 }
 bool ReadPicture(IWICImagingFactory* factory, const std::wstring& path, UINT cap, Picture& out) {
+    pulse::preview::SharedImageFile file;  // outlives the decoder
     ComPtr<IWICBitmapDecoder> decoder;
     ComPtr<IWICBitmapFrameDecode> frame;
     Trace("wic_decoder_begin");
-    const HRESULT decoded = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-        WICDecodeMetadataCacheOnDemand, &decoder);
+    const HRESULT decoded = pulse::preview::CreateSharedDecoder(factory, path,
+        WICDecodeMetadataCacheOnDemand, file, &decoder);
     Trace("wic_decoder_end", static_cast<uint32_t>(decoded));
     if (FAILED(decoded)) return false;
     Trace("wic_frame_begin");
@@ -447,4 +456,3 @@ void SetFolderThumbnailBudgetForTest(DWORD budget_ms, unsigned completed_picture
 }
 #endif
 } // namespace pulse::preview
-

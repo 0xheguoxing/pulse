@@ -5,8 +5,9 @@ English translation in src/common/service_text.cpp.
 The index service, network agent, pulse_shell and preview host report
 Simplified Chinese; the UI localizes it with l10n::ServiceText(). Every Han
 literal in the helper sources must be either an exact entry, a literal piece of
-a pattern, or fully matched by a pattern. Literals are split on " · " first, as
-ServiceText does.
+a pattern, or fully matched by a pattern. As in ServiceErrorText, only the
+message before " | " counts (the rest is the item path); it is split on " · "
+first, as ServiceText does.
 
 Usage: python tools/l10n/check_service_text.py   (exit code 1 on missing text)
 """
@@ -19,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TABLE = ROOT / "src/common/service_text.cpp"
 SOURCES = [
+    "src/app/ai_launcher.cpp",
     "src/index/index_client.cpp",
     "src/index/index_config.cpp",
     "src/index/index_engine.cpp",
@@ -31,6 +33,7 @@ SOURCES = [
     "src/shell_host/main.cpp",
 ]
 SEPARATOR = " \u00b7 "
+ERROR_BAR = " | "
 HAN = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 WIDE_LITERAL = re.compile(r'L"((?:[^"\\\n]|\\.)*)"')
 PLACEHOLDER = re.compile(r"\{n\}|\{\}")
@@ -114,7 +117,7 @@ def main() -> int:
             literal = unescape(m.group(1))
             if not HAN.search(literal):
                 continue
-            for fragment in literal.split(SEPARATOR):
+            for fragment in literal.split(ERROR_BAR, 1)[0].split(SEPARATOR):
                 if not HAN.search(fragment):
                     continue
                 checked += 1

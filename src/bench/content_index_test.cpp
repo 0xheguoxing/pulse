@@ -1734,6 +1734,7 @@ int RunTaskScopeAudit(const std::filesystem::path& base) {
 }
 
 int RunInstantLifecycleTests(const std::filesystem::path& base);
+int RunInstantScopeResumeTest(const std::filesystem::path& base);
 int RunInstantGapTests(const std::filesystem::path& base);
 int RunInstantReconcileAudit(const std::filesystem::path& base);
 int wmain() {
@@ -1751,6 +1752,7 @@ int wmain() {
     if (GetEnvironmentVariableW(L"PULSE_TEST_DELTA_CACHE", nullptr, 0)) return RunDeltaCacheTest(base);
     if (GetEnvironmentVariableW(L"PULSE_TEST_INSTANT_RECONCILE_AUDIT", nullptr, 0)) return RunInstantReconcileAudit(base);
     if (GetEnvironmentVariableW(L"PULSE_TEST_INSTANT_GAPS", nullptr, 0)) return RunInstantGapTests(base);
+    if (GetEnvironmentVariableW(L"PULSE_TEST_INSTANT_SCOPE_RESUME", nullptr, 0)) return RunInstantScopeResumeTest(base);
     if (GetEnvironmentVariableW(L"PULSE_TEST_INSTANT_MODE", nullptr, 0)) return RunInstantLifecycleTests(base);
     if (GetEnvironmentVariableW(L"PULSE_TEST_ZERO_REVISION", nullptr, 0)) return RunZeroRevisionSubscriptionTest(base);
     if (GetEnvironmentVariableW(L"PULSE_TEST_TASK_LIVE", nullptr, 0)) return RunTaskLiveTest();

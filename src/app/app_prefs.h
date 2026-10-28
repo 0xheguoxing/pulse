@@ -4,11 +4,17 @@
 #include "folder_sort_prefs.h"
 #include "entry_group.h"
 #include "../ui/details_column_set.h"
+#include "toolbar_selection.h"
+#include "toolbar_tools.h"
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace pulse::app {
+
+// Remembered folder-picker entry points (AppPrefs::picker_folders).
+inline constexpr size_t kPickerFolderLimit = 32;
 
 struct AppPrefs {
     bool persist = true;
@@ -34,6 +40,10 @@ struct AppPrefs {
     bool integration_incomplete = false;
     std::wstring integration_other_exe; // runtime: another Pulse copy owns the associations
     bool take_over_explorer_windows = false; // experimental choice; runtime is gated by integration_enabled
+    // 兼容打开方式: leave Directory/Drive open alone and let Explorer open the
+    // folder, then take its window over. For machines where the custom default
+    // verb never reaches Pulse (a context-menu extension stalls the lookup).
+    bool integration_folders_compat = false;
     bool shell_tag_menu = false;    // File Explorer "Pulse tags" submenu (shell_tag_menu.cpp syncs HKCU)   // registry is the source of truth (not in app.json)
     bool verify_copies = false;
     bool show_status_performance = false;
@@ -41,13 +51,44 @@ struct AppPrefs {
     // Details list presentation.
     bool list_smart_date = true;
     bool list_zebra_rows = true;
+    bool list_tree_sticky = true;      // 滚动时固定上级: details tree folders stay pinned
     bool list_size_bar = false;
+    // Folders in the list get their size worked out on their own; off, the
+    // size cell offers it per folder (a size sort still asks for them all).
+    bool folder_size_auto = true;
+    bool photo_wall_hint = true;      // suggest the photo wall in photo folders (once per folder)
     bool list_tag_name_color = false; // tint tagged names with their first tag's color
     bool list_selection_outline = false; // accent outline around selected items (#78)
     // Grid thumbnails: default-program badge, plus playing time on videos.
     bool list_thumbnail_badges = true;
+    // 修改时间提示 (ui/mtime_hint.h): 0 off, 1 dots, 2 bars, 3 text only.
+    int list_mtime_hint = 1;
+    int list_mtime_range = 7;         // days: 1, 3, 7, 30
+    int list_mtime_palette = 0;       // 0 accent, then 冷暖 / 青碧 / 琥珀 / 极光 / 石墨
+    bool list_mtime_fade = true;
+    bool list_mtime_tree = true;      // folders follow change tracking's newest change inside
+    bool list_mtime_other_views = true;
+    bool list_mtime_bold = true;
+    bool list_mtime_flash = true;
+    // 鼠标与选择: single-click opens items (0 = double-click), the name band
+    // that hints it (0 on hover, 1 always), hover selection, item check boxes.
+    bool single_click_open = false;
+    int name_highlight = 0;
+    bool hover_select = false;
+    bool item_checkboxes = false;
+    // 同步状态: OneDrive placeholders and SVN working copies.
+    bool sync_onedrive = true;
+    bool sync_svn = true;
     bool vertical_tabs = false;       // tabs as the first sidebar section
+    bool tray_hide_when_empty = false; // staging tray folds away while empty (drags still show it)
+    // 网络位置 (Settings → 文件操作): machine-local, not in settings export.
+    bool lan_discovery = true;           // look for LAN devices when the network page opens
+    bool network_recent_enabled = true;  // remember and list 最近访问
+    bool show_hidden_shares = false;     // list C$ / ADMIN$ in a server's shares
+    int lan_cache_mode = 0;              // keep found devices: 0 10 min, 1 1 h, 2 this session
     bool sidebar_collapsed = false;   // sidebar folded to its icon rail (Ctrl+B)
+    bool favorites_bar = false;       // 收藏栏 under the command row (Ctrl+Shift+B)
+    bool favorites_bar_icon_only = false;
     // 0 folders first, 1 follow the sort direction, 2 mixed with files
     int folder_sort_mode = 0;
     // Optional Details columns for every folder (ui/details_column_set.h bits).
@@ -79,9 +120,25 @@ struct AppPrefs {
     FolderGroupPrefs folder_groups;
     bool search_pinyin = true;
     bool global_search_enabled = false;
+    // Search master switch: index service, search box, global and content search.
+    // Off leaves only the folder filter; the service exits at start until it is on.
+    bool search_enabled = true;
     uint32_t global_search_modifiers = 1; // MOD_ALT
     uint32_t global_search_key = 32; // VK_SPACE
+    // Quick search popup size in DIP after the user resized it; 0 = default.
+    int global_search_width = 0;
+    int global_search_height = 0;
+    // Two clean Ctrl taps summon the quick search popup too (with global search on).
+    bool global_search_double_ctrl = true;
+    int global_search_double_ctrl_ms = 300; // longest gap between the taps: 200 / 300 / 400
+    bool dialog_jump_bar = true;             // jump bar under other programs' Open / Save dialogs
+    bool dialog_jump_auto = false;           // a new dialog goes to the current Pulse folder once
+    bool jump_history = true;                // frequent places first (jump_history.tsv)
+    bool global_search_apps = true;          // Start menu programs in quick search results
     bool show_hidden_files = false;
+    // 文件扩展名 (a toolbar switch): off draws files of a registered type
+    // without their extension, as File Explorer can (ui/known_extensions.h).
+    bool show_file_extensions = true;
     // Hidden + system attributes; File Explorer keeps these behind a separate option.
     bool show_protected_os_files = false;
     // Double click on empty list space: 0 nothing, 1 back, 2 up (blank_pane_click.h).
@@ -108,10 +165,17 @@ struct AppPrefs {
     // former subtle/balanced/vivid levels; applies to image, Acrylic and Mica.
     int wallpaper_look = 50;
     int wallpaper_blur = 14; // wallpaper blur in DIPs 0..40 (json wallpaper_blur_px)
+    // 侧边栏与标题栏 0..100 under Acrylic / Mica (json frame_transparency):
+    // 0 solid, 10 the look from before the setting, 100 the material itself.
+    int frame_transparency = 10;
     int row_height = 34; // file-list row height in DIPs (24..48)
     int sidebar_width = 224; // DIPs
     bool address_search_current = false;
     bool address_search_content = false;
+    // Unscoped content searches (content_scope_mode.h): 0 not chosen yet, which
+    // searches the user folders and asks once; 1 Desktop/Documents/Downloads;
+    // 2 all drives.
+    int content_scope = 0;
     int tray_icon_size = 48; // staging-tray deck icon edge in DIPs (32..64)
     // Interaction hints: status-bar context hints + one-time teaching tips.
     bool show_hints = true;
@@ -120,20 +184,42 @@ struct AppPrefs {
     uint32_t tips_seen = 0; // bit per app::TeachTip already shown or dismissed
     // 自定义工具栏 (toolbar redesign note 5): the New button's main part makes
     // 0 a folder, 1 the type made last (toolbar_last_new: 0 folder, 1 text
-    // document), 2 nothing: the whole button opens the New menu. toolbar_pins
-    // has a bit per pinnable command (kToolbarPins in app_commands.cpp).
+    // document), 2 nothing: the whole button opens the New menu.
     int toolbar_new_primary = 0;
     int toolbar_last_new = 0;
-    uint32_t toolbar_pins = 0;
+    // Tools pinned to the toolbar, in toolbar order, by id (toolbar_tools.h).
+    // Saved as json toolbar_tools (+ toolbar_tools_v); older prefs had the
+    // toolbar_pins mask. A fresh install gets the prototype's default.
+    std::vector<std::wstring> toolbar_tools = DefaultToolbarTools();
+    // 排序 / 筛选 / 分组 at the toolbar's right (自定义工具栏 → 排序与筛选).
+    // An active filter or grouping shows its control even when hidden.
+    bool toolbar_show_sort = true;
+    bool toolbar_show_filter = true;
+    bool toolbar_show_group = true;
+    // Actions the selection chip may show, in chip order, by id
+    // (toolbar_selection.h). Without the json key: all, default order.
+    std::vector<std::wstring> toolbar_selection = DefaultToolbarSelection();
     // Programs pinned to the toolbar (自定义工具栏 → 固定的软件), in toolbar
     // order: .exe paths or shortcuts to them, at most app::kMaxToolbarApps.
     std::vector<std::wstring> toolbar_apps;
+    // Pinned apps followed by a separator (paths from toolbar_apps); the
+    // separator moves with its app and goes when the app is unpinned.
+    std::vector<std::wstring> toolbar_app_breaks;
     // Empty = theme default, or Windows when explicitly selected.
     std::wstring accent_rgb;
     bool accent_follow_system = false;
     // Tag colors the user added via the custom color dialog (0xRRGGBB),
     // appended after the seven Finder defaults in the swatch strip.
     std::vector<uint32_t> custom_tag_colors;
+    // Tag ids the tag panel lists under 最近用过, newest first (at most 5).
+    std::vector<std::wstring> recent_tags;
+    // Pulse's folder picker, per entry point (#58-9): one "key|folder" line
+    // each, newest first, so the tray, duplicate scan, quick access... each
+    // open where they were last used instead of overwriting one another.
+    std::vector<std::wstring> picker_folders;
+    // Settings > 快捷键: one "Id=Ctrl+Shift+C|F8" line per changed action
+    // (app/keymap.h); defaults are not stored.
+    std::vector<std::wstring> shortcuts;
     int duplicate_scan_scope = 0; // 0 folder, 1 drive, 2 all local disks
     std::wstring duplicate_scan_folder;
     std::wstring duplicate_scan_drive;
@@ -148,6 +234,10 @@ struct AppPrefs {
     bool Save() const;
     std::wstring ToJson() const;
     bool FromJson(const std::wstring& json);
+    // The folder last picked from `key`; empty when none is remembered.
+    std::wstring PickerFolder(std::wstring_view key) const;
+    // Remembers `folder` for `key`; true when picker_folders changed.
+    bool RememberPickerFolder(std::wstring_view key, const std::wstring& folder);
     void MigrateIntegration();
     bool ReadIntegrationResidual() const;
     bool ReadIntegrationIncomplete() const;

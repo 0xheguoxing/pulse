@@ -27,9 +27,21 @@ Result RunBoundedEnumeration(bool network, Provider provider, Cancelled cancelle
     std::chrono::milliseconds budget = std::chrono::seconds(15)) {
     if (cancelled()) throw EnumerationCancelled();
     auto* active = network ? &active_network_enumerations : &active_local_enumerations;
-    if (active->fetch_add(1) >= 4) {
-        --*active;
-        throw std::runtime_error("Directory provider capacity exhausted");
+    const auto deadline = std::chrono::steady_clock::now() + budget;
+    // A full quota is usually providers that ignored cancellation and still
+    // finish their I/O (an unreachable server). Wait for a slot within the
+    // same budget instead of failing at once: failing at once showed every
+    // share as offline for as long as four listings stayed stuck (#226).
+    for (unsigned current = active->load();;) {
+        if (current < 4) {
+            if (active->compare_exchange_weak(current, current + 1)) break;
+            continue;
+        }
+        if (cancelled()) throw EnumerationCancelled();
+        if (std::chrono::steady_clock::now() >= deadline)
+            throw std::runtime_error("Directory provider capacity exhausted");
+        Sleep(20);
+        current = active->load();
     }
     struct State {
         std::atomic_bool cancel{false};
@@ -54,7 +66,6 @@ Result RunBoundedEnumeration(bool network, Provider provider, Cancelled cancelle
             state->ready.notify_one();
         });
     } catch (...) { --*active; throw; }
-    const auto deadline = std::chrono::steady_clock::now() + budget;
     try {
         std::unique_lock lock(state->mutex);
         for (;;) {

@@ -1,8 +1,10 @@
 #include "../ui/quick_preview_command.h"
 #include "../ui/preview_notice.h"
+#include "../common/localization.h"
 #include <cstdio>
 
 int main() {
+    pulse::l10n::Initialize(GetModuleHandleW(nullptr), L"zh-CN");  // notices come from the string table
     using namespace pulse::ui;
     int failed = 0;
     const auto check = [&](bool pass, const char* text) {
@@ -48,6 +50,7 @@ int main() {
           PreviewNotice(L"image-preview-incomplete:canvas-limit"), "truncated animation and static fallback have distinct notices");
     check(PreviewNotice(L"image-preview-incomplete:frame-count-mismatch", L"PULSEIMAGE\t1\nT\tanimation\nF\t2\t3\t0\n").find(L"2 / 3") != std::wstring::npos,
           "partial playable animation reports loaded and declared frame counts");
+    check(PreviewNotice(L"offline-placeholder").empty(), "cloud placeholders show the download card, not a failure notice");
     check(!PreviewNotice(L"docx-reading").empty(), "DOCX reading limitations stay outside document text");
     check(!PreviewNotice(L"udf-preview-unavailable").empty() &&
           !PreviewNotice(L"compressed-stream-preview-read-failed").empty(), "archive failures have explicit notices");

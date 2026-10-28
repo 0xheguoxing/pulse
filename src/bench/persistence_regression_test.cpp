@@ -222,6 +222,126 @@ int main(int argc, char** argv) {
     Check(!prefs.StoreBackgroundImage(source) && prefs.background_image==old && std::filesystem::exists(old), "PERSIST-05 configuration commit failure preserves previous image");CloseHandle(locked);
     Check(prefs.StoreBackgroundImage(source) && std::filesystem::exists(prefs.background_image) && !std::filesystem::exists(old), "PERSIST-05 successful commit precedes old image removal");
     AppPrefs reloaded;reloaded.persist=false;Check(reloaded.Load() && reloaded.background_image==prefs.background_image, "PERSIST-05 new cache path survives reload");
+    {
+        using Tools = std::vector<std::wstring>;
+        AppPrefs legacy; legacy.persist=false;
+        Check(legacy.FromJson(LR"({"toolbar_pins":5})") && legacy.toolbar_tools==Tools{L"cut",L"copy",L"paste",L"rename",L"delete",L"new_text",L"terminal",L"split",L"details",L"columns"}, "TOOLBAR-01 legacy pin mask becomes the tool list, with the former fixed buttons");
+        legacy.toolbar_tools={L"hidden",L"copy_path",L"bogus",L"hidden",L"theme"};
+        const std::wstring saved_json=legacy.ToJson();
+        AppPrefs again; again.persist=false;
+        Check(again.FromJson(saved_json) && again.toolbar_tools==Tools{L"hidden",L"copy_path",L"theme"}, "TOOLBAR-02 tool list round trips; unknown and repeated ids dropped");
+        Check(saved_json.find(L"\"toolbar_pins\":2")!=std::wstring::npos, "TOOLBAR-03 an older Pulse still reads its pins");
+        AppPrefs cleared; cleared.persist=false;
+        Check(cleared.FromJson(LR"({"toolbar_tools":[],"toolbar_tools_v":2,"toolbar_pins":31})") && cleared.toolbar_tools.empty(), "TOOLBAR-04 an emptied list is not refilled from the old mask");
+        Check(cleared.toolbar_selection==pulse::app::DefaultToolbarSelection(), "TOOLBAR-05 prefs without toolbar_selection show every chip action");
+        AppPrefs chip; chip.persist=false;
+        chip.toolbar_selection={L"tags",L"bogus",L"compare",L"tags"};
+        AppPrefs chip_again; chip_again.persist=false;
+        Check(chip_again.FromJson(chip.ToJson()) && chip_again.toolbar_selection==Tools{L"tags",L"compare"}, "TOOLBAR-06 chip action list round trips; unknown and repeated ids dropped");
+        AppPrefs chip_none; chip_none.persist=false;
+        Check(chip_none.FromJson(LR"({"toolbar_selection":[]})") && chip_none.toolbar_selection.empty(), "TOOLBAR-07 an emptied chip list stays empty");
+        AppPrefs v1; v1.persist=false;
+        Check(v1.FromJson(LR"({"toolbar_tools":["zebra","details"]})") &&
+              v1.toolbar_tools==Tools{L"cut",L"copy",L"paste",L"rename",L"delete",L"zebra",L"details",L"split",L"columns"},
+              "TOOLBAR-08 a list from before the full catalog gets the former fixed buttons back, once");
+        AppPrefs v1_again; v1_again.persist=false;
+        Check(v1_again.FromJson(v1.ToJson()) && v1_again.toolbar_tools==v1.toolbar_tools, "TOOLBAR-09 the upgraded list round trips unchanged");
+        AppPrefs fresh; fresh.persist=false;
+        Check(fresh.toolbar_tools==pulse::app::DefaultToolbarTools() && fresh.toolbar_tools.size()==10 &&
+              pulse::app::ToolbarToolsOnly(fresh.toolbar_tools).size()==9 && fresh.toolbar_tools[5]==L"|",
+              "TOOLBAR-10 a fresh install gets the prototype's default tools, in two groups");
+        AppPrefs sep; sep.persist=false;
+        sep.toolbar_tools={L"|",L"cut",L"|",L"|",L"copy",L"bogus",L"|",L"|"};
+        AppPrefs sep_again; sep_again.persist=false;
+        Check(sep_again.FromJson(sep.ToJson()) && sep_again.toolbar_tools==Tools{L"cut",L"|",L"copy"},
+              "TOOLBAR-11 separators round trip; none first, last or twice in a row");
+        using namespace pulse::app;
+        const Tools grouped{L"cut",L"copy",L"|",L"paste",L"rename"};
+        Check(ToolbarSeparatorMask(grouped)==4u && MoveToolbarTool(grouped,0,3)==Tools{L"copy",L"paste",L"|",L"rename",L"cut"},
+              "TOOLBAR-12 dragging a tool keeps the separator between the same slots");
+        Check(RemoveToolbarTool(grouped,2)==Tools{L"cut",L"copy",L"|",L"rename"} &&
+              RemoveToolbarTool(grouped,1)==Tools{L"cut",L"|",L"paste",L"rename"},
+              "TOOLBAR-13 removing a tool next to a separator keeps the separator");
+        Check(SetToolbarSeparatorAfter(grouped,2,true)==Tools{L"cut",L"copy",L"|",L"paste",L"|",L"rename"} &&
+              SetToolbarSeparatorAfter(grouped,1,false)==Tools{L"cut",L"copy",L"paste",L"rename"} &&
+              SetToolbarSeparatorAfter(grouped,3,true)==grouped,
+              "TOOLBAR-14 a separator is added or removed after a tool, never after the last");
+        Check(KeepToolbarSeparators(grouped,Tools{L"cut",L"copy",L"rename",L"zip"})==Tools{L"cut",L"copy",L"|",L"rename",L"zip"},
+              "TOOLBAR-15 a picker change keeps a separator before the next remaining tool");
+    }
+    {
+        // #58-9: each folder-picker entry point remembers its own folder.
+        using pulse::app::AppPrefs;
+        AppPrefs picker; picker.persist = false;
+        Check(picker.PickerFolder(L"tray_send").empty(), "PICKER-01 no history: empty, so the picker uses its own last folder");
+        const bool stored = picker.RememberPickerFolder(L"tray_send", L"D:\\Out") &&
+            picker.RememberPickerFolder(L"duplicates", L"E:\\Photos");
+        Check(stored && picker.PickerFolder(L"tray_send") == L"D:\\Out" && picker.PickerFolder(L"duplicates") == L"E:\\Photos",
+              "PICKER-02 entry points keep separate folders");
+        Check(!picker.RememberPickerFolder(L"duplicates", L"E:\\Photos") && picker.picker_folders.size() == 2,
+              "PICKER-03 the same pick again adds nothing");
+        picker.RememberPickerFolder(L"tray_send", L"D:\\Later");
+        Check(picker.PickerFolder(L"tray_send") == L"D:\\Later" && picker.picker_folders.size() == 2 &&
+              picker.picker_folders.front() == L"tray_send|D:\\Later", "PICKER-04 a newer pick replaces the old one, newest first");
+        Check(picker.PickerFolder(L"tray").empty() && picker.PickerFolder(L"tray_send|").empty(),
+              "PICKER-05 keys match whole");
+        Check(!picker.RememberPickerFolder(L"", L"C:\\x") && !picker.RememberPickerFolder(L"a|b", L"C:\\x") &&
+              !picker.RememberPickerFolder(L"k", L"") && picker.picker_folders.size() == 2,
+              "PICKER-06 empty or malformed entries are ignored");
+        AppPrefs again; again.persist = false;
+        Check(again.FromJson(picker.ToJson()) && again.picker_folders == picker.picker_folders &&
+              again.PickerFolder(L"duplicates") == L"E:\\Photos", "PICKER-07 the history round trips");
+        AppPrefs bad; bad.persist = false;
+        Check(bad.FromJson(LR"({"picker_folders":["nobar","|C:\\x","k|","ok|C:\\y"]})") &&
+              bad.picker_folders == std::vector<std::wstring>{L"ok|C:\\y"}, "PICKER-08 malformed lines are dropped on load");
+        AppPrefs many; many.persist = false;
+        for (int i = 0; i < 40; ++i) many.RememberPickerFolder(L"k" + std::to_wstring(i), L"C:\\f");
+        Check(many.picker_folders.size() == pulse::app::kPickerFolderLimit && many.PickerFolder(L"k39") == L"C:\\f" &&
+              many.PickerFolder(L"k0").empty(), "PICKER-09 capped; the oldest entry point is dropped");
+    }
+    {
+        // Folders-first is remembered per folder, like the sort column; folders
+        // without a choice follow Settings > Folders first (folder_sort_mode).
+        using pulse::app::AppPrefs;
+        AppPrefs modes; modes.persist = false;
+        modes.folder_sort_mode = 0;
+        auto& sorts = modes.folder_sorts;
+        Check(sorts.SetFolderMode(L"C:\\Work", 2) && !sorts.SetFolderMode(L"C:\\Work", 2) &&
+              sorts.SetFolderMode(L"D:\\Media\\", 1), "FOLDERS-01 a folder keeps its own folders-first mode");
+        Check(sorts.FindFolderMode(L"c:\\work") == 2 && sorts.FindFolderMode(L"D:\\Media") == 1 &&
+              !sorts.FindFolderMode(L"C:\\Other") && !sorts.FindFolderMode(L"C:\\Work\\Sub"),
+              "FOLDERS-02 only that folder (any case, trailing slash); others use the settings default");
+        Check(!sorts.SetFolderMode(L"pulse:recent", 2) && !sorts.SetFolderMode(L"", 1) &&
+              !sorts.SetFolderMode(L"C:\\Work", 3) && !sorts.SetFolderMode(L"C:\\Work", -1) &&
+              sorts.FindFolderMode(L"C:\\Work") == 2, "FOLDERS-03 virtual views and bad modes are not stored");
+        sorts.Set(L"C:\\Work", { pulse::ui::SortColumn::Mtime, pulse::ui::SortDirection::Desc });
+        AppPrefs reread; reread.persist = false;
+        Check(reread.FromJson(modes.ToJson()) && reread.folder_sorts.FindFolderMode(L"C:\\Work") == 2 &&
+              reread.folder_sorts.FindFolderMode(L"D:\\Media") == 1 && !reread.folder_sorts.FindFolderMode(L"C:\\Other") &&
+              reread.folder_sort_mode == 0 && reread.folder_sorts.Find(L"C:\\Work") ==
+                  pulse::app::FolderSort{ pulse::ui::SortColumn::Mtime, pulse::ui::SortDirection::Desc },
+              "FOLDERS-04 per-folder modes round trip with the sort column and the settings default");
+        reread.folder_sorts.ApplyToAll({});
+        Check(!reread.folder_sorts.FindFolderMode(L"C:\\Work") && !reread.folder_sorts.FindFolderMode(L"D:\\Media") &&
+              !reread.folder_sorts.Find(L"C:\\Work"), "FOLDERS-05 apply to all folders forgets per-folder modes too");
+        AppPrefs older; older.persist = false;
+        Check(older.FromJson(LR"({"folder_sort_mode":2,"sort_by_folder_name_desc":["C:\\A"]})") &&
+              older.folder_sort_mode == 2 && !older.folder_sorts.FindFolderMode(L"C:\\A"),
+              "FOLDERS-06 an older settings file: every folder follows the settings default");
+    }
+    {
+        // #58-7b: picture folders without a saved view open in Large icons.
+        using pulse::app::IsPictureName;
+        using pulse::app::MostlyPictures;
+        Check(IsPictureName(L"IMG_0001.JPG") && IsPictureName(L"a.webp") && IsPictureName(L"shot.HEIC") &&
+              IsPictureName(L"raw.CR3") && IsPictureName(L"x.dng"), "PICTURE-01 photo and camera raw extensions, any case");
+        Check(!IsPictureName(L"notes.txt") && !IsPictureName(L"jpg") && !IsPictureName(L".png") &&
+              !IsPictureName(L"movie.mp4") && !IsPictureName(L"a.jpgxyzw"), "PICTURE-02 other files and bare names are not pictures");
+        Check(MostlyPictures(10, 6) && MostlyPictures(6, 6) && !MostlyPictures(10, 5),
+              "PICTURE-03 60% of the files or more");
+        Check(!MostlyPictures(5, 5) && !MostlyPictures(0, 0) && !MostlyPictures(3, 7),
+              "PICTURE-04 fewer than six pictures (or bad counts) never switch");
+    }
     std::filesystem::remove_all(dir);
     return failures ? 1 : 0;
 }

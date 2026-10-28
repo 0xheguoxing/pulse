@@ -8,9 +8,12 @@
 //
 // Behavior: TrackPopup runs a nested modal loop (like TrackPopupMenu):
 // hover tracking, keyboard nav (Up/Down/Enter/Esc), click-outside dismiss,
-// 120ms OutQuad fade-in + 8px slide from the anchor side (motion::MenuTravelDip;
-// up when the menu flips/lifts above its anchor), 80ms fade-out from the
-// alpha on screen. Animation frames are paced by DwmFlush.
+// open: the card grows from the anchor point (0.94 -> 1, Pop spring) while it
+// fades in over 90ms and the rows follow with a 9ms stagger (capped); the
+// hover plate glides between rows (Plate spring); flyouts fade/slide in and
+// glide to a new header instead of closing and reopening; close shrinks to
+// 0.97 while fading from the alpha on screen. Everything is instant when
+// Windows animation effects are off. Frames are paced by DwmFlush.
 // The same component serves the right-click menu and the toolbar "新建▾"
 // dropdown.
 //
@@ -18,6 +21,7 @@
 // self-test drives it directly with a standalone DWrite factory.
 #pragma once
 #include "fluent_components.h"
+#include "ui_motion.h"
 #include "../common/menu_icon.h"
 
 #include <dwrite_3.h>
@@ -62,6 +66,7 @@ struct FluentMenuItem {
     // returns a command. Children may not nest further.
     std::vector<FluentMenuItem> children;
     float glyph_scale = 1.0f;      // Per-item visual scale inside the fixed icon slot.
+    bool accent_glyph = false;     // Glyph drawn in the accent colour (assistant hand-off).
     bool shortcut_inline = false; // Search paths follow a shared, compact filename column.
     int trailing_command = 0;     // Optional hover-revealed close action at the right edge.
     std::wstring tooltip;
@@ -71,6 +76,11 @@ struct FluentMenuItem {
     // App icon of an Explorer row (handler bitmap / registry verb icon), drawn
     // in place of the glyph like Explorer does. Does not affect layout.
     common::MenuIconRef icon;
+    // Command palette: a section caption (a short row, never selectable) and
+    // the label characters the query matched, drawn semibold.
+    bool heading = false;
+    uint16_t match_start = 0;
+    uint16_t match_length = 0;
 };
 
 // Access key of a row: explicit mnemonic, else trailing "(X)" / "（X）" in text
@@ -109,6 +119,7 @@ public:
     int HeightPx() const { return height_; }
     float InlineLabelWidthPx() const { return inline_label_width_; }
     float RowHeightPx() const { return row_h_; }
+    float RowHeightPx(int i) const;   // row i's height: heading rows are shorter
     int Count() const { return (int)items_.size(); }
     const std::vector<FluentMenuItem>& Items() const { return items_; }
     const FluentMenuItem* At(int i) const;
@@ -138,6 +149,7 @@ private:
     float row_h_ = 32.0f;
     float pad_v_ = 4.0f;      // surface inner padding (DIP*scale)
     float sep_h_ = 5.0f;      // separator slot height (line + gaps)
+    float heading_h_ = 26.0f; // a heading row (26 DIP)
     float inline_label_width_ = 0.0f;
     int width_ = 0;
     int locked_width_ = 0;    // PatchInPlace: Layout keeps this width
@@ -195,16 +207,28 @@ public:
     bool LastFilterCommitted() const { return filter_committed_; }
     // Prefill the filter edit on the next TrackPopup (used as a rename field).
     void SetInitialFilterText(std::wstring text) { initial_filter_text_ = std::move(text); }
+    // The next TrackPopup draws `lead` (">") at the start of the filter in the
+    // accent colour and `hint` after it while nothing else is typed.
+    void SetFilterLead(std::wstring lead, std::wstring hint) {
+        filter_lead_ = std::move(lead);
+        filter_lead_hint_ = std::move(hint);
+    }
     void SetSelectAllOnOpen(bool select_all) { select_all_on_open_ = select_all; }
     void SetHoverFirstOnOpen(bool hover_first) { hover_first_on_open_ = hover_first; }
     // Align the next TrackPopup to this screen rect (address bar). The filter
     // field covers the rect; results hang below. Cleared after the popup.
     void SetAnchorRect(RECT screen_rc) { anchor_rect_ = screen_rc; anchor_to_rect_ = true; }
+    // Motion v2 "newmenu": the next popup grows out of this button (screen
+    // px) - the container morphs from the button's pill, then rows fade in.
+    void SetMorphFrom(RECT screen_rc) { morph_button_ = screen_rc; morph_next_ = true; }
     // Align an ordinary selection menu below its control; cleared after use.
     void SetDropdownRect(RECT screen_rc) { dropdown_rect_ = screen_rc; dropdown_ = true; }
     // Override the filter-mode minimum width (dips) for the next TrackPopup;
     // <= 0 restores the palette default. Reset after each popup.
     void SetFilterMinWidth(float dips) { filter_min_width_ = dips; }
+    // Keys that, typed into the still-empty filter, invoke their command at
+    // once instead of filtering (the tag panel's 1-9). Reset after each popup.
+    void SetEmptyFilterKeys(std::vector<std::pair<wchar_t, int>> keys) { empty_filter_keys_ = std::move(keys); }
     // Limit the next popup's body to this many rows; wheel/keys reveal the rest.
     // Non-positive values preserve the ordinary unconstrained menu behavior.
     void SetMaxVisibleRows(int rows) { max_visible_rows_ = rows > 0 ? rows : 0; }
@@ -238,10 +262,19 @@ private:
         ComPtr<ID2D1Bitmap1> plate;
         RECT plate_key{};
         bool plate_dark = false;
+        // Render targets reused across frames (hover glides and the open
+        // transition redraw every frame; allocating per frame churned VRAM).
+        const void* dc_key = nullptr;
+        int tw = 0;
+        int th = 0;
+        ComPtr<ID2D1Bitmap1> target;
+        ComPtr<ID2D1Bitmap1> scaled;
+        ComPtr<ID2D1Bitmap1> readback;
     };
 
     bool EnsureWindow();
     bool EnsureFilterEdit();
+    void ApplyFilterLead();   // SetFilterLead's props on edit_ (none: removed)
     void PlaceFilterEdit(int y_offset_px);
     void HideFilterEdit();
     void SyncFilterFromEdit();
@@ -263,6 +296,7 @@ private:
     void OnSubMouse(POINT client_pt, bool button_up);
     bool RenderSub();
     void PresentSub(BYTE alpha);
+    bool TickSubMotion();            // flyout fade/slide or glide; true while running
     void HideSubWindow();
     void LayoutWindow(POINT screen_pt);
     void RefreshFilter();
@@ -293,6 +327,7 @@ private:
     int InvokeAt(const FluentMenuModel& model, int row, float client_x) const;
     float FilterHeaderPx() const;
     bool AppendFilterChar(wchar_t ch);
+    bool TakeEmptyFilterKey(const std::wstring& typed);
     bool HandleFilterKey(UINT msg, WPARAM wParam);
     void PasteFilterText();
 
@@ -313,7 +348,10 @@ private:
     std::wstring filter_query_;
     std::wstring filter_placeholder_;
     std::wstring initial_filter_text_;   // prefilled into the edit on open
+    std::wstring filter_lead_;           // SetFilterLead; one popup only
+    std::wstring filter_lead_hint_;
     float filter_min_width_ = 0.0f;      // dips; <= 0 = palette default (440)
+    std::vector<std::pair<wchar_t, int>> empty_filter_keys_;
     bool select_all_on_open_ = true;
     bool hover_first_on_open_ = true;
     bool filter_committed_ = false;
@@ -375,6 +413,30 @@ private:
     std::chrono::steady_clock::time_point sub_pending_since_;
     int sub_x_ = 0;                // flyout window origin (screen px)
     int sub_y_ = 0;
+
+    // Motion (see the header comment). motion_ samples SystemAnimationsEnabled
+    // once per TrackPopup.
+    bool motion_ = true;
+    float open_t_ms_ = -1.0f;      // elapsed of the open transition; <0 = settled
+    float close_k_ = 0.0f;         // 0..1 progress of the dismiss
+    D2D1_POINT_2F open_origin_{};  // grow/shrink origin in surface px
+    RECT morph_button_{};          // SetMorphFrom, screen px
+    bool morph_next_ = false;      // armed for the next TrackPopup
+    bool morph_ = false;           // this open morphs from morph_from_
+    D2D1_RECT_F morph_from_{};     // the button pill in surface px
+    ::pulse::ui::motion::SpringRectMotion plate_;
+    ::pulse::ui::motion::SpringRectMotion sub_plate_;
+    uint64_t plate_frame_ = 0;
+    uint64_t sub_plate_frame_ = 0;
+    uint64_t plate_context_ = 0;   // bumped per TrackPopup
+    bool sub_animating_ = false;
+    bool sub_fade_ = false;        // true: fade+slide in, false: glide to new header
+    std::chrono::steady_clock::time_point sub_anim_start_;
+    int sub_dx_ = 0;               // presented offset from sub_x_/sub_y_
+    int sub_dy_ = 0;
+    int sub_from_dx_ = 0;
+    int sub_from_dy_ = 0;
+    BYTE sub_alpha_ = 255;         // cap for PresentSub while fading in
 };
 
 } // namespace pulse::ui

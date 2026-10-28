@@ -4,10 +4,13 @@
 
 #include <objbase.h>
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 
 namespace pulse::index {
 namespace {
+
+std::atomic<ContentAgentLocator> g_content_agent_locator{nullptr};
 
 std::wstring NewToken() {
     GUID guid{};
@@ -71,6 +74,10 @@ std::vector<uint8_t> RequestPayload(const ContentSearchRequest& request) {
     if (request.case_sensitive) flags |= 2u;
     if (request.skip_system_locations) flags |= 4u;
     if (request.whole_word) flags |= 8u;
+    // 16: a multi-folder content search with no single scope. The wire carries
+    // roots.front() in the root field; without this bit the agent would read
+    // it back as a scope and drop the other folders.
+    if (request.mode == ContentSearchMode::Content && request.root.empty() && !request.roots.empty()) flags |= 16u;
     writer.PutU32(flags);
     writer.PutU64(request.maximum_file_bytes);
     writer.PutU32(static_cast<uint32_t>(request.maximum_hits));
@@ -139,15 +146,27 @@ bool ParseUpdate(const std::vector<uint8_t>& payload, ContentSearchUpdate& updat
 
 } // namespace
 
+void SetContentAgentLocator(ContentAgentLocator locator) noexcept {
+    g_content_agent_locator.store(locator);
+}
+
+// Pulse.Content.exe beside the running exe (development builds, tests), else
+// wherever the registered locator finds a verified pack; empty when neither.
 std::wstring ContentSearchClient::ExePath() {
     std::wstring path(32768, L'\0');
     const DWORD length = GetModuleFileNameW(nullptr, path.data(),
                                             static_cast<DWORD>(path.size()));
-    if (!length || length >= path.size()) return L"Pulse.Index.exe";
-    path.resize(length);
-    const size_t slash = path.find_last_of(L"\\/");
-    return slash == std::wstring::npos ? L"Pulse.Index.exe"
-        : path.substr(0, slash + 1) + L"Pulse.Index.exe";
+    if (length && length < path.size()) {
+        path.resize(length);
+        const size_t slash = path.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) {
+            const std::wstring sibling = path.substr(0, slash + 1) + L"Pulse.Content.exe";
+            const DWORD attributes = GetFileAttributesW(sibling.c_str());
+            if (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) return sibling;
+        }
+    }
+    const auto locate = g_content_agent_locator.load();
+    return locate ? locate() : std::wstring{};
 }
 
 void ContentSearchClient::Start(HWND notify, UINT update_message, bool persistent, bool read_only) {
@@ -161,7 +180,14 @@ void ContentSearchClient::Start(HWND notify, UINT update_message, bool persisten
     if (job_) { JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{}; limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if (!SetInformationJobObject(job_, JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { CloseHandle(job_); job_ = nullptr; } }
     running_ = true;
-    worker_ = std::thread([this] { Worker(); });
+    // A legacy persistent client polls its agent, so it needs the worker now.
+    if (persistent) EnsureWorker();
+}
+// Started by the first command or search, so a client that is never used
+// (the duplicate scan until it is opened) keeps no idle thread.
+void ContentSearchClient::EnsureWorker() {
+    std::lock_guard lock(worker_mu_);
+    if (running_ && !worker_.joinable()) worker_ = std::thread([this] { Worker(); });
 }
 void ContentSearchClient::Start(HWND notify, UINT update_message, ContentAgentMode mode) {
     // The non-persistent worker waits for a command before the mode is published.
@@ -183,7 +209,10 @@ void ContentSearchClient::Stop() {
     running_ = false;
     if (cancel_event_) SetEvent(cancel_event_);
     Cancel(); wake_.notify_all();
-    if (worker_.joinable()) worker_.join();
+    {
+        std::lock_guard lock(worker_mu_);
+        if (worker_.joinable()) worker_.join();
+    }
     if (cancel_event_) { CloseHandle(cancel_event_); cancel_event_ = nullptr; }
     if (job_) { CloseHandle(job_); job_ = nullptr; }
     std::lock_guard lock(updates_mu_); updates_.clear();
@@ -223,12 +252,17 @@ void ContentSearchClient::SearchAsync(ContentSearchRequest request) {
         pending_requests_.push_back(std::move(request));
     }
     wake_.notify_all();
+    EnsureWorker();
 }
 void ContentSearchClient::Enqueue(Command command) {
     { std::lock_guard lock(state_mu_); commands_.push_back(std::move(command)); }
     wake_.notify_all();
+    EnsureWorker();
 }
 void ContentSearchClient::Configure(const ContentIndexConfig& config) {
+    // Instant configuration needs no agent. A tray suspension must not leave
+    // scope updates queued until a search that the stale scope may reject.
+    if (mode_ == ContentAgentMode::Instant) Resume();
     ipc::PayloadWriter writer; content::PutConfig(writer, config);
     Enqueue({content::REQ_CONFIG, writer.data()});
 }
@@ -270,6 +304,10 @@ bool ContentSearchClient::EnsurePersistent() {
     if (persistent_process_) { CloseHandle(persistent_process_); persistent_process_ = nullptr; }
     persistent_token_ = NewToken();
     const auto exe = ExePath();
+    if (exe.empty()) {
+        std::lock_guard lock(state_mu_); status_.error = ERROR_FILE_NOT_FOUND;
+        SetLastError(ERROR_FILE_NOT_FOUND); return false;
+    }
     std::wstring command = L"\"" + exe + (mode_ == ContentAgentMode::Instant ? L"\" --content-instant-agent " : read_only_ ? L"\" --content-index-observer " : L"\" --content-index-agent ") + persistent_token_ + L" " + std::to_wstring(GetCurrentProcessId());
     STARTUPINFOW startup{sizeof(startup)}; startup.dwFlags = STARTF_FORCEOFFFEEDBACK; PROCESS_INFORMATION created{};
     if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &created)) {
@@ -434,6 +472,7 @@ void ContentSearchClient::Run(ContentSearchRequest request, const std::shared_pt
         DuplicateHandle(GetCurrentProcess(), persistent_process_, GetCurrentProcess(), &process, 0, FALSE, DUPLICATE_SAME_ACCESS);
     } else {
         const auto exe = ExePath(); token = NewToken();
+        if (exe.empty()) { fail(ERROR_FILE_NOT_FOUND); return; }
         std::wstring command = L"\"" + exe + L"\" --content-agent " + token;
         STARTUPINFOW startup{sizeof(startup)}; startup.dwFlags = STARTF_FORCEOFFFEEDBACK; PROCESS_INFORMATION created{};
         if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &created)) {

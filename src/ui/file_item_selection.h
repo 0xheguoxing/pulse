@@ -31,7 +31,8 @@ public:
         if (hover_) dc_->FillRoundedRectangle(D2D1::RoundedRect(Bounds(cell, scale_),
             theme_.radius_control * scale_, theme_.radius_control * scale_), hover_.Get());
     }
-    void Selected(D2D1_RECT_F cell) const {
+    // bar: the accent bar at the left edge (off where an item check box marks the row).
+    void Selected(D2D1_RECT_F cell, bool bar = true) const {
         const auto sel = Bounds(cell, scale_);
         const float radius = theme_.radius_control * scale_;
         const auto rr = D2D1::RoundedRect(sel, radius, radius);
@@ -44,7 +45,7 @@ public:
             dc_->DrawRoundedRectangle(D2D1::RoundedRect({sel.left + half, sel.top + half,
                 sel.right - half, sel.bottom - half}, radius, radius), outline_brush_.Get(), scale_);
         }
-        if (active_ && accent_) {
+        if (bar && active_ && accent_) {
             const float height = (std::min)(18 * scale_, (std::max)(0.0f, sel.bottom - sel.top - 8 * scale_));
             const float y = (sel.top + sel.bottom - height) * 0.5f;
             dc_->FillRoundedRectangle(D2D1::RoundedRect({sel.left + scale_, y,

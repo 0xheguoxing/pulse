@@ -4,6 +4,7 @@
 #include "../app/layout_pane_selection.h"
 #include "../app/network_sidebar.h"
 #include "../app/context_menu_controller.h"
+#include "../ipc/ctx_menu_util.h"
 #include "../app/single_instance_coordinator.h"
 #include "../app/tray_controller.h"
 #include "../app/blank_pane_click.h"
@@ -11,6 +12,7 @@
 #include "../app/default_file_manager.h"
 #include "../app/shell_window_plan.h"
 #include "../app/explorer_shortcuts.h"
+#include "../app/keymap.h"
 #include "../app/closed_windows.h"
 #include "../app/last_tab_close.h"
 #include "../app/startup_launch.h"
@@ -25,6 +27,7 @@
 #include "../app/toolbar_apps.h"
 #include "../app/app_prefs.h"
 #include "../ui/toolbar_layout.h"
+#include "../ui/favorites_bar_layout.h"
 #include "../common/preview_packs.h"
 #include "../common/utf8_file.h"
 
@@ -492,8 +495,8 @@ bool TestExplorerShortcuts() {
     passed &= Report("explorer keys: Ctrl+Shift+N new folder, Ctrl+E / F3 search",
         is(L'N', true, true, false, A::NewFolder) && is(L'E', true, false, false, A::Search) &&
         is(VK_F3, false, false, false, A::Search));
-    passed &= Report("explorer keys: Ctrl+N new window, Ctrl+Shift+W closes the window (multi-window M4b)",
-        is(L'N', true, false, false, A::NewWindow) && is(L'W', true, true, false, A::CloseWindow) &&
+    passed &= Report("explorer keys: Ctrl+N is unassigned, Ctrl+Shift+W closes the window",
+        is(L'N', true, false, false, A::None) && is(L'W', true, true, false, A::CloseWindow) &&
         is(L'N', true, false, true, A::None) && is(L'N', false, false, false, A::None));
     passed &= Report("explorer keys: Ctrl+Shift+M moves the tab to a new window, Ctrl+M and Ctrl+Alt+Shift+M do not (M4e)",
         is(L'M', true, true, false, A::MoveTabToNewWindow) && is(L'M', true, false, false, A::None) &&
@@ -509,9 +512,10 @@ bool TestExplorerShortcuts() {
         is(L'8', true, true, false, A::ViewMode, 7) && is(L'9', true, true, false, A::None) &&
         pulse::ui::ViewModeFromIndex(5) == pulse::ui::ViewMode::Details &&
         pulse::ui::ViewModeFromIndex(1) == pulse::ui::ViewMode::LargeIcons);
-    passed &= Report("explorer keys: Ctrl+Alt+Shift+1..7 tags",
-        is(L'1', true, true, true, A::Tag, 0) && is(L'7', true, true, true, A::Tag, 6) &&
-        is(L'8', true, true, true, A::None));
+    passed &= Report("explorer keys: Alt+1..9 favorite tags, Alt+0 clears, Alt+T tag panel",
+        is(L'1', false, false, true, A::Tag, 0) && is(L'9', false, false, true, A::Tag, 8) &&
+        is(L'0', false, false, true, A::ClearTags) && is(L'T', false, false, true, A::TagPanel) &&
+        is(L'1', true, true, true, A::None) && is(L'1', false, true, true, A::None));
     passed &= Report("explorer keys: Backspace back, Shift+F10 / Apps menu, F11 maximize; plain keys untouched",
         is(VK_BACK, false, false, false, A::Back) && is(VK_F10, false, true, false, A::ContextMenu) &&
         is(VK_APPS, false, false, false, A::ContextMenu) && is(VK_F11, false, false, false, A::Maximize) &&
@@ -521,6 +525,49 @@ bool TestExplorerShortcuts() {
     passed &= Report("explorer keys: Ctrl+N picks the Nth visible tab, Ctrl+9 the last",
         NthVisibleTab(visible, 0) == size_t{0} && NthVisibleTab(visible, 1) == size_t{2} &&
         !NthVisibleTab(visible, 5) && NthVisibleTab(visible, 8) == size_t{3} && !NthVisibleTab({}, 8));
+    passed &= Report("explorer keys: Ctrl+G groups into a folder, Ctrl+Shift+G ungroups, Ctrl+Alt+G nothing",
+        is(L'G', true, false, false, A::GroupIntoFolder) && is(L'G', true, true, false, A::DissolveFolder) &&
+        is(L'G', true, false, true, A::None) && is(L'G', false, false, false, A::None));
+    return passed;
+}
+
+// Settings > 快捷键: the new group / ungroup actions, and dismissing a chord
+// another program holds (it leaves the list and the sidebar badge).
+bool TestShortcutKeymap() {
+    namespace k = pulse::app;
+    using k::KeyAction;
+    using k::KeyChord;
+    auto chord = [](const wchar_t* text) { KeyChord c{}; k::ParseChord(text, c); return c; };
+    bool passed = true;
+    k::Keymap fresh;
+    passed &= Report("keymap: Ctrl+G is 合并到文件夹, Ctrl+Shift+G 解散文件夹 by default",
+        fresh.Find(chord(L"Ctrl+G")).action == KeyAction::GroupIntoFolder &&
+        fresh.Find(chord(L"Ctrl+Shift+G")).action == KeyAction::DissolveFolder &&
+        k::ActionFromId("GroupIntoFolder") == KeyAction::GroupIntoFolder &&
+        k::ActionFromId("DissolveFolder") == KeyAction::DissolveFolder);
+    bool unique = true;
+    for (int i = 0; i < k::kKeyActionCount; ++i) {
+        const auto action = static_cast<KeyAction>(i);
+        if (k::ActionInfo(action).kind == k::KeyKind::Global) continue;
+        for (const KeyChord c : fresh.EffectiveChords(action)) unique = unique && fresh.Find(c).action == action;
+    }
+    passed &= Report("keymap: default keys stay unique", unique);
+    k::Keymap moved = fresh;
+    moved.SetBindings(KeyAction::GroupIntoFolder, {chord(L"Ctrl+Alt+G")});
+    const auto t = moved.Translate(chord(L"Ctrl+Alt+G"));
+    passed &= Report("keymap: a rebound group key reaches the default Ctrl+G handler",
+        t.kind == k::Keymap::Translation::Rewrite && t.target == chord(L"Ctrl+G") &&
+        moved.Translate(chord(L"Ctrl+G")).kind == k::Keymap::Translation::Swallow);
+
+    k::ShortcutEnv env;
+    env.taken = {chord(L"Ctrl+Alt+C"), chord(L"Ctrl+Alt+X")};
+    const auto before = k::CollectIssues(fresh, env);
+    env.ime_ignored = {chord(L"Ctrl+Alt+C")};
+    const auto after = k::CollectIssues(fresh, env);
+    passed &= Report("keymap: a dismissed taken chord leaves the issues list (badge)",
+        before.size() == 2 && after.size() == 1 && after[0].chord == chord(L"Ctrl+Alt+X"));
+    passed &= Report("keymap: a dismissed taken chord still blocks recording it",
+        k::CheckChord(fresh, KeyAction::CopyPath, chord(L"Ctrl+Alt+C"), env).issue == k::ChordIssue::Taken);
     return passed;
 }
 
@@ -779,29 +826,80 @@ bool TestToolbarApps() {
                                            ToolbarPinOptions{0, true, 400});
     ok &= Report("toolbar apps: the drop label gives way before an app does",
         no_room.pin_label.right <= no_room.pin_label.left && no_room.pins[0].right > no_room.pins[0].left);
+    // 收藏栏: labels up to 168 DIP wide, the rest folds into » (toolbar redesign §8).
+    {
+        const D2D1_RECT_F band = D2D1::RectF(224, 134, 1024, 168);
+        const auto fits = pulse::ui::MakeFavoritesBarLayout(band, 1, {40, 60, 400}, false);
+        const auto folded = pulse::ui::MakeFavoritesBarLayout(D2D1::RectF(224, 134, 524, 168), 1, {80, 80, 80, 80}, false);
+        const auto icons = pulse::ui::MakeFavoritesBarLayout(band, 1, {40, 60}, true);
+        ok &= Report("favorites bar: labels fit, a long one stops at 168, the rest folds into more",
+            fits.first_hidden < 0 && fits.items[0].left == 234 && fits.items[2].right - fits.items[2].left == 168 &&
+            fits.items[0].bottom - fits.items[0].top == 28 &&
+            folded.first_hidden == 2 && folded.items[2].right <= folded.items[2].left &&
+            folded.more.left >= folded.items[1].right && folded.more.right <= 516 &&
+            icons.items[1].right - icons.items[1].left == 30);
+        // 放回侧边栏 keeps the right end; the favorites and » stop 6 DIP short of it.
+        const D2D1_RECT_F narrow = D2D1::RectF(224, 134, 524, 168);
+        const auto docked = pulse::ui::MakeFavoritesBarLayout(narrow, 1, {80, 80, 80, 80}, false, {}, true);
+        const auto empty = pulse::ui::MakeFavoritesBarLayout(narrow, 1, {}, false, {}, true);
+        ok &= Report("favorites bar: the dock button sits at the right end, even with nothing starred",
+            docked.dock.left == 488 && docked.dock.right == 516 && docked.first_hidden >= 0 &&
+            docked.more.right <= 482 && empty.dock.left == 488 && empty.dock.bottom - empty.dock.top == 28 &&
+            folded.dock.right <= folded.dock.left);
+    }
+    // The user's separators (自定义工具栏) open a 9 DIP gap before their pin.
+    {
+        ToolbarPinOptions grouped;
+        grouped.separators = 1u << 2;
+        const auto plain = MakeToolbarLayout(1400, 1, 46, 8, 96, 224, 0, 0, 0, 34, 34, 4, 0);
+        const auto split = MakeToolbarLayout(1400, 1, 46, 8, 96, 224, 0, 0, 0, 34, 34, 4, 0, grouped);
+        const float gap = split.pins[2].left - split.pins[1].right;
+        using namespace pulse::ui;
+        const auto row = MakeToolbarLayout(1600, 1, 46, 8, 96, 224, 0, 0, 0, 34, 34, 0, SelectionChipSpan(1, 60, 6));
+        const auto sel = MakeToolbarSelectionChip(row, 1, 60, 6);
+        const auto shown = [](const D2D1_RECT_F& r) { return r.right > r.left; };
+        ok &= Report("selection chip: the count, 6 actions, then pin to, more and clear",
+            shown(sel.label) && shown(sel.buttons[5]) && sel.buttons[0].left > sel.label.right &&
+            sel.buttons[kSelChipPin].left > sel.buttons[5].right &&
+            sel.buttons[kSelChipMore].left > sel.buttons[kSelChipPin].right &&
+            sel.buttons[kSelChipClear].left > sel.buttons[kSelChipMore].right &&
+            sel.chip.right >= sel.buttons[kSelChipClear].right);
+        ok &= Report("toolbar: a separator opens a gap before its pin, drawn only there",
+            std::abs(gap - (plain.pins[2].left - plain.pins[1].right) - 9.0f) < 0.01f &&
+            split.pin_dividers == (1u << 2) && plain.pin_dividers == 0 &&
+            std::abs(split.pins[1].left - plain.pins[1].left) < 0.01f);
+    }
 
     // An open filter gets room to type: pins fold into More, the labels to
     // icons and a selection chip to its smallest form, from the first frame
-    // of the animation on.
+    // of the animation on. Cut .. delete are pins too (toolbar picker T3d), so
+    // the row is full of them.
     const float chip = pulse::ui::SelectionChipSpan(1, 60, 6);
-    const auto closed = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 0, 0, 108, 88, 80, 3, 0, mixed);
-    const auto opening = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 0.05f, 0, 108, 88, 80, 3, 0, mixed);
-    const auto open = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 1, 0, 108, 88, 80, 3, 0, mixed);
-    const auto selected = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 1, 0, 108, 88, 80, 3, chip, mixed);
+    constexpr int kFullRow = 16;
+    const auto closed = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 0, 0, 108, 88, 80, kFullRow, 0, mixed);
+    const auto opening = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 0.05f, 0, 108, 88, 80, kFullRow, 0, mixed);
+    const auto open = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 1, 0, 108, 88, 80, kFullRow, 0, mixed);
+    const auto selected = MakeToolbarLayout(1000, 1, 46, 8, 96, 224, 1, 0, 108, 88, 80, kFullRow, chip, mixed);
     const auto width_of = [](const D2D1_RECT_F& r) { return r.right - r.left; };
+    const auto pins_shown = [&](const pulse::ui::ToolbarLayout& l) {
+        int n = 0;
+        for (const auto& pin : l.pins) n += width_of(pin) > 0 ? 1 : 0;
+        return n;
+    };
     const auto apart = [&](const pulse::ui::ToolbarLayout& l) {
         float pins_end = 0.0f;
         for (const auto& pin : l.pins) if (pin.right > pin.left) pins_end = pin.right;
         return l.sort.left >= pins_end && l.filter.left >= l.sort.right && l.group.left >= l.filter.right &&
-               l.group.right + 4 <= l.commands[5].left;
+               l.group.right + 4 <= l.overflow.left;
     };
     const bool roomy = width_of(open.filter) >= 199.0f && width_of(selected.filter) >= 150.0f &&
-        width_of(closed.pins[2]) > 0 && width_of(open.pins[1]) <= 0 && width_of(opening.pins[1]) <= 0 &&
+        pins_shown(closed) > pins_shown(open) && pins_shown(opening) == pins_shown(open) && pins_shown(open) > 0 &&
         width_of(open.sort) == 32.0f && width_of(opening.sort) == 32.0f &&
         apart(closed) && apart(opening) && apart(open) && apart(selected);
     if (!roomy)
-        std::printf("    filter: closed %.1f opening %.1f open %.1f selected %.1f\n", width_of(closed.filter),
-                    width_of(opening.filter), width_of(open.filter), width_of(selected.filter));
+        std::printf("    filter: closed %.1f opening %.1f open %.1f selected %.1f; pins %d %d %d\n",
+                    width_of(closed.filter), width_of(opening.filter), width_of(open.filter),
+                    width_of(selected.filter), pins_shown(closed), pins_shown(opening), pins_shown(open));
     ok &= Report("toolbar: an open filter gets room to type", roomy);
     return ok;
 }
@@ -871,6 +969,57 @@ bool TestThisPc() {
     passed &= Report("this pc: ordinary entries still sort by name",
         pulse::app::EntryLess(plain[1], plain[0], SortColumn::Name, SortDirection::Asc,
                               pulse::app::FolderSortMode::FoldersFirst));
+    return passed;
+}
+
+// #58-7: Large icons -> List -> the icons button returns to Large icons in
+// that folder, also after a restart; other folders fall back to the last one.
+bool TestLastIconView() {
+    using pulse::ui::ViewMode;
+    bool passed = true;
+    pulse::app::AppPrefs prefs;
+    prefs.persist = false;
+    auto& views = prefs.folder_views;
+    passed &= Report("last icon: nothing known before an icon view is chosen",
+        !views.FindLastIcon(L"C:\\Photos"));
+    views.Set(L"C:\\Photos", ViewMode::LargeIcons);
+    const bool large = views.SetLastIcon(L"C:\\Photos", ViewMode::LargeIcons, 0.0f);
+    views.Set(L"C:\\Photos", ViewMode::List);
+    const auto photos = views.FindLastIcon(L"C:\\Photos\\");
+    passed &= Report("last icon: List keeps the folder's Large icons",
+        large && views.Find(L"C:\\Photos") == ViewMode::List && photos &&
+        photos->mode == ViewMode::LargeIcons && photos->dip == 0.0f &&
+        !views.SetLastIcon(L"C:\\Photos", ViewMode::LargeIcons, 0.0f) &&
+        !views.SetLastIcon(L"C:\\Photos", ViewMode::List, 0.0f));
+    views.SetIconDip(L"D:\\Work", 120.0f);
+    views.SetLastIcon(L"D:\\Work", ViewMode::LargeIcons, 120.0f);
+    const auto work = views.FindLastIcon(L"D:\\Work");
+    const auto other = views.FindLastIcon(L"E:\\Elsewhere");
+    passed &= Report("last icon: sizes stay per folder, others get the last one",
+        work && work->dip == 120.0f && other && other->mode == ViewMode::LargeIcons &&
+        other->dip == 120.0f);
+    views.SetLastIcon(L"pulse:recent", ViewMode::ExtraLargeIcons, 0.0f);
+    const auto after_virtual = views.FindLastIcon(L"C:\\Photos");
+    passed &= Report("last icon: virtual views only move the fallback",
+        after_virtual && after_virtual->mode == ViewMode::LargeIcons &&
+        views.FindLastIcon(L"E:\\Elsewhere")->mode == ViewMode::ExtraLargeIcons);
+    pulse::app::AppPrefs reloaded;
+    reloaded.persist = false;
+    reloaded.FromJson(prefs.ToJson());
+    const auto restored = reloaded.folder_views.FindLastIcon(L"C:\\Photos");
+    const auto restored_fallback = reloaded.folder_views.FindLastIcon(L"F:\\New");
+    passed &= Report("last icon: survives a restart",
+        restored && restored->mode == ViewMode::LargeIcons &&
+        restored_fallback && restored_fallback->mode == ViewMode::ExtraLargeIcons &&
+        reloaded.folder_views.Find(L"C:\\Photos") == ViewMode::List);
+    reloaded.folder_views.ApplyToAll(ViewMode::Details);
+    const auto cleared = reloaded.folder_views.FindLastIcon(L"C:\\Photos");
+    passed &= Report("last icon: apply to all folders drops per-folder ones",
+        cleared && cleared->mode == ViewMode::ExtraLargeIcons);
+    reloaded.FromJson(L"{\"folder_icon_mode\":[\"9|C:\\\\X\",\"3\",\"2|pulse:recent\"],"
+                      L"\"folder_icon_last_mode\":5}");
+    passed &= Report("last icon: malformed entries are ignored",
+        !reloaded.folder_views.FindLastIcon(L"C:\\X"));
     return passed;
 }
 
@@ -1136,6 +1285,7 @@ bool TestPulseOnlyVisibility() {
     using namespace pulse::app;
     ContextMenuPrefs prefs;
     prefs.persist = false;
+    prefs.share = false;
     const std::wstring tool = pulse::ipc::HandlerCatalogKey(L"{11111111-2222-3333-4444-555555555555}");
     const std::wstring share = pulse::ipc::CatalogKey(L"Share", false);
     const std::wstring unseen = pulse::ipc::CatalogKey(L"Unseen verb", false);
@@ -1532,6 +1682,9 @@ int wmain(int argc, wchar_t** argv) {
         pulse::app::ContextMenuPrefs context;
         context.persist = false;
         context.ResetToDefaults();
+        // Start from both groups switched off (they default on).
+        context.SetGroupEnabled(pulse::ipc::CtxMenuGroup::Share, false);
+        context.SetGroupEnabled(pulse::ipc::CtxMenuGroup::System, false);
         const auto category = pulse::ipc::CtxMenuCategory::Share;
         const std::wstring send_key = pulse::ipc::CatalogKey(L"Send to", true);
         const std::wstring other_key = pulse::ipc::CatalogKey(L"Other sharing action", false);
@@ -1871,6 +2024,15 @@ int wmain(int argc, wchar_t** argv) {
     task_effect = settings.CompleteTask(completed_task, true);
     passed &= Report("diagnostics completion opens export without index refresh",
         !task_effect.refresh_index && task_effect.open_path == completed_task.task.path);
+    completed_task.task.kind = pulse::app::SettingsTaskKind::SettingsImport;
+    completed_task.task.path = L"C:\\settings.json";
+    completed_task.ok = false;
+    completed_task.error = L"import failed";
+    task_effect = settings.CompleteTask(completed_task, true);
+    passed &= Report("settings transfer completion leaves the index and the page error alone",
+        !task_effect.refresh_index && task_effect.open_path.empty() && settings.error().empty());
+    completed_task.error.clear();
+    completed_task.ok = true;
     completed_task.task.kind = pulse::app::SettingsTaskKind::NetworkRemove;
     completed_task.ok = false;
     task_effect = settings.CompleteTask(completed_task, true);
@@ -2306,6 +2468,21 @@ int wmain(int argc, wchar_t** argv) {
         !context_menu.RequestStaticPrefetch(L".txt"));
     context_menu.CompleteStaticVerbs(
         L".txt", { { L"edit", L"Edit text", L"" } }, context_menu.cache_generation());
+
+    {
+        pulse::ipc::StaticVerbRegFlags command_only;
+        command_only.has_command = true;
+        pulse::ipc::StaticVerbRegFlags delegated_command;
+        delegated_command.has_command = true;
+        delegated_command.has_delegate_execute = true;
+        pulse::ipc::StaticVerbRegFlags explorer_command;
+        explorer_command.has_command = true;
+        explorer_command.has_explorer_command = true;
+        passed &= Report("delegated static verbs invoke their Shell handler, not a command placeholder",
+            pulse::ipc::UseStaticVerbCommand(command_only) &&
+            !pulse::ipc::UseStaticVerbCommand(delegated_command) &&
+            !pulse::ipc::UseStaticVerbCommand(explorer_command));
+    }
     {
         // The registry changes while .doc is being read: the late result of the
         // old read must not refill the invalidated cache or cancel the new read.
@@ -2567,6 +2744,7 @@ int wmain(int argc, wchar_t** argv) {
 
     passed &= TestPulseOnlyVisibility();
     passed &= TestExplorerShortcuts();
+    passed &= TestShortcutKeymap();
     passed &= TestClosedWindowStack();
     passed &= TestAddressBarCommands();
     passed &= TestAddressShortcuts();
@@ -2575,6 +2753,7 @@ int wmain(int argc, wchar_t** argv) {
     passed &= TestDefaultFileManager();
     passed &= TestShellWindowPlan();
     passed &= TestThisPc();
+    passed &= TestLastIconView();
     passed &= TestToolbarApps();
     passed &= TestPackAutoUpdate();
     passed &= Report("menu row height sits 4 DIP under list density (28/34/40 -> 26/30/36, clamped)",

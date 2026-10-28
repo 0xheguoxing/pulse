@@ -10,6 +10,18 @@ bool HandleQuickAccessCommand(AppState& s, int command,
 void ShowQuickAccessMenu(AppState& s, const std::wstring& path, POINT point);
 // Header "+" of Quick access: pin the current folder or a picked one.
 void ShowQuickAccessAddMenu(AppState& s, POINT point);
+// 编辑快速访问: the panel that shows or hides the built-in links, reorders them
+// together with the pinned folders, removes pins and adds folders.
+void ShowQuickAccessEditor(AppState& s, POINT point);
+// Layout key of each row of the quick-access sidebar group (see
+// MergeQuickAccessOrder); empty for rows that do not move (the Git project row).
+std::vector<std::wstring> QuickAccessGroupRowKeys(const AppState& s, const ui::SidebarGroup& group);
+// Key of row `item` of sidebar section `section`; empty unless it is a movable
+// quick-access row.
+std::wstring QuickAccessRowKey(const AppState& s, const ui::WindowViewModel& vm,
+                               int section, int item);
+// Drops the dragged quick-access row `key` into gap `gap` of the visible rows.
+void CommitQuickAccessDrag(AppState& s, const std::wstring& key, size_t gap);
 // Right-click on a workspace row: open, refresh its saved layout, unpin.
 void ShowWorkspaceMenu(AppState& s, int index, POINT point);
 // Right-click on a pinned network location row: open, unpin (#236).

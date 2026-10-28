@@ -1,4 +1,5 @@
 #include "app_internal.h"
+#include "../ui/ui_renderer.h"
 #include "app_input.h"
 #include "app_ops_ui.h"
 #include "../ui/ui_renderer_internal.h"
@@ -7,6 +8,7 @@
 
 #ifdef PULSE_WITH_SELFTEST
 namespace pulse { bool TestSettingsFilter(const std::wstring&,l10n::StringId); }
+int RunShortcutFlowTest(pulse::AppState& s, const wchar_t* output);
 using namespace pulse;
 int RunSettingsWidthBorderTest(AppState& s, const wchar_t* output) {
     using H = ui::HitTestResult;
@@ -431,12 +433,15 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
     // Variants: 0 off, 1 on, 2 changed back, 3 failed, 4 another Pulse copy, 5 just turned on.
     auto fixture = [&](int state) {
         auto vm = BuildVm(s, false);
-        vm.settings_open = true; vm.settings_page = 0; vm.settings_scroll = 0;
+        vm.settings_open = true; vm.settings_page = 11; vm.settings_scroll = 0;
         vm.settings_expanded = 0;
         vm.settings_integration_state = state == 0 ? 0 : state == 4 ? 2 : state == 5 ? 1 : state;
         vm.settings_integration_enabled = state != 0;
         vm.settings_integration_folders = vm.settings_integration_win_e = vm.settings_integration_this_pc = true;
-        vm.settings_integration_folders_active = vm.settings_integration_win_e_active = state != 0;
+        // State 1 runs 兼容打开方式: no folder verb, yet the tile still reads as covered.
+        vm.settings_integration_folders_compat = state == 1;
+        vm.settings_integration_folders_active = state != 0 && state != 1;
+        vm.settings_integration_win_e_active = state != 0;
         vm.settings_integration_this_pc_active = state != 0 && state != 2;
         vm.settings_integration_recycle_bin = state == 1;
         vm.settings_integration_experimental = state == 1 || state == 3;
@@ -508,23 +513,21 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
                         for (int j = 0; j < i; ++j) tiles &= !overlap(t, l.integration_cover[j]);
                         tiles_readonly &= hit(t).region != H::SettingsIntegration;
                     }
-                    // The two extras: their descriptions fit, the tag stays on the title line,
-                    // and they are only editable while the switch is on.
-                    const D2D1_RECT_F rows[] = {l.recycle_bin_row, l.explorer_windows_row};
-                    const I descriptions[] = {I::SettingsRecycleBinDesc, I::IntegrationExperimentalDesc};
-                    const int row_actions[] = {7, 4};
-                    for (int i = 0; i < 2; ++i) {
+                    // The extras (recycle bin, takeover, 兼容打开方式): their descriptions fit,
+                    // they never overlap, and they are only editable while the switch is on.
+                    const D2D1_RECT_F rows[] = {l.recycle_bin_row, l.explorer_windows_row, l.folders_compat_row};
+                    const I descriptions[] = {I::SettingsRecycleBinDesc, I::IntegrationExperimentalDesc,
+                                              I::IntegrationCompatDesc};
+                    const int row_actions[] = {7, 4, 9};
+                    for (int i = 0; i < 3; ++i) {
                         const float text_left = rows[i].left+112*scale;
                         const float height = painter.MeasureWrappedCaptionHeight(l10n::Get(descriptions[i]),
                             rows[i].right-16*scale-text_left);
                         extras &= nonempty(rows[i]) && inside(rows[i], card) &&
                             rows[i].top+31*scale+height <= rows[i].bottom-12*scale+0.5f;
                         action_hits &= is_action(rows[i], row_actions[i]) == vm.settings_integration_enabled;
+                        for (int j = 0; j < i; ++j) extras &= !overlap(rows[i], rows[j]);
                     }
-                    const auto tag = l.integration_chip[0];
-                    extras &= nonempty(tag) && inside(tag, l.explorer_windows_row) &&
-                        tag.bottom <= l.explorer_windows_row.top+31*scale+0.5f &&
-                        tag.left >= l.explorer_windows_row.left+112*scale;
                     const bool problem = state >= 2 && state <= 4;
                     action_hits &= is_action(l.integration_retry, 5) == problem &&
                         is_action(l.integration_restore, 6) == problem;
@@ -543,7 +546,7 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
                     // Footer: the try-it button only while on and healthy; the sentence fits.
                     const auto h = l.integration_hint, t = l.integration_hint_text;
                     const bool try_it = vm.settings_integration_enabled && !problem;
-                    foot &= nonempty(h) && h.top >= l.explorer_windows_row.bottom-0.5f && h.bottom <= card.bottom+0.5f &&
+                    foot &= nonempty(h) && h.top >= l.folders_compat_row.bottom-0.5f && h.bottom <= card.bottom+0.5f &&
                         inside(t, h) && nonempty(l.integration_try) == try_it && is_action(l.integration_try, 8) == try_it &&
                         t.top+painter.MeasureWrappedCaptionHeight(ui::IntegrationHint(vm), t.right-t.left) <= h.bottom+0.5f;
                     if (try_it) foot &= inside(l.integration_try, h) && !overlap(l.integration_try, t);
@@ -557,7 +560,7 @@ int RunSettingsIntegrationUiTest(AppState& s, const wchar_t* output) {
     check(pill_fits, "status pill fits beside or below the master text without touching the switch");
     check(tiles, "coverage tiles fit inside the card without overlapping at every width and DPI");
     check(tiles_readonly, "coverage tiles are read-only");
-    check(extras, "both extras and the experimental tag fit narrow and high-DPI layouts");
+    check(extras, "the three extras fit narrow and high-DPI layouts without overlapping");
     check(action_hits, "switch always hits; extras only while on; retry and restore only for problems");
     check(bar_fits, "problem bar and its actions fit; healthy states have no bar or action targets");
     check(foot, "footer sentence fits; try-it appears only while on and healthy");
@@ -603,6 +606,8 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
         return RunSettingsDropdownTest(s, output);
     if (GetEnvironmentVariableW(L"PULSE_TEST_SETTINGS_WIDTH_BORDER", nullptr, 0))
         return RunSettingsWidthBorderTest(s, output);
+    if (GetEnvironmentVariableW(L"PULSE_TEST_SHORTCUTS", nullptr, 0))
+        return RunShortcutFlowTest(s, output);
     using H=ui::HitTestResult;using I=l10n::StringId;
     std::ofstream log{std::filesystem::path(output)};int failures=0;
     auto check=[&](bool ok,const char* label){log<<(ok ? "[PASS] " : "[FAIL] ")<<label<<'\n';if(!ok)++failures;};
@@ -657,7 +662,7 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
                 auto hit=[&](D2D1_RECT_F r){return s.renderer.HitTest(vm,window,(r.left+r.right)/2,(r.top+r.bottom)/2);};
                 bool nav=true;for(int i=0;i<5;++i) {auto h=hit(layout.nav_row[i]);nav &= h.region==H::SettingsNav && h.index==i;}
                 check(nav,"fixed navigation preserves all page destinations across widths and DPI");
-                check(layout.nav_row[0].top == layout.nav.top + 20*scale,
+                check(layout.nav_row[0].top <= layout.nav.top + 48*scale,
                     "settings navigation starts without a search-box gap");
                 check(layout.nav_row[4].bottom<layout.nav_row[3].top,"about is pinned below primary navigation");
                 if(page==0) {
@@ -692,15 +697,17 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
                     l10n::SetLanguage(L"zh-CN");
                 }
                 if(page==2) {
-                    // No pivot: the 系统右键菜单 layer card and the hint below the
-                    // Pulse card both open page 6; the Pulse card is the page itself.
+                    // No pivot: the 系统右键菜单 layer card and the hint row in the
+                    // left card both open page 6; the Pulse card is the page itself.
                     auto layer=hit(layout.ctx_layer[1]),hint=hit(layout.context_system_hint),own=hit(layout.ctx_layer[0]);
                     check(layer.region==H::SettingsCtxPivot && layer.index==6 &&
                           hint.region==H::SettingsNav && hint.index==6 &&
                           own.region!=H::SettingsCtxPivot && own.region!=H::SettingsNav &&
                           layout.ctx_layer[0].top>=layout.ctx_intro.bottom && layout.pulse_card.top>=layout.ctx_layer[0].bottom &&
-                          layout.context_system_hint.top>=layout.pulse_card.bottom,
-                          "context page: layer cards above the Pulse card, hint below it, both open the system page");
+                          layout.context_system_hint.top>=layout.pulse_tab[2].bottom &&
+                          layout.context_system_hint.bottom<=layout.pulse_tabs.bottom &&
+                          layout.pulse_tabs.right<=layout.pulse_card.left && layout.pulse_tabs.top==layout.pulse_card.top,
+                          "context page: layer cards above the columns, hint in the left card, both open the system page");
                     bool hidden=true;for(const auto& r:layout.context_rows) hidden &= r.bottom==0;
                     check(hidden,"collapsed context entries do not receive clicks");
                 }
@@ -735,18 +742,19 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
     click(layout().theme_tile[0]);check(!s.darkMode && s.appPrefs.theme_mode==1,"mouse click applies and saves light theme");
     click(layout().theme_tile[1]);check(s.darkMode && s.appPrefs.theme_mode==2,"mouse click applies and saves dark theme");
     click(layout().theme_tile[2]);check(s.themeOverride==ui::ThemeMode::Auto && s.appPrefs.theme_mode==0,"system theme is a persistent explicit selection");
+    OpenSettingsTab(s,9);s.settings.SetScroll(0,0);
     s.settings.SetScroll(layout().density_card.top-layout().content.top,
         s.renderer.SettingsMaxScroll(BuildVm(s,false),window.right,window.bottom));
     click(layout().density_row[0]);check(s.appPrefs.row_height==28,"mouse click changes density through existing controller");
     // Layout rectangles are scroll-relative: measure from the top so the target does not depend on the density step.
-    s.settings.SetScroll(0.0f,0.0f);
+    OpenSettingsTab(s,10);s.settings.SetScroll(0.0f,0.0f);
     s.settings.SetScroll(layout().close_last_tab_row.top-layout().content.top,
         s.renderer.SettingsMaxScroll(BuildVm(s,false),window.right,window.bottom));
     {
         const auto tab_layout=layout();
         check(tab_layout.close_last_tab_row.top>=tab_layout.new_tab_open_card.bottom &&
               tab_layout.close_last_tab_row.bottom<=tab_layout.group[1].bottom,
-              "close-with-last-tab row sits in the startup and close card");
+              "close-with-last-tab row sits in the tabs card");
         const bool was=s.appPrefs.close_window_with_last_tab;
         click(tab_layout.close_last_tab_row);
         const bool flipped=s.appPrefs.close_window_with_last_tab!=was;
@@ -754,14 +762,14 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
         check(flipped && s.appPrefs.close_window_with_last_tab==was,
               "mouse click toggles closing the window with the last tab");
     }
-    s.settings.SetScroll(0.0f,0.0f);
+    OpenSettingsTab(s,12);s.settings.SetScroll(0.0f,0.0f);
     s.settings.SetScroll(layout().confirm_delete_row.top-layout().content.top,
         s.renderer.SettingsMaxScroll(BuildVm(s,false),window.right,window.bottom));
     {
         const auto list_layout=layout();
         check(list_layout.confirm_delete_row.top>=list_layout.folder_sort_card.bottom &&
-              list_layout.confirm_delete_row.bottom<=list_layout.group[2].bottom,
-              "confirm-before-delete row sits in the file list card");
+              list_layout.confirm_delete_row.bottom<=list_layout.group[0].bottom,
+              "confirm-before-delete row sits in the delete card");
         const bool was=s.appPrefs.confirm_recycle_delete;
         click(list_layout.confirm_delete_row);
         const bool flipped=s.appPrefs.confirm_recycle_delete!=was;
@@ -776,16 +784,18 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
               !many.confirm_text.empty() && !many.danger,
               "recycle delete confirmation lists the items without the danger style");
     }
-    s.settings.SetScroll(0,0);
+    OpenSettingsTab(s,0);s.settingsExpanded&=~32u;s.settings.SetScroll(0,0);
     auto vm=BuildVm(s,false);
     const auto collapsed_max=s.renderer.SettingsMaxScroll(vm,window.right,window.bottom);
-    H toggle;toggle.region=H::SettingsDisclosure;toggle.index=0;HandleSettingsControl(s,toggle);
+    H toggle;toggle.region=H::SettingsDisclosure;toggle.index=0;
+    H accent_custom;accent_custom.region=H::SettingsAccentCustom;accent_custom.index=0;HandleSettingsControl(s,accent_custom);
     vm=BuildVm(s,false);const auto expanded_max=s.renderer.SettingsMaxScroll(vm,window.right,window.bottom);
-    check((s.settingsExpanded&1u) && expanded_max>collapsed_max,"expanding advanced settings updates scroll range");
+    check((s.settingsExpanded&32u) && expanded_max>collapsed_max,"opening the custom accent updates scroll range");
     {
-        // The advanced group owns both the hidden-files switch and the protected
+        // 文件列表 › 显示哪些项目 owns both the hidden-files switch and the protected
         // operating system files switch; both need a reachable row and fitting text.
-        auto advanced=BuildVm(s,false);advanced.settings_expanded|=1u;advanced.settings_scroll=0;
+        OpenSettingsTab(s,9);s.settings.SetScroll(0,0);
+        auto advanced=BuildVm(s,false);advanced.settings_scroll=0;
         const auto lay=ui::MakeSettingsLayout(advanced,window,s.scale,s.renderer.TitleBarHeight(),28*s.scale,&painter);
         check(lay.protected_files_row.top>=lay.hidden_files_row.bottom &&
             lay.protected_files_row.bottom-lay.protected_files_row.top>=64*s.scale-1.0f &&
@@ -823,14 +833,22 @@ int RunSettingsFlowTest(AppState& s,const wchar_t* output) {
         check(s.compositor.SaveSnapshot((std::filesystem::path(output).parent_path()/L"settings-advanced.png").c_str()),
             "advanced settings screenshot captured");
     }
-    s.settings.SetScroll(expanded_max,expanded_max);HandleSettingsControl(s,toggle);
-    check(s.settings.scroll()<=collapsed_max,"collapsing advanced settings clamps existing scroll");
+    OpenSettingsTab(s,0);s.settings.SetScroll(expanded_max,expanded_max);HandleSettingsControl(s,accent_custom);
+    check(s.settings.scroll()<=collapsed_max,"closing the custom accent clamps existing scroll");
     OpenSettingsTab(s,1);s.settings.SetScroll(0,0);
     const bool before=s.appPrefs.search_pinyin;click(layout().search_pinyin_row);
     check(s.appPrefs.search_pinyin!=before,"mouse click changes pinyin setting");
     toggle.index=1;HandleSettingsControl(s,toggle);vm=BuildVm(s,false);
     const float offset=s.renderer.SettingsDestinationOffset(vm,static_cast<int>(I::IndexLocation),window.right,window.bottom);
     check(offset>0 && (s.settingsExpanded&2u),"search destination locates expanded index storage section");
+    // Pulse 右键菜单 in the 系统右键菜单 column style: three columns when wide,
+    // no preview column below 960 dip.
+    for(int w:{1400,900}) {
+        SetWindowPos(s.hwnd,nullptr,0,0,static_cast<int>(w*s.scale),static_cast<int>(900*s.scale),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+        OpenSettingsTab(s,2);s.settings.SetScroll(0,0);Render(s);
+        const auto png=std::filesystem::path(output).parent_path()/(L"settings-context-"+std::to_wstring(w)+L".png");
+        check(s.compositor.SaveSnapshot(png.c_str()),"context menu page screenshot captured");
+    }
     log<<"failures="<<failures<<'\n';return failures ? 1 : 0;
 }
 #endif

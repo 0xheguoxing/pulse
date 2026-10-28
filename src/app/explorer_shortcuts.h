@@ -10,13 +10,15 @@
 //   Ctrl+Alt+1..4        split layouts (were Ctrl+1..4)
 //   Ctrl+Shift+1..8      view: extra large, large, medium, small icons,
 //                        list, details, tiles, content
-//   Ctrl+Alt+Shift+1..7  toggle tag N (was Ctrl+Shift+1..7)
+//   Alt+1..9             toggle favorite tag N (was Ctrl+Alt+Shift+1..7)
+//   Alt+0, Alt+T         clear every tag / open the tag panel
 //   Backspace            back (Alt+Up stays "up one level")
 //   Shift+F10, Apps key  context menu
 //   F11                  maximize / restore
-//   Ctrl+N               new window at the current folder (multi-window M4b)
+//   Win+E                new window through Windows shell integration
 //   Ctrl+Shift+W         close this window (Ctrl+W, without Shift, closes the tab)
 //   Ctrl+Shift+M         move the current tab to a new window (multi-window M4e)
+//   Ctrl+G, Ctrl+Shift+G 合并到文件夹 / 解散文件夹 (group / ungroup, as in design tools)
 
 #include <windows.h>
 
@@ -27,13 +29,15 @@
 namespace pulse::app {
 
 enum class ExplorerKeyAction {
-    None, Delete, MarkTarget, NewFolder, Search, TabNumber, Layout, ViewMode, Tag, Back,
-    ContextMenu, Maximize, NewWindow, CloseWindow, MoveTabToNewWindow
+    None, Delete, MarkTarget, NewFolder, Search, TabNumber, Layout, ViewMode, Tag, ClearTags,
+    TagPanel, Back,
+    ContextMenu, Maximize, NewWindow, CloseWindow, MoveTabToNewWindow, MergeWindows,
+    GroupIntoFolder, DissolveFolder
 };
 
 struct ExplorerKeyCommand {
     ExplorerKeyAction action = ExplorerKeyAction::None;
-    int index = 0;        // 0-based tab/layout/view/tag number
+    int index = 0;        // 0-based tab/layout/view number, favorite tag slot
     bool shift = false;   // Ctrl+Shift+D: delete permanently
 };
 
@@ -44,15 +48,20 @@ inline ExplorerKeyCommand ExplorerShortcut(UINT key, bool ctrl, bool shift, bool
     if (ctrl && alt && !shift && key == L'D') return {A::MarkTarget};
     if (ctrl && !alt && key == L'D') return {A::Delete, 0, shift};
     if (ctrl && shift && !alt && key == L'N') return {A::NewFolder};
-    if (ctrl && !shift && !alt && key == L'N') return {A::NewWindow};
     if (ctrl && shift && !alt && key == L'W') return {A::CloseWindow};
     if (ctrl && shift && !alt && key == L'M') return {A::MoveTabToNewWindow};
+    if (ctrl && shift && !alt && key == L'J') return {A::MergeWindows};
+    if (ctrl && !alt && key == L'G') return {shift ? A::DissolveFolder : A::GroupIntoFolder};
     if ((ctrl && !shift && !alt && key == L'E') || (!ctrl && !shift && !alt && key == VK_F3))
         return {A::Search};
     if (digit && ctrl && !shift && !alt) return {A::TabNumber, number};
     if (digit && ctrl && alt && !shift && number < 4) return {A::Layout, number};
     if (digit && ctrl && shift && !alt && number < 8) return {A::ViewMode, number};
-    if (digit && ctrl && shift && alt && number < 7) return {A::Tag, number};
+    if (alt && !ctrl && !shift) {
+        if (digit) return {A::Tag, number};
+        if (key == L'0') return {A::ClearTags};
+        if (key == L'T') return {A::TagPanel};
+    }
     if (key == VK_BACK && !ctrl && !shift && !alt) return {A::Back};
     if ((key == VK_F10 && shift && !ctrl && !alt) || (key == VK_APPS && !ctrl && !alt)) return {A::ContextMenu};
     if (key == VK_F11 && !ctrl && !shift && !alt) return {A::Maximize};

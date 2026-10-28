@@ -92,7 +92,8 @@ inline void RestoreListingSelection(Tab& tab, const ListingSelectionRestore& res
             std::unordered_map<std::wstring_view, int> surviving;
             surviving.reserve(visible.size());
             for (int index : visible) {
-                if (tab.EntryVisible(index)) surviving.emplace((*tab.snapshot)[static_cast<size_t>(index)].name, index);
+                if (tab.EntryVisible(index) && static_cast<size_t>(index) < tab.snapshot->size())
+                    surviving.emplace((*tab.snapshot)[static_cast<size_t>(index)].name, index);
             }
             const auto select = [&](int old_index) {
                 const auto found = surviving.find((*restore.previous_snapshot)[static_cast<size_t>(old_index)].name);
@@ -100,9 +101,13 @@ inline void RestoreListingSelection(Tab& tab, const ListingSelectionRestore& res
                 tab.SelectOnly(found->second);
                 return true;
             };
-            for (int i = restore.previous_focus + 1; i < static_cast<int>(restore.previous_snapshot->size()); ++i)
+            // previous_focus can name a tree child row, which sits past the end
+            // of the snapshot; only snapshot rows carry an old identity.
+            const int previous_size = static_cast<int>(restore.previous_snapshot->size());
+            const int start = (std::min)(restore.previous_focus, previous_size);
+            for (int i = start + 1; i < previous_size; ++i)
                 if (select(i)) return;
-            for (int i = restore.previous_focus - 1; i >= 0; --i)
+            for (int i = start - 1; i >= 0; --i)
                 if (select(i)) return;
             if (!visible.empty()) tab.SelectOnly(visible.front());
             return;

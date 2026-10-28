@@ -19,10 +19,10 @@ public:
         size_t found = std::wstring_view::npos;
         if (!Eat(L'}')) {
             for (;;) {
-                std::wstring name;
-                if (!String(&name) || !Eat(L':')) return std::wstring_view::npos;
+                bool match = false;
+                if (!Name(key, match) || !Eat(L':')) return std::wstring_view::npos;
                 Space();
-                if (name == key && found == std::wstring_view::npos) found = pos_;
+                if (match && found == std::wstring_view::npos) found = pos_;
                 if (!Value(1)) return std::wstring_view::npos;
                 if (Eat(L'}')) break;
                 if (!Eat(L',')) return std::wstring_view::npos;
@@ -75,7 +75,7 @@ private:
     bool Eat(wchar_t c) { Space(); if (Peek() != c) return false; ++pos_; return true; }
     static bool Digit(wchar_t c) { return c >= L'0' && c <= L'9'; }
     static bool Hex(wchar_t c) { return Digit(c) || (c >= L'a' && c <= L'f') || (c >= L'A' && c <= L'F'); }
-    static bool ValidUtf16(const std::wstring& text) {
+    static bool ValidUtf16(std::wstring_view text) {
         for (size_t i = 0; i < text.size(); ++i) {
             const auto c = static_cast<unsigned>(text[i]);
             if (c >= 0xDC00 && c <= 0xDFFF) return false;
@@ -115,6 +115,24 @@ private:
             }
         }
         return false;
+    }
+    // String(&name) and name == key, without building name: a member name
+    // without escapes is its own decoded text. Startup looks up some 150 keys
+    // one by one, and each lookup used to allocate every name in the file.
+    bool Name(std::wstring_view key, bool& match) {
+        Space();
+        const size_t open = pos_;
+        if (!String()) return false;
+        const std::wstring_view raw = text_.substr(open + 1, pos_ - open - 2);
+        if (raw.find(L'\\') == std::wstring_view::npos) {
+            match = raw == key;
+            return ValidUtf16(raw);
+        }
+        pos_ = open;
+        std::wstring name;
+        if (!String(&name)) return false;
+        match = name == key;
+        return true;
     }
     bool Value(unsigned depth) {
         if (depth > 64) return false;

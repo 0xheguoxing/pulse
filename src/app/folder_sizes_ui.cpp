@@ -7,6 +7,7 @@
 #include "app_runtime.h"
 #include "entry_group.h"
 #include "entry_sort.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <unordered_set>
 
@@ -44,6 +45,8 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
     std::vector<ColumnRow> column_rows;
     std::vector<app::FolderSizeRequest> requests;
     std::vector<std::wstring> roots;
+    // 文件夹大小 off: shown rows wait for a click (cached and indexed sizes still show).
+    const bool auto_sizes = s.appPrefs.folder_size_auto;
     // Column view: every column is a listing of its own; probe the rows near
     // the navigation path (or the scrolled-to rows) without size work.
     const auto probe_column = [&](ui::ColumnStripColumnView& column) {
@@ -97,7 +100,9 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             if (pane.snapshot) {
                 if (static_cast<size_t>(source) >= pane.snapshot->size()) continue;
                 const auto& entry = (*pane.snapshot)[static_cast<size_t>(source)];
-                if (!entry.is_dir) continue;
+                // Recycle Bin folders carry their size ($I) and are not at
+                // full_path (their original place) to be probed or scanned.
+                if (!entry.is_dir || !entry.recycle_path.empty()) continue;
                 path = entry.full_path.empty() && !pane.is_search ? ChildPath(pane.path, entry.name) : entry.full_path;
             } else {
                 if (static_cast<size_t>(source) >= pane.entries.size()) continue;
@@ -109,7 +114,7 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             if (ProbesEmptiness(path)) probe_rows.push_back({&pane, source, path});
             if (!labels) continue;
             rows.push_back({&pane, source, path});
-            requests.push_back({path, !fs::IsUncPath(path)});
+            requests.push_back({path, auto_sizes && !fs::IsUncPath(path)});
             shown.insert(source);
         }
         if (sorted) {
@@ -117,7 +122,8 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             const auto& entries = *pane.snapshot;
             for (size_t i = 0; i < entries.size() && count < kSortRequestLimit; ++i) {
                 const auto& entry = entries[i];
-                if (!entry.is_dir || entry.drive_type != 0 || shown.contains(static_cast<int>(i))) continue;
+                if (!entry.is_dir || entry.drive_type != 0 || !entry.recycle_path.empty() ||
+                    shown.contains(static_cast<int>(i))) continue;
                 const std::wstring path = entry.full_path.empty() ? ChildPath(pane.path, entry.name) : entry.full_path;
                 if (fs::IsVirtualPath(path)) continue;
                 requests.push_back({path, !fs::IsUncPath(path), false});
@@ -128,6 +134,7 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
         if ((labels || sorted || probe_rows.size() > probed_before) && !pane.path.empty() && !fs::IsVirtualPath(pane.path))
             roots.push_back(pane.path);
     }
+    s.folderSizes.SetChangeNotify(ServiceWindow(s), WM_UI_KICK);
     if (!s.isolatedTest && !s.shot.active)
         s.folderSizes.SetCachePath([] {
             const auto dir = app::GetPulseDataDir();
@@ -141,7 +148,7 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
     }
     const bool probe_index = (s.isolatedTest || s.shot.active) &&
         GetEnvironmentVariableW(L"PULSE_TEST_FOLDER_INDEX", nullptr, 0) > 0;
-    s.folderSizes.SetIndexEnabled((!s.isolatedTest && !s.shot.active) || probe_index);
+    s.folderSizes.SetIndexEnabled(((!s.isolatedTest && !s.shot.active) || probe_index) && s.appPrefs.search_enabled);
     s.folderSizes.Sync(std::move(requests), std::move(roots));
     // Same visibility rule as the listing: a folder holding only entries the
     // current settings hide looks empty, like the listing inside it.
@@ -164,10 +171,15 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
         // An empty folder says so instead of a size; it has nothing to calculate.
         if (row.pane->empty_folders.contains(row.index)) {
             row.pane->folder_size_muted.insert(row.index);
-            row.pane->folder_size_labels.emplace(row.index, l10n::Pick(L"空", L"Empty"));
+            row.pane->folder_size_labels.emplace(row.index, l10n::Get(l10n::StringId::GroupSizeEmpty).c_str());
             continue;
         }
-        const auto value = s.folderSizes.Get(row.path);
+        // 文件夹大小 off: a folder shows a size it was asked for (a click,
+        // this session); index totals and the disk cache wait for that too.
+        auto value = s.folderSizes.Get(row.path);
+        if (!auto_sizes && value.has_value &&
+            (value.source != app::FolderSizeSource::Scan || value.state == app::FolderSizeState::Cached))
+            value = {};
         const auto work = s.folderSizes.GetWork(row.path);
         // Without a value: an answer that is on its way (index reply, queue,
         // first scan delay) is a quiet placeholder, an active scan says so,
@@ -176,7 +188,7 @@ void FillFolderSizes(AppState& s, ui::WindowViewModel& vm) {
             (work.activity == app::FolderSizeActivity::Queued && work.manual);
         const bool pending = !value.has_value && !scanning &&
             (work.activity == app::FolderSizeActivity::Queued ||
-             (work.activity == app::FolderSizeActivity::Idle && !fs::IsUncPath(row.path)));
+             (work.activity == app::FolderSizeActivity::Idle && auto_sizes && !fs::IsUncPath(row.path)));
         std::wstring text;
         if (value.has_value) text = format::ByteSize(value.bytes);
         else if (scanning) text = l10n::Get(l10n::StringId::Calculating);
@@ -212,51 +224,51 @@ std::wstring DescribeFolderSize(AppState& s, const std::wstring& path) {
     const auto value = s.folderSizes.Get(path);
     const auto work = s.folderSizes.GetWork(path);
     std::wstring text;
-    if (!value.has_value) text = l10n::Pick(L"尚未统计文件夹大小", L"Folder size not calculated");
-    else if (value.partial) text = l10n::Pick(L"部分统计 · 显示已知下限", L"Partial calculation · known lower bound");
+    if (!value.has_value) text = l10n::Get(l10n::StringId::FolderSizeNotCalculated).c_str();
+    else if (value.partial) text = l10n::Get(l10n::StringId::PartialCalculationKnownLowerBound).c_str();
     else if (value.source == app::FolderSizeSource::Index)
-        text = l10n::Pick(L"索引估算 · 尚未完整核验", L"Index estimate · not fully verified");
+        text = l10n::Get(l10n::StringId::IndexEstimateNotFullyVerified).c_str();
     else if (value.state == app::FolderSizeState::Cached || value.source == app::FolderSizeSource::Unknown)
-        text = l10n::Pick(L"上次统计 · 待核验", L"Previous calculation · awaiting verification");
-    else text = value.verified ? l10n::Pick(L"完整统计 · 已监控目录变化", L"Complete calculation · changes monitored") :
-        l10n::Pick(L"完整统计 · 本次扫描快照", L"Complete calculation · scan snapshot");
+        text = l10n::Get(l10n::StringId::PreviousCalculationAwaitingVerification).c_str();
+    else text = value.verified ? l10n::Get(l10n::StringId::CompleteCalculationChangesMonitored).c_str() :
+        l10n::Get(l10n::StringId::CompleteCalculationScanSnapshot).c_str();
     if (value.has_value) {
-        text += std::wstring(L"\n") + (value.partial ? l10n::Pick(L"至少 ", L"At least ") : L"") +
-            format::ByteSize(value.bytes) + l10n::Pick(L" · 不跟随目录链接", L" · directory links excluded");
+        text += std::wstring(L"\n") + (value.partial ? l10n::Get(l10n::StringId::AtLeast).c_str() : L"") +
+            format::ByteSize(value.bytes) + l10n::Get(l10n::StringId::DirectoryLinksExcluded).c_str();
         if (value.verified_at) {
             const auto now = app::folder_size::NowUtcMs();
             const auto seconds = now >= value.verified_at ? (now - value.verified_at) / 1000 : 0;
-            text += std::wstring(L"\n") + l10n::Pick(L"结果时间：", L"Calculated: ");
-            if (seconds < 60) text += l10n::Pick(L"刚刚", L"just now");
-            else if (seconds < 3600) text += std::to_wstring(seconds / 60) + l10n::Pick(L" 分钟前", L" minutes ago");
-            else if (seconds < 86400) text += std::to_wstring(seconds / 3600) + l10n::Pick(L" 小时前", L" hours ago");
-            else text += std::to_wstring(seconds / 86400) + l10n::Pick(L" 天前", L" days ago");
+            text += std::wstring(L"\n") + l10n::Get(l10n::StringId::Calculated).c_str();
+            if (seconds < 60) text += l10n::Get(l10n::StringId::JustNow).c_str();
+            else if (seconds < 3600) text += std::to_wstring(seconds / 60) + l10n::Get(l10n::StringId::MinutesAgo).c_str();
+            else if (seconds < 86400) text += std::to_wstring(seconds / 3600) + l10n::Get(l10n::StringId::HoursAgo).c_str();
+            else text += std::to_wstring(seconds / 86400) + l10n::Get(l10n::StringId::DaysAgo).c_str();
         }
     }
     // Explain omissions in the published result, not an unrelated in-flight subtotal.
     const auto issues = value.has_value ? value.issues : work.issues;
     const auto skipped = value.has_value ? value.skipped : work.skipped;
     if (issues || skipped) {
-        text += std::wstring(L"\n") + l10n::Pick(L"未计入目录：", L"Excluded directories: ") + std::to_wstring(skipped);
-        if (issues & app::SizeAccessDenied) text += l10n::Pick(L" · 权限不足", L" · access denied");
-        if (issues & app::SizeOffline) text += l10n::Pick(L" · 离线", L" · offline");
-        if (issues & app::SizeLink) text += l10n::Pick(L" · 目录链接", L" · directory links");
-        if (issues & app::SizeIoError) text += l10n::Pick(L" · 读取失败", L" · I/O error");
+        text += std::wstring(L"\n") + l10n::Get(l10n::StringId::ExcludedDirectories).c_str() + std::to_wstring(skipped);
+        if (issues & app::SizeAccessDenied) text += l10n::Get(l10n::StringId::AccessDenied).c_str();
+        if (issues & app::SizeOffline) text += l10n::Get(l10n::StringId::Offline_2).c_str();
+        if (issues & app::SizeLink) text += l10n::Get(l10n::StringId::DirectoryLinks).c_str();
+        if (issues & app::SizeIoError) text += l10n::Get(l10n::StringId::IOError).c_str();
     }
     if (work.Running()) {
         text += std::wstring(L"\n") + (work.activity == app::FolderSizeActivity::Queued ?
-            l10n::Pick(L"等待统计：", L"Queued: ") : l10n::Pick(L"正在统计：", L"Calculating: ")) + std::to_wstring(work.entries) +
-            l10n::Pick(L" 项 · ", L" entries · ") + format::ByteSize(work.bytes);
-        text += std::wstring(L"\n") + (work.manual ? l10n::Pick(L"点击取消，保留上次结果", L"Click to cancel and keep the previous result")
-                                          : l10n::Pick(L"点击优先完整统计", L"Click to prioritize a full calculation"));
+            l10n::Get(l10n::StringId::Queued).c_str() : l10n::Get(l10n::StringId::Calculating_2).c_str()) + std::to_wstring(work.entries) +
+            l10n::Get(l10n::StringId::Entries).c_str() + format::ByteSize(work.bytes);
+        text += std::wstring(L"\n") + (work.manual ? l10n::Get(l10n::StringId::ClickToCancelAndKeepThePreviousResult).c_str()
+                                          : l10n::Get(l10n::StringId::ClickToPrioritizeAFullCalculation).c_str());
     } else {
         if (work.activity == app::FolderSizeActivity::Deferred)
-            text += std::wstring(L"\n") + l10n::Pick(L"已暂停自动统计，避免影响浏览", L"Automatic calculation paused to keep browsing responsive");
+            text += std::wstring(L"\n") + l10n::Get(l10n::StringId::AutomaticCalculationPausedToKeepBrowsingResponsive).c_str();
         if (work.activity == app::FolderSizeActivity::Failed)
-            text += std::wstring(L"\n") + l10n::Pick(L"部分目录不可统计，已停止自动重试", L"Incomplete coverage; automatic retry is backed off");
+            text += std::wstring(L"\n") + l10n::Get(l10n::StringId::IncompleteCoverageAutomaticRetryIsBackedOff).c_str();
         if (work.activity == app::FolderSizeActivity::Cancelled)
-            text += std::wstring(L"\n") + l10n::Pick(L"统计已取消，保留原结果", L"Calculation cancelled; previous result retained");
-        text += std::wstring(L"\n") + l10n::Pick(L"点击重新统计", L"Click to recalculate");
+            text += std::wstring(L"\n") + l10n::Get(l10n::StringId::CalculationCancelledPreviousResultRetained).c_str();
+        text += std::wstring(L"\n") + l10n::Get(l10n::StringId::ClickToRecalculate).c_str();
     }
     return text;
 }
@@ -291,6 +303,7 @@ bool ResortForFolderSizes(AppState& s) {
         auto sorted = std::make_shared<std::vector<fs::DirEntry>>(*tab->snapshot);
         {
             const app::ScopedEntryGrouping grouping(tab->EffectiveGroup(), tab->current_path);
+            const app::ScopedFolderSortMode folder_mode(tab->EffectiveFolderSort());
             app::SortEntriesBySize(*sorted, tab->sort_direction, sizes);
         }
         if (std::equal(sorted->begin(), sorted->end(), tab->snapshot->begin(), tab->snapshot->end(),

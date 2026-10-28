@@ -5,7 +5,8 @@
 
 namespace pulse::app {
 
-enum class SavedSearchMode { Name, Content, Duplicates };
+// Tags: a saved combined tag view; query holds its pulse:tags: path.
+enum class SavedSearchMode { Name, Content, Duplicates, Tags };
 
 struct SavedSearch {
     std::wstring name;

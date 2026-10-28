@@ -19,4 +19,9 @@ void ToggleWindowOverview(AppState& s);
 // Every message while the overview is open (and Ctrl+Shift+O before). True
 // when handled; `result` is then the window procedure's reply.
 bool WindowOverviewMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LRESULT& result);
+// Ctrl+Shift+O with the current keyboard state.
+bool IsWindowOverviewKey(WPARAM vk);
+// 合并所有窗口 (Ctrl+Shift+J): every other window's tabs join this window, as
+// the overview's button does (one toast undoes it). False with one window.
+bool MergeAllWindows(AppState& s);
 }  // namespace pulse

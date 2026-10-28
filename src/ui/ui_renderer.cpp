@@ -1,6 +1,8 @@
 // ui_renderer.cpp — Chrome orchestration (title, toolbar, status, render).
 #include "legacy_icons.h"
 #include "ui_renderer.h"
+#include "device_crumbs.h"
+#include "../fs/device_path.h"
 #include "snack_style.h"
 #include "command_icons.h"
 #include "toolbar_layout.h"
@@ -28,6 +30,14 @@ MainRenderer::MainRenderer()
 
 MainRenderer::MainRenderer(RenderCaches& caches) : caches_(caches) {}
 
+void MainRendererDeleter::operator()(MainRenderer* renderer) const noexcept {
+    delete renderer;
+}
+
+MainRendererPtr MakeMainRenderer(RenderCaches& caches) {
+    return MainRendererPtr(new MainRenderer(caches));
+}
+
 void MainRenderer::SetCompositor(Compositor* comp) {
     paneHeaderStroke_.reset();
     link_arrow_geometry_.reset();
@@ -41,9 +51,13 @@ void MainRenderer::SetCompositor(Compositor* comp) {
     exclude_empty_svg_.reset();
     fluent_svgs_.clear();
     fluent_svg_failed_.clear();
+    fluent_bitmaps_.clear();
+    fluent_raster_dc_.reset();
     empty_state_svg_dc_.reset();
     app_icon_bitmaps_.clear();
     app_icon_dc_ = nullptr;
+    ai_panel_.ReleaseDeviceResources();
+    ReleaseAiIcons();
     compositor_ = comp;
     material_.SetCompositor(comp);
     painter_.SetCompositor(comp);
@@ -107,7 +121,7 @@ void MainRenderer::SetScale(float scale) {
     }
     scale_ = scale;
     title_bar_height_ = (embedded_ ? embedded_top_dip_ : kTitleBarHeight) * scale;
-    toolbar_height_ = (vertical_tabs_ || embedded_ ? 44.0f : 88.0f) * scale;
+    toolbar_height_ = ToolbarHeightDip() * scale;
     status_height_ = (embedded_ ? embedded_bottom_dip_ : 28.0f) * scale;
     sidebar_width_ = sidebar_width_dip_ * scale;
     pane_header_height_ = 40.0f * scale;
@@ -122,13 +136,14 @@ void MainRenderer::SetScale(float scale) {
 void MainRenderer::SetEmbedded(float top_dip, float bottom_dip) {
     embedded_ = true;
     vertical_tabs_ = false;
+    favorites_bar_ = false;
     embedded_top_dip_ = top_dip;
     embedded_bottom_dip_ = bottom_dip;
     SetDetailsPanelVisible(false);
     SetScale(scale_);
 }
 
-float MainRenderer::EffectiveSidebarWidth(float window_width) const {
+float MainRenderer::SidebarOwnWidth(float window_width) const {
     const float window_dip = window_width / scale_;
     const float rail = kSidebarRailWidthDip * scale_;
     if (window_dip < kSidebarRailWindowDip || collapse_value_ >= 1.0f) return rail;
@@ -136,7 +151,44 @@ float MainRenderer::EffectiveSidebarWidth(float window_width) const {
     return collapse_value_ <= 0.0f ? full : full + (rail - full) * collapse_value_;
 }
 
+float MainRenderer::EffectiveSidebarWidth(float window_width) const {
+    return SidebarOwnWidth(window_width) + AiDockWidth(window_width);
+}
+
+// The title bar (brand, toggle, tabs) keeps the user's sidebar: the docked
+// assistant folding the sidebar to its rail does not move it.
+float MainRenderer::TitleSidebarWidth(float window_width) const {
+    if (ai_rail_ && !user_sidebar_collapsed_ && window_width / scale_ >= kSidebarRailWindowDip)
+        return SidebarFullWidth(window_width);
+    return SidebarOwnWidth(window_width);
+}
+
+float MainRenderer::AiDockWidth(float window_width) const {
+    return ai_panel_.DockWidth(window_width, kSidebarRailWidthDip * scale_, scale_);
+}
+
+D2D1_RECT_F MainRenderer::AiColumnRect(float w, float h) const {
+    const float left = SidebarOwnWidth(w);
+    return D2D1::RectF(left, title_bar_height_, left + AiDockWidth(w), h - status_height_);
+}
+
+D2D1_RECT_F MainRenderer::AiFloatingArea(float w, float h) const {
+    return D2D1::RectF(0.0f, title_bar_height_, w, h - status_height_);
+}
+
+void MainRenderer::SetAiPanel(bool open, AiPanelMode mode, bool animate) {
+    ai_panel_.SetState(open, mode, animate);
+    ai_rail_ = open && mode == AiPanelMode::Docked;
+    ApplySidebarCollapse(animate);
+}
+
 void MainRenderer::SetSidebarCollapsed(bool on, bool animate) {
+    user_sidebar_collapsed_ = on;
+    ApplySidebarCollapse(animate);
+}
+
+void MainRenderer::ApplySidebarCollapse(bool animate) {
+    const bool on = user_sidebar_collapsed_ || ai_rail_;
     if (on == sidebar_collapsed_) return;
     sidebar_collapsed_ = on;
     if (on) sidebar_peek_ = false;
@@ -162,11 +214,13 @@ float MainRenderer::SidebarFullWidth(float window_width) const {
 // the panel back temporarily and widening it restores what the user dragged.
 float MainRenderer::DetailsPanelWidth(float window_w) const {
     const float window_dip = window_w / scale_;
-    if (!details_visible_ || window_dip < kDetailsVisibleWindowDip) return 0.0f;
+    if (window_dip < kDetailsVisibleWindowDip) return 0.0f;
+    const float open = details_anim_ ? details_value_ : (details_visible_ ? 1.0f : 0.0f);
+    if (open <= 0.0f) return 0.0f;
     const float max_dip = MaxDetailsWidthDip(window_dip, sidebar_width_dip_,
                                              (window_dip < kSidebarRailWindowDip || sidebar_collapsed_),
                                              2.0f * margin_ / scale_);
-    return (std::min)(details_width_, max_dip) * scale_ + margin_;
+    return std::round(((std::min)(details_width_, max_dip) * scale_ + margin_) * open);
 }
 
 float MainRenderer::SidebarMaxWidthDip(float window_w) const {
@@ -221,7 +275,7 @@ float ToolbarCommandWidth(const fluent::Painter& painter, IDWriteTextFormat* for
 } // namespace
 
 float MainRenderer::ToolbarGroupWidth(float w) const {
-    if (toolbar_group_ < 0) return 0.0f;
+    if (toolbar_group_ < 0 || !toolbar_show_group_) return 0.0f;
     // Narrow windows: icon only, like Sort and Filter.
     if (w - EffectiveSidebarWidth(w) < 700.0f * scale_) return 32.0f * scale_;
     if (toolbar_group_ > 0) {
@@ -240,19 +294,21 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
     const float left = EffectiveSidebarWidth(w);
     const float group_width = ToolbarGroupWidth(w);
     IDWriteTextFormat* format = compositor_ ? compositor_->TextFormat() : nullptr;
-    const float sort_width = ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarSort,
-                                                 L"\xE8CB", true, scale_, 88.0f);
-    const float filter_width = ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarFilter,
-                                                   kIconFilter, false, scale_, 88.0f);
+    // Hidden ones pass -1 (MakeToolbarLayout); an opening filter shows anyway.
+    const float sort_width = !toolbar_show_sort_ ? -1.0f
+        : ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarSort, L"\xE8CB", true, scale_, 88.0f);
+    const float filter_width = !toolbar_show_filter_ ? -1.0f
+        : ToolbarCommandWidth(painter_, format, l10n::StringId::ToolbarFilter, kIconFilter, false, scale_, 88.0f);
     const float selection_span = selection_count_ > 0 && !embedded_ && !pin_drop_mode_
         ? SelectionChipSpan(scale_, SelectionChipLabelWidth(w, selection_count_), selection_actions_) : 0.0f;
     ToolbarPinOptions pins;
     pins.app_from = pin_app_from_;
     pins.drop_mode = pin_drop_mode_ && !embedded_;
+    pins.separators = pins.drop_mode ? 0 : pin_separators_;
     pins.label_width = pins.drop_mode ? ToolbarPinLabelWidth() : 0.0f;
     if (!vertical_tabs_)
         return MakeToolbarLayout(w, scale_, title_bar_height_, margin_, create_width, left, filter_expand,
-                                 search_min_dip_, group_width, sort_width, filter_width, pin_count_,
+                                 search_hidden_ ? -1.0f : search_min_dip_, group_width, sort_width, filter_width, pin_count_,
                                  selection_span, pins);
     // Command row directly under the title bar; address row centered in it,
     // stopping short of the settings button.
@@ -262,7 +318,7 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
     const TitleChrome chrome = MakeTitleChrome(w, scale_, title_bar_height_);
     const float row_top = (title_bar_height_ - 36.0f * scale_) * 0.5f - 4.0f * scale_;
     const ToolbarLayout row = MakeToolbarLayout(chrome.settings_left - 4.0f * scale_, scale_, row_top,
-                                                margin_, create_width, left, 0.0f, search_min_dip_);
+                                                margin_, create_width, left, 0.0f, search_hidden_ ? -1.0f : search_min_dip_);
     out.navigation = row.navigation;
     out.address = row.address;
     out.search = row.search;
@@ -301,11 +357,11 @@ D2D1_RECT_F MainRenderer::SidebarToggleRect(float w) const {
     if (w / scale_ < kSidebarRailWindowDip) return {};
     const float size = 32.0f * scale_;
     const float top = (title_bar_height_ - size) * 0.5f;
-    if (sidebar_collapsed_) {
+    if (user_sidebar_collapsed_) {
         const float left = (kSidebarRailWidthDip * scale_ - size) * 0.5f;
         return D2D1::RectF(left, top, left + size, top + size);
     }
-    const float right = EffectiveSidebarWidth(w) - 8.0f * scale_;
+    const float right = TitleSidebarWidth(w) - 8.0f * scale_;
     return D2D1::RectF(right - size, top, right, top + size);
 }
 
@@ -319,9 +375,9 @@ MainRenderer::WindowIdentityGeometry MainRenderer::WindowIdentityLayout(const Wi
     if (!vm.window_identity || vm.window_identity_name.empty() || !compositor_) return g;
     const D2D1_RECT_F toggle = SidebarToggleRect(w);
     const bool has_toggle = toggle.right > toggle.left;
-    if (!(has_toggle && sidebar_collapsed_)) {
+    if (!(has_toggle && user_sidebar_collapsed_)) {
         const float left = (12.0f + 24.0f + 4.0f) * scale_;
-        float limit = EffectiveSidebarWidth(w) - 8.0f * scale_;
+        float limit = TitleSidebarWidth(w) - 8.0f * scale_;
         if (has_toggle) limit = (std::min)(limit, toggle.left - 4.0f * scale_);
         const float text = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), compositor_->HeaderFormat(),
                                              vm.window_identity_name);
@@ -337,7 +393,7 @@ MainRenderer::WindowIdentityGeometry MainRenderer::WindowIdentityLayout(const Wi
     }
     g.compact = true;
     g.dot_radius = 4.0f * scale_;
-    if (has_toggle && sidebar_collapsed_) {
+    if (has_toggle && user_sidebar_collapsed_) {
         g.dot = D2D1::Point2F(toggle.right - 3.0f * scale_, toggle.bottom - 3.0f * scale_);
         const float reach = g.dot_radius + 3.0f * scale_;
         g.hit = D2D1::RectF(g.dot.x - reach, g.dot.y - reach, g.dot.x + reach, g.dot.y + reach);
@@ -360,7 +416,7 @@ D2D1_RECT_F MainRenderer::AddressBarRect(float w) const {
     return ToolbarLayoutAt(w,NewButtonWidthPx(w-EffectiveSidebarWidth(w)<600*scale_)).address;
 }
 D2D1_RECT_F MainRenderer::SearchBarRect(float w) const {
-    if (w-EffectiveSidebarWidth(w)<480*scale_) {
+    if (!search_hidden_ && w-EffectiveSidebarWidth(w)<480*scale_) {
         const auto lay = ToolbarLayoutAt(w, NewButtonWidthPx(true));
         return D2D1::RectF(EffectiveSidebarWidth(w)+margin_, lay.address.top, lay.search.right, lay.address.bottom);
     }
@@ -401,13 +457,57 @@ const wchar_t* MainRenderer::NewButtonGlyph() const {
     return kNewFolderGlyph;
 }
 
+namespace {
+DeviceCrumbResolver g_device_crumbs = nullptr;
+}  // namespace
+
+void SetDeviceCrumbResolver(DeviceCrumbResolver resolver) { g_device_crumbs = resolver; }
+
+// 此电脑 › Xiaomi 14 › [内部存储] › DCIM › Camera. A one-storage phone skips the
+// storage level: its name segment opens the storage, as This PC does.
+static void AppendDeviceCrumbs(const std::wstring& path, std::vector<BreadcrumbSegment>& out) {
+    BreadcrumbSegment pc;
+    pc.text = pulse::l10n::Get(pulse::l10n::StringId::ThisPc);
+    pc.path = L"";
+    out.push_back(pc);
+    const auto where = fs::ParseDevicePath(path);
+    if (!where) return;
+    DeviceCrumbInfo info;
+    if (g_device_crumbs) info = g_device_crumbs(where->device);
+    fs::DevicePath walk{where->device, L"", {}};
+    BreadcrumbSegment device;
+    device.text = info.known && !info.name.empty()
+        ? info.name : std::wstring(pulse::l10n::Get(pulse::l10n::StringId::DeviceKindPhone));
+    if (info.skips_storage && !where->storage.empty()) walk.storage = where->storage;
+    device.path = fs::FormatDevicePath(walk);
+    out.push_back(device);
+    if (where->storage.empty()) return;
+    walk.storage = where->storage;
+    if (!info.skips_storage) {
+        BreadcrumbSegment storage;
+        storage.text = where->storage;
+        storage.path = fs::FormatDevicePath(walk);
+        out.push_back(storage);
+    }
+    for (const auto& part : where->parts) {
+        walk.parts.push_back(part);
+        BreadcrumbSegment seg;
+        seg.text = part;
+        seg.path = fs::FormatDevicePath(walk);
+        out.push_back(seg);
+    }
+}
+
 std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
     std::vector<BreadcrumbSegment> out;
     std::wstring p = path;
     if (p.starts_with(L"\\\\?\\UNC\\")) p = L"\\\\" + p.substr(8);
     else if (p.starts_with(L"\\\\?\\")) p = p.substr(4);
     while (p.size() > 1 && p.back() == L'\\') p.pop_back();
-    if (p.empty()) {
+    // The view model carries This PC as its display name (DisplayPath), not
+    // "": kept as a folder name, clicking the crumb a second time opened
+    // "C:\Program Files\Pulse\此电脑" relative to the working directory.
+    if (p.empty() || p == pulse::l10n::Get(pulse::l10n::StringId::ThisPc)) {
         // Empty path = This PC: a single segment that navigates to "".
         BreadcrumbSegment seg;
         seg.text = pulse::l10n::Get(pulse::l10n::StringId::ThisPc);
@@ -417,6 +517,10 @@ std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
     }
     std::wstring pulse_kind, pulse_rest;
     if (app::ParsePulsePath(p, &pulse_kind, &pulse_rest)) {
+        if (pulse_kind == L"device") {
+            AppendDeviceCrumbs(p, out);
+            return out;
+        }
         if (pulse_kind == L"recycle") {
             BreadcrumbSegment pc;
             pc.text = pulse::l10n::Get(pulse::l10n::StringId::ThisPc);
@@ -441,6 +545,8 @@ std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
         else if (pulse_kind == L"tag")
             seg.text = pulse_rest.empty()
                 ? pulse::l10n::Get(pulse::l10n::StringId::Tag) : pulse_rest;
+        else if (pulse_kind == L"tags")
+            seg.text = pulse::l10n::Get(pulse::l10n::StringId::Tag);
         else
             seg.text = pulse_kind;
         out.push_back(seg);
@@ -508,21 +614,199 @@ std::vector<BreadcrumbSegment> SplitBreadcrumb(const std::wstring& path) {
     return out;
 }
 
+namespace {
+constexpr float kSuggestRowDip = 36.0f;
+constexpr float kSuggestPadDip = 5.0f;
+constexpr float kSuggestHeadDip = 24.0f;
+}
+
+D2D1_RECT_F MainRenderer::AddressSuggestionsRect(float w, size_t count) const {
+    const D2D1_RECT_F addr = AddressBarRect(w);
+    const float top = addr.bottom + 4.0f * scale_;
+    const float h = (2.0f * kSuggestPadDip + kSuggestHeadDip + kSuggestRowDip * static_cast<float>(count)) * scale_;
+    return D2D1::RectF(addr.left, top, addr.right, top + h);
+}
+
+int MainRenderer::AddressSuggestionAt(float w, size_t count, float x, float y) const {
+    if (count == 0) return -1;
+    const D2D1_RECT_F rc = AddressSuggestionsRect(w, count);
+    if (x < rc.left || x >= rc.right || y < rc.top || y >= rc.bottom) return -1;
+    const float rows_top = rc.top + (kSuggestPadDip + kSuggestHeadDip) * scale_;
+    if (y < rows_top) return -2;  // the header
+    const int row = static_cast<int>((y - rows_top) / (kSuggestRowDip * scale_));
+    return row >= 0 && row < static_cast<int>(count) ? row : -2;  // -2: the card's padding
+}
+
+void MainRenderer::DrawAddressSuggestions(const WindowViewModel& vm, const D2D1_RECT_F& rect,
+                                          const Theme& theme) {
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    const size_t count = vm.address_suggestions.size();
+    const D2D1_RECT_F card = AddressSuggestionsRect(rect.right - rect.left, count);
+    const SnackPalette pal = MakeSnackPalette(theme, IsHighContrast());
+    DrawSnackPlate(dc, card, 8.0f * scale_, pal, scale_, IsHighContrast());
+    const D2D1_COLOR_F saved_bg = text_background_;
+    text_background_ = pal.plate;
+    IDWriteTextFormat* fmt = compositor_->TextFormat();
+    IDWriteTextFormat* small_fmt = compositor_->SmallFormat();
+    const auto measure_small = [&](const std::wstring& t) {
+        return MeasureLayoutText(compositor_, compositor_->DwriteFactory(), small_fmt, t);
+    };
+    const float row_h = kSuggestRowDip * scale_;
+    const float rows_top = card.top + (kSuggestPadDip + kSuggestHeadDip) * scale_;
+    if (!vm.address_suggestion_header.empty()) {
+        // Header: 别名, or why a real subfolder leads (pulse_alias.html .sugh).
+        MakeBrush(dc, WithAlpha(pal.text_secondary, 0.85f), brText_);
+        DrawTextRect(dc, small_fmt, brText_.get(), vm.address_suggestion_header,
+                     card.left + 15.0f * scale_, card.top + kSuggestPadDip * scale_,
+                     card.right - card.left - 30.0f * scale_, kSuggestHeadDip * scale_);
+    }
+    for (size_t i = 0; i < count; ++i) {
+        const AddressSuggestionView& item = vm.address_suggestions[i];
+        const float y = rows_top + row_h * static_cast<float>(i);
+        const D2D1_RECT_F row = D2D1::RectF(card.left + 5.0f * scale_, y, card.right - 5.0f * scale_, y + row_h);
+        if (static_cast<int>(i) == vm.address_suggestion_selected) {
+            MakeBrush(dc, WithAlpha(theme.accent, 0.16f), brAccent_);
+            FillRoundedRect(dc, brAccent_.get(), row.left, row.top, row.right - row.left, row_h, 6.0f * scale_);
+        }
+        if (item.real || !app::AliasStore::Instance().ShowMark()) {
+            DrawIconText(row.left + 8.0f * scale_, y, 18.0f * scale_, row_h, kIconFolder, L"[]", theme.icon_folder, 0.95f);
+        } else {
+            // The alias mark leads: what matched is a name the user gave.
+            const float m = kAliasMarkDip * scale_;
+            const float mx = std::round(row.left + 10.0f * scale_);
+            const float my = std::round(y + (row_h - m) * 0.5f);
+            painter_.DrawAliasMark(D2D1::RectF(mx, my, mx + m, my + m));
+        }
+        float x = row.left + 34.0f * scale_;
+        float right = row.right - 10.0f * scale_;
+        if (!item.hint.empty()) {
+            // Right-aligned hint: 子文件夹 / 按拼音匹配 · Enter 前往.
+            const float hint_w = measure_small(item.hint) + 1.0f;
+            if (hint_w < (right - x) * 0.45f) {
+                MakeBrush(dc, WithAlpha(pal.text_secondary, 0.75f), brText_);
+                DrawTextRect(dc, small_fmt, brText_.get(), item.hint, right - hint_w, y, hint_w, row_h);
+                right -= hint_w + 12.0f * scale_;
+            }
+        }
+        const float label_w = (std::min)(MeasureLayoutText(compositor_, compositor_->DwriteFactory(), fmt, item.label) + 1.0f,
+                                         (std::max)(0.0f, (right - x) * 0.6f));
+        MakeBrush(dc, pal.text, brText_);
+        DrawTextRect(dc, fmt, brText_.get(), item.label, x, y, label_w, row_h);
+        x += label_w + 10.0f * scale_;
+        const float path_w = (std::max)(0.0f, right - x);
+        if (path_w > 24.0f * scale_) {
+            MakeBrush(dc, pal.text_secondary, brText_);
+            DrawTextRect(dc, small_fmt, brText_.get(), FitEndEllipsis(item.path, path_w, measure_small),
+                         x, y, path_w, row_h);
+        }
+    }
+    text_background_ = saved_bg;
+}
+
+namespace {
+constexpr float kTagSuggestRowDip = 30.0f;
+}
+
+D2D1_RECT_F MainRenderer::FilterTagSuggestionsRect(const D2D1_RECT_F& anchor, float w, size_t count) const {
+    const float width = (std::max)(anchor.right - anchor.left, 240.0f * scale_);
+    const float margin = 8.0f * scale_;
+    float left = anchor.left;
+    if (left + width > w - margin) left = (std::max)(margin, w - margin - width);
+    const float top = anchor.bottom + 4.0f * scale_;
+    const float h = (2.0f * kSuggestPadDip + kTagSuggestRowDip * static_cast<float>(count)) * scale_;
+    return D2D1::RectF(left, top, left + width, top + h);
+}
+
+int MainRenderer::FilterTagSuggestionAt(const D2D1_RECT_F& anchor, float w, size_t count, float x, float y) const {
+    if (count == 0) return -1;
+    const D2D1_RECT_F rc = FilterTagSuggestionsRect(anchor, w, count);
+    if (x < rc.left || x >= rc.right || y < rc.top || y >= rc.bottom) return -1;
+    const int row = static_cast<int>((y - rc.top - kSuggestPadDip * scale_) / (kTagSuggestRowDip * scale_));
+    return y >= rc.top + kSuggestPadDip * scale_ && row >= 0 && row < static_cast<int>(count) ? row : -2;
+}
+
+void MainRenderer::DrawFilterTagSuggestions(const WindowViewModel& vm, const D2D1_RECT_F& rect,
+                                            const Theme& theme) {
+    ID2D1DeviceContext* dc = compositor_->Dc();
+    const size_t count = vm.filter_tag_suggestions.size();
+    const D2D1_RECT_F card = FilterTagSuggestionsRect(vm.filter_tag_anchor, rect.right - rect.left, count);
+    const SnackPalette pal = MakeSnackPalette(theme, IsHighContrast());
+    DrawSnackPlate(dc, card, 8.0f * scale_, pal, scale_, IsHighContrast());
+    const D2D1_COLOR_F saved_bg = text_background_;
+    text_background_ = pal.plate;
+    IDWriteTextFormat* fmt = compositor_->TextFormat();
+    IDWriteTextFormat* small_fmt = compositor_->SmallFormat();
+    const float row_h = kTagSuggestRowDip * scale_;
+    for (size_t i = 0; i < count; ++i) {
+        const FilterTagSuggestionView& item = vm.filter_tag_suggestions[i];
+        const float y = card.top + kSuggestPadDip * scale_ + row_h * static_cast<float>(i);
+        const D2D1_RECT_F row = D2D1::RectF(card.left + 5.0f * scale_, y, card.right - 5.0f * scale_, y + row_h);
+        if (static_cast<int>(i) == vm.filter_tag_selected) {
+            MakeBrush(dc, WithAlpha(theme.accent, 0.16f), brAccent_);
+            FillRoundedRect(dc, brAccent_.get(), row.left, row.top, row.right - row.left, row_h, 6.0f * scale_);
+        }
+        const float dot = 5.0f * scale_;
+        const float cx = row.left + 14.0f * scale_;
+        const float cy = y + row_h * 0.5f;
+        MakeBrush(dc, item.color, brAccent_);
+        FillRoundedRect(dc, brAccent_.get(), cx - dot, cy - dot, dot * 2.0f, dot * 2.0f, dot);
+        const std::wstring number = std::to_wstring(item.count);
+        const float number_w = MeasureLayoutText(compositor_, compositor_->DwriteFactory(), small_fmt, number) + 1.0f;
+        const float right = row.right - 10.0f * scale_;
+        MakeBrush(dc, pal.text_secondary, brText_);
+        DrawTextRect(dc, small_fmt, brText_.get(), number, right - number_w, y, number_w, row_h);
+        const float x = row.left + 30.0f * scale_;
+        MakeBrush(dc, pal.text, brText_);
+        DrawTextRect(dc, fmt, brText_.get(), item.name, x, y, (std::max)(0.0f, right - number_w - 10.0f * scale_ - x), row_h);
+    }
+    text_background_ = saved_bg;
+}
+
 void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
-                                    std::vector<BreadcrumbPlaced>& out) const {
+                                    std::vector<BreadcrumbPlaced>& out, BreadcrumbStrip* strip) const {
     out.clear();
+    if (strip) *strip = BreadcrumbStrip{};
     auto segments = SplitBreadcrumb(vm.is_query_search && vm.has_search_origin ? vm.search_origin : vm.path);
+    // 别名: a folder on the way shows its alias; the click still goes to the real path.
+    if (!app::AliasStore::Instance().Empty()) {
+        for (auto& seg : segments) {
+            if (seg.path.empty() || seg.path.starts_with(L"pulse:")) continue;
+            if (std::wstring alias = app::AliasStore::Instance().Shown(seg.path); !alias.empty()) {
+                seg.text = std::move(alias);
+                seg.alias = app::AliasStore::Instance().ShowMark();   // the mark is optional
+            }
+        }
+    }
     if (vm.is_query_search && vm.has_search_origin) {
         BreadcrumbSegment search;
         search.text = vm.search_crumb.empty() ? pulse::l10n::Get(pulse::l10n::StringId::Search) : vm.search_crumb;
         search.path = vm.path;
         segments.push_back(std::move(search));
     }
+    // Details tree: a selected child row's folder continues the path in
+    // faint segments; a click still navigates there.
+    std::vector<BreadcrumbSegment> ghosts;
+    const std::wstring& dir = vm.tree_selection_dir;
+    const std::wstring& rel = vm.tree_selection_rel;
+    if (!vm.is_query_search && !segments.empty() && !rel.empty() && dir.size() > rel.size() &&
+        dir.ends_with(rel)) {
+        const size_t dir_base = dir.size() - rel.size();
+        size_t at = 0;
+        while (at < rel.size()) {
+            size_t next = rel.find(L'\\', at);
+            if (next == std::wstring::npos) next = rel.size();
+            BreadcrumbSegment seg;
+            seg.text = rel.substr(at, next - at);
+            seg.path = dir.substr(0, dir_base + next);
+            if (!seg.text.empty()) ghosts.push_back(std::move(seg));
+            at = next + 1;
+        }
+    }
     if (segments.empty()) return;
     D2D1_RECT_F addr = AddressBarRect(w);
     const float segPad = 8.0f * scale_;
     const float chevronW = 14.0f * scale_;
-    const float hint = 0.0f;
+    const float hint = FavoritesButtonShown() ? 28.0f * scale_ : 0.0f;   // the ★⌄ button
     const float avail = std::max(0.0f, addr.right - addr.left - 2 * margin_ - hint);
 
     IDWriteFactory2* dwrite = compositor_ ? compositor_->DwriteFactory() : nullptr;
@@ -532,26 +816,111 @@ void MainRenderer::BreadcrumbLayout(const PaneViewModel& vm, float w,
     std::vector<float> widths(segments.size(), 0.0f);
     float total = 0.0f;
     for (size_t i = 0; i < segments.size(); ++i) {
-        widths[i] = MeasureTextWidth(dwrite, fmt, segments[i].text) + segPad * 2;
+        widths[i] = MeasureTextWidth(dwrite, fmt, segments[i].text) + segPad * 2 +
+                    (segments[i].alias ? kCrumbAliasMarkDip * scale_ : 0.0f);
         total += widths[i] + (i ? chevronW : 0.0f);
     }
-    // Collapse leading segments until the rest fits (last segment always kept).
-    size_t first = 0;
-    while (total > avail && first + 1 < segments.size()) {
-        total -= widths[first] + chevronW;
-        ++first;
+    // The faint tail only shows when all of it fits next to the whole path.
+    std::vector<float> ghost_widths(ghosts.size(), 0.0f);
+    float ghost_total = 0.0f;
+    for (size_t i = 0; i < ghosts.size(); ++i) {
+        ghost_widths[i] = MeasureTextWidth(dwrite, fmt, ghosts[i].text) + segPad * 2;
+        ghost_total += ghost_widths[i] + chevronW;
+    }
+    // The faint tail stays only when the current folder and all of it fit
+    // in the bar together; otherwise it goes.
+    {
+        float rest = total;
+        for (size_t lead = 0; rest + ghost_total > avail && lead + 1 < segments.size(); ++lead)
+            rest -= widths[lead] + chevronW;
+        if (ghosts.empty() || rest + ghost_total > avail) {
+            ghosts.clear();
+            ghost_total = 0.0f;
+        }
+    }
+    // A path longer than the bar is one strip seen through the bar, resting
+    // on its end; the wheel scrolls it toward the root (ScrollBreadcrumb).
+    const std::wstring key = vm.is_query_search && vm.has_search_origin
+        ? vm.search_origin + L"|" + vm.path : vm.path;
+    if (key != crumb_scroll_key_) {
+        crumb_scroll_key_ = key;
+        crumb_scroll_ = crumb_scroll_shown_ = 0.0f;
+    }
+    const float view_left = addr.left + margin_;
+    const float width = total + ghost_total;
+    const float overflow = std::max(0.0f, width - avail);
+    crumb_scroll_ = std::clamp(crumb_scroll_, 0.0f, overflow);
+    const float offset = std::clamp(crumb_scroll_shown_, 0.0f, overflow);
+    if (strip) {
+        strip->view = D2D1::RectF(view_left, addr.top, view_left + avail, addr.bottom);
+        strip->overflow = overflow;
+        strip->offset = offset;
+        strip->width = width;
     }
 
-    float x = addr.left + margin_;
-    for (size_t i = first; i < segments.size(); ++i) {
-        if (i > first) x += chevronW;
+    float x = std::round(view_left - (overflow - offset));
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (i > 0) x += chevronW;
         BreadcrumbPlaced p;
         p.rc = D2D1::RectF(x, addr.top + 2 * scale_, x + widths[i], addr.bottom - 2 * scale_);
         p.text = segments[i].text;
         p.path = segments[i].path;
+        p.alias = segments[i].alias;
         out.push_back(p);
         x += widths[i];
     }
+    for (size_t i = 0; i < ghosts.size(); ++i) {
+        x += chevronW;
+        BreadcrumbPlaced p;
+        p.rc = D2D1::RectF(x, addr.top + 2 * scale_, x + ghost_widths[i], addr.bottom - 2 * scale_);
+        p.text = std::move(ghosts[i].text);
+        p.path = std::move(ghosts[i].path);
+        p.ghost = true;
+        out.push_back(std::move(p));
+        x += ghost_widths[i];
+    }
+}
+
+bool MainRenderer::ScrollBreadcrumb(const WindowViewModel& vm, float window_w, float x, float y, float steps) {
+    if (vm.address_editing || vm.address_searching || steps == 0.0f) return false;
+    std::vector<BreadcrumbPlaced> placed;
+    BreadcrumbStrip strip;
+    BreadcrumbLayout(vm.pane, window_w, placed, &strip);
+    const D2D1_RECT_F addr = AddressBarRect(window_w);
+    if (strip.overflow <= 0.0f || x < addr.left || x >= strip.view.right || y < addr.top || y >= addr.bottom)
+        return false;
+    // About one segment a notch; a precision touchpad sends fractions.
+    crumb_scroll_ = std::clamp(crumb_scroll_ + steps * 72.0f * scale_, 0.0f, strip.overflow);
+    crumb_hover_left_ = 0;
+    if (!motion::SystemAnimationsEnabled() || IsHighContrast()) crumb_scroll_shown_ = crumb_scroll_;
+    return true;
+}
+
+bool MainRenderer::DragScrollBreadcrumb(const WindowViewModel& vm, float window_w, float x) {
+    if (vm.address_editing || vm.address_searching) return false;
+    std::vector<BreadcrumbPlaced> placed;
+    BreadcrumbStrip strip;
+    BreadcrumbLayout(vm.pane, window_w, placed, &strip);
+    if (strip.overflow <= 0.0f) return false;
+    const float zone = 28.0f * scale_;
+    float dir = 0.0f;
+    if (x < strip.view.left + zone && crumb_scroll_ < strip.overflow) dir = 1.0f;
+    else if (x >= strip.view.right - zone && x < strip.view.right && crumb_scroll_ > 0.0f) dir = -1.0f;
+    const uint64_t now = GetTickCount64();
+    if (dir == 0.0f || now - crumb_drag_tick_ < 90) return false;
+    crumb_drag_tick_ = now;
+    crumb_scroll_ = std::clamp(crumb_scroll_ + dir * 36.0f * scale_, 0.0f, strip.overflow);
+    crumb_hover_left_ = 0;
+    if (!motion::SystemAnimationsEnabled() || IsHighContrast()) crumb_scroll_shown_ = crumb_scroll_;
+    return true;
+}
+
+bool MainRenderer::SettleBreadcrumbScroll(uint64_t now_ms) {
+    if (crumb_scroll_ <= 0.0f || crumb_hover_left_ == 0 || now_ms - crumb_hover_left_ < 1500) return false;
+    crumb_scroll_ = 0.0f;
+    crumb_hover_left_ = 0;
+    if (!motion::SystemAnimationsEnabled() || IsHighContrast()) crumb_scroll_shown_ = 0.0f;
+    return true;
 }
 void MainRenderer::DrawTextRect(ID2D1DeviceContext* dc, IDWriteTextFormat* fmt,
     ID2D1SolidColorBrush* br, std::wstring_view text, float x, float y, float w, float h,
@@ -596,9 +965,24 @@ void MainRenderer::DrawIconText(float x, float y, float w, float h,
     if (command != command_icons::Icon::None) {
         if (!paneHeaderStroke_.get()) command_icons::CreateStrokeStyle(dc, &paneHeaderStroke_);
         MakeBrush(dc, color, brText_);
-        const auto bounds = command_icons::CenteredBounds(D2D1::RectF(x, y, x + w, y + h),
-                                                           20.0f * scale_ * size_factor);
-        if (command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command, bounds)) return;
+        auto bounds = command_icons::CenteredBounds(D2D1::RectF(x, y, x + w, y + h),
+                                                     icon_box_dip_ * scale_ * size_factor);
+        float width = command_icons::kStroke;
+        if (icon_stroke_px_ > 0.0f) {
+            // Toolbar: the same line weight at every size (chevrons and x a
+            // touch lighter), drawn from a whole pixel so no icon is softer.
+            const float side = bounds.right - bounds.left;
+            if (side > 0.0f) {
+                const float px = side < 15.0f * scale_ ? icon_stroke_px_ * 0.86f : icon_stroke_px_;
+                width = px * command_icons::kCanvas / side;
+                bounds.left = std::round(bounds.left);
+                bounds.top = std::round(bounds.top);
+                bounds.right = bounds.left + side;
+                bounds.bottom = bounds.top + side;
+            }
+        }
+        if (command_icons::Draw(dc, brText_.get(), paneHeaderStroke_.get(), command, bounds, 1.0f, width))
+            return;
     }
     IDWriteTextFormat* iconFmt = compositor_->IconFormat();
     std::wstring txt = glyph;
@@ -640,10 +1024,101 @@ void MainRenderer::DrawButton(const D2D1_RECT_F& rc, const Theme& theme, const D
         size_factor);
 }
 
+namespace {
+void UnionInto(D2D1_RECT_F& r, bool& any, const D2D1_RECT_F& a) {
+    if (a.right <= a.left || a.bottom <= a.top) return;
+    if (!any) {
+        r = a;
+        any = true;
+        return;
+    }
+    r.left = std::min(r.left, a.left);
+    r.top = std::min(r.top, a.top);
+    r.right = std::max(r.right, a.right);
+    r.bottom = std::max(r.bottom, a.bottom);
+}
+} // namespace
+
+bool MainRenderer::OverlayUp(const WindowViewModel& vm) const {
+    // Everything the tail of Render floats over the window, and the hover card.
+    return vm.settings_open || vm.pane.marquee_active || vm.content_drop || vm.drag_ghost.on ||
+           !vm.drag_badge.empty() || vm.change_popover.visible ||
+           (vm.address_editing && !vm.address_suggestions.empty()) ||
+           !vm.filter_tag_suggestions.empty() || vm.teach.visible || !vm.tooltip_text.empty() ||
+           group_wheel_.Visible() || window_overview_.IsOpen() || window_switcher_.IsOpen() ||
+           ai_panel_.FloatingVisible() ||
+           caret_due_ms_ != 0 || hover_frame_ms_ != 0 ||
+           hover_card_rect_.right > hover_card_rect_.left;
+}
+
+bool MainRenderer::NonHoverMotionActive() const {
+    // TickMotion without the list hover plates.
+    const uint64_t m = motion::NowMs();
+    const ULONGLONG now = GetTickCount64();
+    if (sidebar_pill_.Active(m) || settings_nav_pill_.Active(m) || settings_nav_hover_.Active(m) ||
+        collapse_anim_ || details_anim_ || ai_panel_.Animating() || ai_panel_.WantsDecorFrame())
+        return true;
+    for (const auto& motion : list_shift_) if (motion.Active(m)) return true;
+    for (const auto& motion : view_morph_) if (motion.Active(m)) return true;
+    for (const auto& motion : link_pill_motion_) if (motion.Active(m)) return true;
+    if ((task_pill_done_at_ != 0 && now - task_pill_done_at_ < task_pill_hold_ms_ + 400) ||
+        (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ < kTaskPillPopMs + 40))
+        return true;
+    if (ticks_active_ || motion_frame_wanted_) return true;
+    if (m < tab_motion_until_ || m < row_leave_until_ || m < mtime_flash_until_ ||
+        m < splitter_motion_until_ || m < spring_ring_until_)
+        return true;
+    return list_loading_active_ || folder_size_anim_active_ || task_pill_spinning_;
+}
+
+bool MainRenderer::PartialRedrawSafe(const WindowViewModel& vm) const {
+    return !last_frame_overlay_ && !OverlayUp(vm) && !NonHoverMotionActive();
+}
+
+bool MainRenderer::HoverRowDamage(int pane_index, int old_source, int new_source,
+                                  D2D1_RECT_F* out) const {
+    if (!out || pane_index < 0 || pane_index >= static_cast<int>(drawn_rows_.size())) return false;
+    if (tree_guides_drawn_[static_cast<size_t>(pane_index)]) return false;
+    const auto& rows = drawn_rows_[static_cast<size_t>(pane_index)];
+    if (rows.empty()) return false;
+    D2D1_RECT_F r{};
+    bool any = false;
+    for (const int source : {old_source, new_source}) {
+        if (source < 0) continue;
+        const auto it = std::find_if(rows.begin(), rows.end(),
+                                     [&](const auto& row) { return row.first == source; });
+        if (it == rows.end()) return false;
+        UnionInto(r, any, it->second);
+    }
+    UnionInto(r, any, list_hover_motion_[static_cast<size_t>(pane_index)].Span());
+    if (!any) return false;
+    const float margin = 4.0f * scale_;
+    *out = D2D1::RectF(r.left - margin, r.top - margin, r.right + margin, r.bottom + margin);
+    return true;
+}
+
+bool MainRenderer::HoverMotionDamage(D2D1_RECT_F* out) const {
+    if (!out) return false;
+    const uint64_t m = motion::NowMs();
+    D2D1_RECT_F r{};
+    bool any = false;
+    for (size_t i = 0; i < list_hover_motion_.size(); ++i) {
+        if (!list_hover_motion_[i].Active(m)) continue;
+        if (i >= drawn_rows_.size() || drawn_rows_[i].empty()) return false;
+        UnionInto(r, any, list_hover_motion_[i].Span());
+    }
+    if (!any) return false;
+    const float margin = 4.0f * scale_;
+    *out = D2D1::RectF(r.left - margin, r.top - margin, r.right + margin, r.bottom + margin);
+    return true;
+}
+
 void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
                           const Theme& theme) {
     if (!compositor_ || !compositor_->Dc()) return;
     ++motion_frame_;
+    last_frame_overlay_ = OverlayUp(vm);
+    thumbnail_cache_.AdvanceFrame();
     folder_thumbnail_cache_.BeginFrame();
     struct FolderFrameScope {
         FolderThumbnailCache& cache;
@@ -651,17 +1126,35 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     } folder_frame{folder_thumbnail_cache_};
     // One timestamp per frame: every glide and the sidebar width agree.
     motion_now_ = motion::NowMs();
+    caret_due_ms_ = 0;
     list_loading_active_ = false;
     folder_size_anim_active_ = false;
+    motion_frame_wanted_ = false;
+    landing_rects_.clear();
     if (collapse_anim_) {
         // Sampled once per frame so every layout query agrees on the width.
-        const float t = static_cast<float>(motion_now_ - collapse_start_) / kSidebarCollapseMs;
+        // Motion v2 "rail": the width rides the smooth spring (seb-sidebar-collapse).
+        const float ms = static_cast<float>(motion_now_ - collapse_start_);
         const float target = sidebar_collapsed_ ? 1.0f : 0.0f;
-        if (t >= 1.0f) {
+        if (ms >= static_cast<float>(motion::SpringSettleMs(motion::spring::Smooth))) {
             collapse_value_ = target;
             collapse_anim_ = false;
         } else {
-            collapse_value_ = collapse_from_ + (target - collapse_from_) * motion::EaseOutCubic(t);
+            const float p = motion::SpringProgress(motion::spring::Smooth, ms);
+            collapse_value_ = std::clamp(collapse_from_ + (target - collapse_from_) * p, 0.0f, 1.0f);
+        }
+    }
+    // Pulse 助手: the docked column width is frame-stable like the sidebar's.
+    ai_panel_.Tick(motion_now_);
+    if (details_anim_) {
+        const float ms = static_cast<float>(motion_now_ - details_anim_start_);
+        const float target = details_visible_ ? 1.0f : 0.0f;
+        if (ms >= static_cast<float>(motion::SpringSettleMs(motion::spring::Smooth))) {
+            details_value_ = target;
+            details_anim_ = false;
+        } else {
+            const float p = motion::SpringProgress(motion::spring::Smooth, ms);
+            details_value_ = std::clamp(details_from_ + (target - details_from_) * p, 0.0f, 1.0f);
         }
     }
     ID2D1DeviceContext* dc = compositor_->Dc();
@@ -688,7 +1181,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
             (vm.window_effect == WindowEffect::None) ? std::wstring{} : vm.background_image);
     }
     const LayerAlphas layers = ComputeLayerAlphas(image_mode, backdrop_drawn,
-        vm.backdrop_enabled, vm.dark, vm.wallpaper_look, vm.wallpaper_blur);
+        vm.backdrop_enabled, vm.dark, vm.wallpaper_look, vm.wallpaper_blur, vm.frame_transparency);
     if (!backdrop_drawn && !vm.backdrop_enabled) {
         // Lower pane opacity must reveal the theme canvas when no material or
         // wallpaper exists, instead of exposing an unpainted transparent base.
@@ -697,6 +1190,17 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     }
     sheet_alpha_ = layers.sheet;
     card_alpha_ = layers.card;
+    pane_alpha_ = layers.pane;
+    if (pane_alpha_ >= 0.0f) {
+        // The colour the stacked layers would have given the card.
+        const float w = layers.pane_mix[0] + layers.pane_mix[1] + layers.pane_mix[2];
+        const auto mix = [&](float D2D1_COLOR_F::*c) {
+            return w > 0.0f ? (layers.pane_mix[0] * (theme.surface_title.*c) + layers.pane_mix[1] * (theme.surface_sheet.*c) +
+                               layers.pane_mix[2] * (theme.surface_card.*c)) / w
+                            : theme.surface_card.*c;
+        };
+        pane_color_ = D2D1::ColorF(mix(&D2D1_COLOR_F::r), mix(&D2D1_COLOR_F::g), mix(&D2D1_COLOR_F::b), pane_alpha_);
+    }
     auto tint_background = [&](D2D1_RECT_F bounds, D2D1_COLOR_F color, float alpha) {
         if (bounds.right <= bounds.left || bounds.bottom <= bounds.top || alpha <= 0) return;
         MakeBrush(dc, WithAlpha(color, alpha), brBg_);
@@ -714,21 +1218,40 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
     }
 
     if (!embedded_) DrawTitleBar(vm, rect, theme);
+    // Over a wallpaper or Mica the docked AI panel is a card like the pane.
+    ai_panel_.SetGlass(!embedded_ && card_alpha_ < 0.999f && !IsHighContrast(), card_alpha_,
+                       CardFrameColor(theme, vm.dark, card_alpha_));
     if (vm.settings_open) {
         preview_handler_.Sync(notify_hwnd_, {}, L"", 0, 0, 0, 0, vm.dark,
                               theme.bg, theme.text, false);
         DrawSettings(vm, rect, theme);
+        if (ai_panel_.Visible()) {
+            // Docked: the column at the left edge, Settings moved right of it
+            // (vm.settings_inset_left); floating: over Settings as elsewhere.
+            const float dock = AiDockWidth(rect.right);
+            ai_panel_.Draw(compositor_, vm.ai_panel, theme,
+                           D2D1::RectF(rect.left, title_bar_height_, rect.left + dock, rect.bottom - status_height_),
+                           AiPanelView::DockTargetWidth(rect.right, kSidebarRailWidthDip * scale_, scale_),
+                           AiFloatingArea(rect.right, rect.bottom), scale_, motion_now_);
+        }
         DrawStatusBar(vm, rect, theme);
     } else {
         DrawToolbar(vm, rect, theme);
+        if (favorites_bar_) DrawFavoritesBar(vm, rect, theme);
         const bool peek = SidebarPeekVisible(rect.right);
         if (!peek) DrawSidebar(vm, rect, theme);
         DrawPane(vm, rect, theme);
         if (vm.details_visible) DrawDetailsPanel(vm, rect, theme);
         else preview_handler_.Sync(notify_hwnd_, {}, L"", 0, 0, 0, 0, vm.dark,
                                    theme.bg, theme.text, false);
+        if (ai_panel_.Visible()) {
+            ai_panel_.Draw(compositor_, vm.ai_panel, theme, AiColumnRect(rect.right, rect.bottom),
+                           AiPanelView::DockTargetWidth(rect.right, kSidebarRailWidthDip * scale_, scale_),
+                           AiFloatingArea(rect.right, rect.bottom), scale_, motion_now_);
+        }
         if (peek) DrawSidebarPeek(vm, rect, theme);
         if (!embedded_) DrawStatusBar(vm, rect, theme);
+        if (!peek) DrawTrayCompareCard(vm, theme);
     }
 
     // A tab dragged from another window over the content (multi-window M6d):
@@ -782,7 +1305,7 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         plate(px, py, pillW, pillH, pillR);
         DrawIconText(px + 10.0f * scale_, py, 16.0f * scale_, pillH, kIconFolder, L"[]", theme.icon_folder, 0.95f);
         MakeBrush(dc, pal.text, brText_);
-        DrawTabTitle(dc, factory, tabFmt, brText_.get(), ghost.title, px + 30.0f * scale_, py, titleW, pillH, scale_);
+        DrawTabTitle(compositor_, tabFmt, brText_.get(), ghost.title, px + 30.0f * scale_, py, titleW, pillH, scale_);
         if (chipW > 0.0f) {
             MakeBrush(dc, pal.accent, brText_);
             DrawTextRect(dc, smallFmt, brText_.get(), panes, px + 30.0f * scale_ + titleW + 7.0f * scale_, py,
@@ -888,6 +1411,9 @@ void MainRenderer::Render(const WindowViewModel& vm, const D2D1_RECT_F& rect,
         content.top = rc.bottom - 38 * scale_; content.bottom = rc.bottom - 8 * scale_;
         painter_.DrawText(pulse::l10n::Get(pulse::l10n::StringId::ChangeView), content, compositor_->TextFormat(), theme.accent);
     }
+    if (vm.address_editing && !vm.address_searching && !vm.address_suggestions.empty())
+        DrawAddressSuggestions(vm, rect, theme);
+    if (!vm.filter_tag_suggestions.empty()) DrawFilterTagSuggestions(vm, rect, theme);
     if (vm.teach.visible && vm.drag_badge.empty()) DrawTeachBubble(vm, rect, theme);
     if (!vm.change_popover.visible && vm.drag_badge.empty() && !vm.tooltip_text.empty() &&
         !group_wheel_.Visible() && !window_switcher_.IsOpen() && !window_overview_.IsOpen()) {
@@ -1001,7 +1527,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         MakeBrush(dc, theme.text_secondary, brTextSecondary_);
         dc->DrawRoundedRectangle(D2D1::RoundedRect(frame, 2.75f * scale_, 2.75f * scale_),
                                  brTextSecondary_.get(), stroke);
-        const bool expanded = !sidebar_collapsed_ || SidebarPeekVisible(right);
+        const bool expanded = !user_sidebar_collapsed_ || SidebarPeekVisible(right);
         const float divider = frame.left + (expanded ? 5.0f : 3.75f) * scale_;
         const float inset = expanded ? 0.0f : 3.25f * scale_;
         dc->DrawLine({divider, frame.top + inset}, {divider, frame.bottom - inset},
@@ -1012,7 +1538,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
                                 brTextSecondary_.get());
         }
     }
-    if (hasToggle && sidebar_collapsed_) {
+    if (hasToggle && user_sidebar_collapsed_) {
         // Rail: the toggle stands in for the brand mark.
     } else if (ID2D1Bitmap* logo = LogoBitmap()) {
         dc->DrawBitmap(logo, D2D1::RectF(x, markY, x + mark, markY + mark), 1.0f,
@@ -1033,7 +1559,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         }
     }
     x += mark + 8.0f * scale_;
-    const float brandRight = EffectiveSidebarWidth(right) - 12.0f * scale_;
+    const float brandRight = TitleSidebarWidth(right) - 12.0f * scale_;
     const float nameWidth = MeasureLayoutText(compositor_, compositor_->DwriteFactory(),
         compositor_->HeaderFormat(), L"Pulse");
     const WindowIdentityGeometry identity = WindowIdentityLayout(vm, right);
@@ -1048,7 +1574,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         dc->FillEllipse(D2D1::Ellipse(identity.dot, identity.dot_radius, identity.dot_radius), brAccent_.get());
         const float text_x = identity.hit.left + 22.0f * scale_;
         MakeBrush(dc, theme.text, brText_);
-        DrawTextEndEllipsis(dc, compositor_->DwriteFactory(), compositor_->HeaderFormat(), brText_.get(),
+        DrawTextEndEllipsis(compositor_, compositor_->HeaderFormat(), brText_.get(),
                             vm.window_identity_name, text_x, 0.0f, identity.hit.right - 6.0f * scale_ - text_x, h);
     } else if (x + nameWidth <= brandRight) {
         MakeBrush(dc, theme.text, brText_);
@@ -1084,10 +1610,13 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     MakeBrush(dc, WithAlpha(vm.dark ? HexColor(0xFFFFFF) : HexColor(0x000000), 0.40f),
               tabStroke);
     const float tabStrokeW = 1.0f / scale_;
-    auto drawTab = [&](size_t i, float left, bool raised) {
+    // part: 0 = whole tab, 1 = background only (the gliding active plate),
+    // 2 = content only (over a plate drawn elsewhere). w_override >= 0
+    // replaces the slot width (the plate between two slot widths).
+    auto drawTab = [&](size_t i, float left, bool raised, int part, float w_override) {
         const bool active = vm.tabs[i].active;
         const bool pinned = vm.tabs[i].pinned;
-        const float tabW = strip.Width(vm, i);
+        const float tabW = w_override >= 0.0f ? w_override : strip.Width(vm, i);
         const bool hovered = IsHovered(vm, HitTestResult::Tab, static_cast<int>(i)) ||
                              IsHovered(vm, HitTestResult::TabClose, static_cast<int>(i));
         ChromeTabShape shape;
@@ -1098,7 +1627,9 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         const float tabTop = tabY;
         const float tabBottom = std::round(h);
         const D2D1_RECT_F tabRc = D2D1::RectF(left, tabTop, left + tabW, tabBottom);
-        if (raised) {
+        if (part == 2) {
+            // Content over a plate drawn elsewhere.
+        } else if (raised) {
             D2D1_RECT_F shadow = tabRc;
             shadow.left += 1.0f * scale_;
             shadow.top += 2.0f * scale_;
@@ -1125,7 +1656,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
             FillChromeTab(dc, brFillHover_.get(), tabRc, shape);
         }
         if (tabStroke.get()) StrokeChromeTab(dc, tabStroke.get(), tabRc, shape, tabStrokeW);
-        if (vm.tabs[i].flash > 0.0f) {
+        if (vm.tabs[i].flash > 0.0f && part != 2) {
             MakeBrush(dc, WithAlpha(theme.accent, (vm.dark ? 0.34f : 0.26f) * vm.tabs[i].flash), brFillHover_);
             FillChromeTab(dc, brFillHover_.get(), tabRc, shape);
         }
@@ -1133,20 +1664,21 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         // just in their group color instead of the accent.
         const float r = shape.top_radius;
         const bool has_color = vm.tabs[i].color_rgb != 0;
-        if (has_color) {
+        if (has_color && part != 2) {
             D2D1_COLOR_F line = HexColor(vm.tabs[i].color_rgb);
             if (!active) line.a *= 0.55f;
             MakeBrush(dc, line, brAccent_);
             FillChromeTabAccent(dc, brAccent_.get(), tabRc, shape, 2.0f * scale_);
         }
-        if (active) {
+        if (active && part != 2) {
             MakeBrush(dc, vm.tabs[i].color_rgb ? HexColor(vm.tabs[i].color_rgb) : theme.accent, brAccent_);
             FillRoundedRect(dc, brAccent_.get(), tabRc.left + 15*scale_, tabRc.bottom - 3*scale_,
                 std::min(28*scale_, tabW - 24*scale_), 2*scale_, scale_);
         }
-        if ((pinned && !vm.show_pinned_tab_names) || (strip.compact && !pinned && !active)) {
-            // Chrome pinned tab, or a crowded inactive tab: centered icon, no
-            // title, no close button (the tooltip names it).
+        if (part == 1) return;
+        if (pinned && !vm.show_pinned_tab_names) {
+            // Chrome pinned tab: centered icon, no title, no close button
+            // (the tooltip names it).
             DrawIconText(left, tabY, tabW, tabH,
                 vm.tabs[i].title.empty() ? kIconFolder
                     : vm.tabs[i].title == pulse::l10n::Get(pulse::l10n::StringId::Settings)
@@ -1164,16 +1696,19 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
             vm.tabs[i].title == pulse::l10n::Get(pulse::l10n::StringId::Settings)
                 ? kIconSettings : kIconFolder, L"[]",
             active ? theme.icon_folder : theme.text_secondary, 0.85f);
-        MakeBrush(dc, theme.text, brText_);
+        // Dark chrome: the active plate is the sheet over a nearly as dark
+        // title bar, so inactive titles step back (as Edge / Chrome do) and
+        // come forward again on hover.
+        MakeBrush(dc, active || hovered || !vm.dark ? theme.text : WithAlpha(theme.text, 0.62f), brText_);
         const bool show_close = TabCloseVisible(vm, static_cast<int>(i), tabW, scale_);
         const float closeSz = kTabCloseSizeDip * scale_;
         const float closePad = kTabClosePadDip * scale_;
         const float closeReserve = show_close ? (closePad + closeSz + 6.0f * scale_)
                                               : 6.0f * scale_;
         const float titleLeft = left + 24.0f * scale_ + markerReserve;
-        DrawTabTitle(dc, compositor_->DwriteFactory(), compositor_->TabFormat(), brText_.get(),
-                     vm.tabs[i].title, titleLeft, tabY,
-                     std::max(0.0f, tabW - 24.0f * scale_ - markerReserve - closeReserve), tabH, scale_);
+        DrawTabTitleFaded(compositor_, compositor_->TabFormat(), brText_.get(),
+                          vm.tabs[i].title, titleLeft, tabY,
+                          std::max(0.0f, tabW - 24.0f * scale_ - markerReserve - closeReserve), tabH, scale_);
         if (show_close) {
             const float closeY = tabY + (tabH - closeSz) * 0.5f;
             const float closeX = left + tabW - closePad - closeSz;
@@ -1257,35 +1792,220 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     int activeI = -1;
     const int dragN = std::max(1, vm.tab_drag_count);
     auto inDragRun = [&](int i) { return dragI >= 0 && i >= dragI && i < dragI + dragN; };
+    // ---- Tab motion bookkeeping: which tabs appeared or went away. ----
+    const uint64_t tnow = motion_now_;
+    const bool tabDragging = dragI >= 0;
+    bool tabMoving = false;
+    {
+        std::vector<uintptr_t> ids;
+        ids.reserve(vm.tabs.size());
+        for (const auto& t : vm.tabs)
+            if (!t.hidden && t.id) ids.push_back(t.id);
+        std::sort(ids.begin(), ids.end());
+        if (ids != tab_ids_prev_) {
+            const bool primed = !tab_ids_prev_.empty() && !tabDragging;
+            if (primed) tab_anim_on_ = motion::SystemAnimationsEnabled();
+            if (primed && tab_anim_on_) {
+                for (uintptr_t id : ids)
+                    if (!std::binary_search(tab_ids_prev_.begin(), tab_ids_prev_.end(), id))
+                        tab_slots_[id].born = tnow;
+                for (uintptr_t id : tab_ids_prev_) {
+                    if (std::binary_search(ids.begin(), ids.end(), id)) continue;
+                    const auto it = tab_slots_.find(id);
+                    if (it == tab_slots_.end() || it->second.seen + 1 < motion_frame_) continue;
+                    if (tab_ghosts_.size() < 12)
+                        tab_ghosts_.push_back({it->second.title, it->second.last, tnow});
+                }
+            }
+            for (auto it = tab_slots_.begin(); it != tab_slots_.end();) {
+                if (std::binary_search(ids.begin(), ids.end(), it->first)) ++it;
+                else it = tab_slots_.erase(it);
+            }
+            ++tab_gen_;
+            tab_ids_prev_ = std::move(ids);
+        }
+    }
+    constexpr motion::SpringSpec kTabPlateSpring{900.0f, 56.0f};
+    const uint32_t popMs = motion::SpringSettleMs(motion::spring::Pop);
+    // Rest slot -> drawn left: siblings spring to their new slots when the
+    // set of tabs changes; resizes and scrolling follow at once.
+    std::vector<float> lefts(vm.tabs.size(), 0.0f);
+    for (size_t i = 0; i < vm.tabs.size(); ++i) {
+        if (vm.tabs[i].hidden || inDragRun(static_cast<int>(i))) continue;
+        const float extra = i < strip.extra.size() ? strip.extra[i] : 0.0f;
+        float left = strip.x0
+            + (static_cast<float>(i) + vm.tabs[i].x_offset) * strip.pitch + extra;
+        const float w = strip.Width(vm, i);
+        if (vm.tabs[i].id) {
+            TabSlotMotion& m = tab_slots_[vm.tabs[i].id];
+            if (!tabDragging) {
+                m.rect.SetAnimationsEnabled(tab_anim_on_);
+                const D2D1_RECT_F r = m.rect.Update(1, static_cast<int64_t>(tab_gen_),
+                    D2D1::RectF(left, 0.0f, left + w, 1.0f), motion_frame_, tnow, motion::spring::Smooth);
+                if (m.rect.Active(tnow)) tabMoving = true;
+                left = r.left;
+            }
+            m.seen = motion_frame_;
+            m.last = D2D1::RectF(left, tabY, left + w, tabY + tabH);
+            m.title = vm.tabs[i].title;
+        }
+        lefts[i] = left;
+        if (vm.tabs[i].active) activeI = static_cast<int>(i);
+    }
+    // A new tab pops in: scale .9 -> 1, rising 6 px, fading in (spring Pop).
+    auto drawSlot = [&](size_t i, int part) {
+        const float left = lefts[i];
+        const auto it = vm.tabs[i].id ? tab_slots_.find(vm.tabs[i].id) : tab_slots_.end();
+        const uint64_t born = it != tab_slots_.end() ? it->second.born : 0;
+        if (born && tnow - born < popMs) {
+            tabMoving = true;
+            const float p = motion::SpringProgress(motion::spring::Pop, static_cast<float>(tnow - born));
+            const float alpha = (std::clamp)(p, 0.0f, 1.0f);
+            const float sc = 0.9f + 0.1f * p;
+            const float w = strip.Width(vm, i);
+            const D2D1_POINT_2F c = D2D1::Point2F(left + w * 0.5f, tabY + tabH * 0.5f);
+            D2D1_MATRIX_3X2_F old{};
+            dc->GetTransform(&old);
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(sc, sc, c) *
+                             D2D1::Matrix3x2F::Translation(0.0f, 6.0f * scale_ * (1.0f - p)) *
+                             *D2D1::Matrix3x2F::ReinterpretBaseType(&old));
+            dc->PushLayer(D2D1::LayerParameters1(D2D1::RectF(left - 16.0f * scale_, 0.0f,
+                                                             left + w + 16.0f * scale_, h + 4.0f * scale_),
+                                                 nullptr, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                 D2D1::IdentityMatrix(), alpha, nullptr,
+                                                 D2D1_LAYER_OPTIONS1_NONE), nullptr);
+            drawTab(i, left, false, part, -1.0f);
+            dc->PopLayer();
+            dc->SetTransform(old);
+            return;
+        }
+        if (born) it->second.born = 0;
+        drawTab(i, left, false, part, -1.0f);
+    };
+    // The active plate glides between slots; while it moves it is drawn
+    // under the other tabs, at rest on top as before.
+    bool plateGliding = false;
+    D2D1_RECT_F plateRc{};
+    if (activeI >= 0 && !tabDragging && vm.tabs[static_cast<size_t>(activeI)].id) {
+        const size_t i = static_cast<size_t>(activeI);
+        const float w = strip.Width(vm, i);
+        tab_plate_.SetAnimationsEnabled(tab_anim_on_);
+        plateRc = tab_plate_.Update(2, static_cast<int64_t>(vm.tabs[i].id),
+            D2D1::RectF(lefts[i], 0.0f, lefts[i] + w, 1.0f), motion_frame_, tnow, kTabPlateSpring);
+        plateGliding = tab_plate_.Active(tnow) &&
+                       (std::fabs(plateRc.left - lefts[i]) > 0.5f || std::fabs(plateRc.right - lefts[i] - w) > 0.5f);
+        if (plateGliding) {
+            tabMoving = true;
+            drawTab(i, plateRc.left, false, 1, plateRc.right - plateRc.left);
+        }
+    }
     for (size_t i = 0; i < vm.tabs.size(); ++i) {
         if (vm.tabs[i].hidden) continue;
         if (inDragRun(static_cast<int>(i))) continue;
-        if (vm.tabs[i].active) {
-            activeI = static_cast<int>(i);
-            continue;
-        }
-        const float extra = i < strip.extra.size() ? strip.extra[i] : 0.0f;
-        const float left = strip.x0
-            + (static_cast<float>(i) + vm.tabs[i].x_offset) * strip.pitch + extra;
-        drawTab(i, left, false);
+        if (static_cast<int>(i) == activeI) continue;
+        drawSlot(i, 0);
     }
-    if (activeI >= 0 && !inDragRun(activeI) && !vm.tabs[static_cast<size_t>(activeI)].hidden) {
-        const size_t i = static_cast<size_t>(activeI);
-        const float extra = i < strip.extra.size() ? strip.extra[i] : 0.0f;
-        const float left = strip.x0
-            + (static_cast<float>(i) + vm.tabs[i].x_offset) * strip.pitch + extra;
-        drawTab(i, left, false);
+    if (activeI >= 0 && !inDragRun(activeI) && !vm.tabs[static_cast<size_t>(activeI)].hidden)
+        drawSlot(static_cast<size_t>(activeI), plateGliding ? 2 : 0);
+    // Closed tabs fade and shrink to .88 in place (120 ms, ease-in).
+    for (auto it = tab_ghosts_.begin(); it != tab_ghosts_.end();) {
+        const float e = static_cast<float>(tnow - it->start) / 120.0f;
+        if (e >= 1.0f) { it = tab_ghosts_.erase(it); continue; }
+        tabMoving = true;
+        const float k = e * e;
+        const D2D1_RECT_F& g = it->rc;
+        const float sc = 1.0f - 0.12f * k;
+        D2D1_MATRIX_3X2_F old{};
+        dc->GetTransform(&old);
+        dc->SetTransform(D2D1::Matrix3x2F::Scale(sc, sc, D2D1::Point2F((g.left + g.right) * 0.5f,
+                                                                       (g.top + g.bottom) * 0.5f)) *
+                         *D2D1::Matrix3x2F::ReinterpretBaseType(&old));
+        dc->PushLayer(D2D1::LayerParameters1(D2D1::RectF(g.left, g.top, g.right, g.bottom), nullptr,
+                                             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(),
+                                             1.0f - k, nullptr, D2D1_LAYER_OPTIONS1_NONE), nullptr);
+        const float gw = g.right - g.left;
+        DrawIconText(g.left + 6.0f * scale_, tabY, 16.0f * scale_, tabH, kIconFolder, L"[]",
+                     theme.text_secondary, 0.85f);
+        MakeBrush(dc, theme.text, brText_);
+        DrawTabTitle(compositor_, compositor_->TabFormat(), brText_.get(),
+                     it->title, g.left + 24.0f * scale_, tabY,
+                     (std::max)(0.0f, gw - 30.0f * scale_), tabH, scale_);
+        dc->PopLayer();
+        dc->SetTransform(old);
+        ++it;
     }
     // The dragged run floats as one block (browser group drag); collapsed
     // members stay hidden and do not take float width.
     if (dragI >= 0 && dragI < static_cast<int>(vm.tabs.size())) {
+        // Lifted: the run grows to 1.04 with spring Pop as the drag starts.
+        if (!tab_lift_start_) {
+            tab_lift_start_ = tnow;
+            tab_anim_on_ = motion::SystemAnimationsEnabled();
+        }
+        float sc = 1.0f;
+        if (tab_anim_on_) {
+            const float age = static_cast<float>(tnow - tab_lift_start_);
+            sc = 1.0f + 0.04f * motion::SpringProgress(motion::spring::Pop, age);
+            if (age < static_cast<float>(popMs)) tabMoving = true;
+        }
+        int runN = 0;
+        for (int k = 0; k < dragN && dragI + k < static_cast<int>(vm.tabs.size()); ++k)
+            if (!vm.tabs[static_cast<size_t>(dragI + k)].hidden) ++runN;
+        D2D1_MATRIX_3X2_F old{};
+        dc->GetTransform(&old);
+        if (sc != 1.0f) {
+            const float runW = static_cast<float>((std::max)(0, runN - 1)) * strip.pitch +
+                               strip.Width(vm, static_cast<size_t>(dragI));
+            dc->SetTransform(D2D1::Matrix3x2F::Scale(sc, sc, D2D1::Point2F(vm.tab_drag_x + runW * 0.5f,
+                                                                           tabY + tabH * 0.5f)) *
+                             *D2D1::Matrix3x2F::ReinterpretBaseType(&old));
+        }
         float floatX = vm.tab_drag_x;
+        // Motion v2 "tabdetach": pulled off the strip, the tab follows the
+        // cursor and a window body grows out beneath it, so the tear-off
+        // reads as the tab becoming a window rather than a sudden jump.
+        const float pull = tab_anim_on_ ? (std::clamp)(vm.tab_detach_pull, 0.0f, 1.0f) : 0.0f;
+        if (pull > 0.02f && runN == 1) {
+            const float e = pull * pull * (3.0f - 2.0f * pull);
+            const float tw = strip.Width(vm, static_cast<size_t>(dragI));
+            const float dy = vm.tab_detach_dy * 0.85f;
+            const D2D1_RECT_F body = D2D1::RectF(
+                vm.tab_drag_x - 4.0f * scale_ * e, tabY + tabH * 0.5f + dy,
+                vm.tab_drag_x + tw + 150.0f * scale_ * e, tabY + tabH + dy + 84.0f * scale_ * e);
+            const float r = 8.0f * scale_;
+            D2D1_COLOR_F fill = vm.dark ? HexColor(0x2B2B2B) : HexColor(0xFFFFFF);
+            fill.a = 0.92f * e;
+            MakeBrush(dc, D2D1::ColorF(0, 0, 0, (vm.dark ? 0.30f : 0.14f) * e), brFillHover_);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(body.left, body.top + 3.0f * scale_,
+                                                                   body.right, body.bottom + 4.0f * scale_), r, r),
+                                     brFillHover_.get());
+            MakeBrush(dc, fill, brFillSelected_);
+            dc->FillRoundedRectangle(D2D1::RoundedRect(body, r, r), brFillSelected_.get());
+            MakeBrush(dc, WithAlpha(theme.stroke_card, theme.stroke_card.a * e), brStrokeCard_);
+            dc->DrawRoundedRectangle(D2D1::RoundedRect(body, r, r), brStrokeCard_.get(), 1.0f);
+            // Placeholder rows hint at the folder the window will show.
+            MakeBrush(dc, WithAlpha(theme.text_secondary, 0.16f * e), brFillHover_);
+            for (int row = 0; row < 3; ++row) {
+                const float rowY = tabY + tabH + dy + (14.0f + 18.0f * static_cast<float>(row)) * scale_ * e;
+                if (rowY + 6.0f * scale_ > body.bottom - 6.0f * scale_) break;
+                dc->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(body.left + 12.0f * scale_, rowY,
+                    body.left + 12.0f * scale_ + (body.right - body.left - 24.0f * scale_) * (0.8f - 0.2f * row),
+                    rowY + 6.0f * scale_), 3.0f * scale_, 3.0f * scale_), brFillHover_.get());
+            }
+            D2D1_MATRIX_3X2_F cur{};
+            dc->GetTransform(&cur);
+            dc->SetTransform(cur * D2D1::Matrix3x2F::Translation(0.0f, dy));
+        }
         for (int k = 0; k < dragN && dragI + k < static_cast<int>(vm.tabs.size()); ++k) {
             if (vm.tabs[static_cast<size_t>(dragI + k)].hidden) continue;
-            drawTab(static_cast<size_t>(dragI + k), floatX, true);
+            drawTab(static_cast<size_t>(dragI + k), floatX, true, 0, -1.0f);
             floatX += strip.pitch;
         }
+        dc->SetTransform(old);
+    } else {
+        tab_lift_start_ = 0;
     }
+    if (tabMoving) tab_motion_until_ = tnow + 60;
 
     // A tab dragged from another window lands here (multi-window M6b): a bar
     // in the gap before the visible tab at the index, or after the last tab.
@@ -1374,9 +2094,21 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
     const float buttonBottom = groupBottom - 2.0f * scale_;
     const D2D1_RECT_F settingsRc = D2D1::RectF(chrome.settings_left, buttonTop,
         chrome.settings_left + chrome.settings_w, buttonBottom);
-    DrawButton(settingsRc, theme,
-        IsHovered(vm, HitTestResult::SettingsButton) ? theme.fill_hover : kTransparent,
-        kIconSettings, L"S", theme.text, true, true);
+    // Open settings has no tab: the button shows as selected instead, with the
+    // active tab's accent underline.
+    const bool settingsSelected = vm.settings_open;
+    const D2D1_COLOR_F settingsFill = settingsSelected
+        ? WithAlpha(theme.accent, IsHovered(vm, HitTestResult::SettingsButton) ? 0.26f : 0.18f)
+        : IsHovered(vm, HitTestResult::SettingsButton) ? theme.fill_hover : kTransparent;
+    DrawButton(settingsRc, theme, settingsFill, kIconSettings, L"S",
+        settingsSelected && !IsHighContrast() ? theme.accent : theme.text, true, true);
+    if (settingsSelected) {
+        MakeBrush(dc, theme.accent, brAccent_);
+        const float barW = 14.0f * scale_;
+        const float midX = (settingsRc.left + settingsRc.right) * 0.5f;
+        FillRoundedRect(dc, brAccent_.get(), midX - barW * 0.5f, settingsRc.bottom - 3.0f * scale_,
+                        barW, 2.5f * scale_, 1.25f * scale_);
+    }
 
     const D2D1_RECT_F themeRc = D2D1::RectF(chrome.theme_left, buttonTop,
         chrome.theme_left + chrome.theme_w, buttonBottom);
@@ -1454,7 +2186,7 @@ void MainRenderer::DrawTeachBubble(const WindowViewModel& vm, const D2D1_RECT_F&
         body->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         body->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         MakeBrush(dc, theme.text_secondary, brTextSecondary_);
-        dc->DrawTextLayout({t.body.left, t.body.top}, body.get(), brTextSecondary_.get(),
+        compositor_->DrawTextLayout({t.body.left, t.body.top}, body.get(), brTextSecondary_.get(),
                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     fluent::ControlState closeState;
@@ -1475,12 +2207,40 @@ void MainRenderer::DrawTeachBubble(const WindowViewModel& vm, const D2D1_RECT_F&
     text_background_ = saved_bg;
 }
 
-void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& rect, const Theme& theme) {
+void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& full, const Theme& theme) {
     ID2D1DeviceContext* dc = compositor_->Dc();
     IDWriteFactory2* factory = compositor_->DwriteFactory();
     IDWriteTextFormat* small_fmt = compositor_->SmallFormat();
     const StatusBarMetrics sb = MakeStatusBarMetrics(
-        vm, rect, scale_, status_height_, factory, small_fmt);
+        vm, full, scale_, status_height_, factory, small_fmt);
+    // Everything but the AI chip ends left of it (MakeStatusBarMetrics).
+    D2D1_RECT_F rect = full;
+    rect.right = sb.content_right;
+    if (sb.ai_chip.right > sb.ai_chip.left) {
+        // The AI chip (ai_panel_view.h): "✦ AI", what the assistant or an
+        // outside client is doing, and whether Pulse 助手 is open.
+        AiStatusChipView chip;
+        chip.label = vm.status.ai_label;
+        chip.text = vm.status.ai_text;
+        chip.words = sb.ai_chip_text;
+        switch (vm.status.ai_state) {
+        case StatusAiState::Busy: chip.state = AiChipState::Busy; break;
+        case StatusAiState::Waiting: chip.state = AiChipState::Waiting; break;
+        case StatusAiState::Done: chip.state = AiChipState::Done; break;
+        case StatusAiState::Error: chip.state = AiChipState::Error; break;
+        case StatusAiState::Warn: chip.state = AiChipState::Warn; break;
+        default: chip.state = AiChipState::Idle; break;
+        }
+        chip.progress = vm.status.ai_progress;
+        chip.open = vm.status.ai_open;
+        chip.unread = vm.status.ai_unread;
+        chip.hover = IsHovered(vm, HitTestResult::StatusBarAi);
+        chip.pressed = chip.hover && vm.status.ai_pressed;
+        chip.dark = vm.dark;
+        ai_panel_.DrawStatusChip(compositor_, theme, chip, sb.ai_chip, scale_, motion_now_);
+        // Pulse 助手 closed and done: the bubble over the chip (.peek).
+        ai_panel_.DrawPeek(compositor_, vm.ai_panel, theme, sb.ai_chip, scale_, motion_now_);
+    }
     const bool centered_progress = vm.status.query_active || vm.status.task_is_update;
     float y = sb.bar.top;
     // Sits on the shared sheet painted by Render(); no own fill or top rule.
@@ -1488,14 +2248,14 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& r
     const float gap = 16.0f * scale_;
     const float statusLimit = centered_progress ? std::min(rect.right * 0.30f, sb.task.left - gap) : rect.right * 0.30f;
     const std::wstring status_text = path::FriendlyPathText(vm.status.status_text);
-    const float statusWidth = std::min(std::max(0.0f, statusLimit - sb.pad),
+    const float statusWidth = std::min(std::max(0.0f, statusLimit - sb.content_left),
         MeasureTextWidth(factory, small_fmt, status_text));
-    DrawTextEndEllipsis(dc, factory, small_fmt, brTextSecondary_.get(), status_text,
-        sb.pad, y, statusWidth, status_height_);
-    const float selectionLeft = sb.pad + statusWidth + gap;
+    DrawTextEndEllipsis(compositor_, small_fmt, brTextSecondary_.get(), status_text,
+        sb.content_left, y, statusWidth, status_height_);
+    const float selectionLeft = sb.content_left + statusWidth + gap;
     const bool hasTask = vm.status.query_active || !vm.status.task_text.empty() || vm.status.task_progress >= 0.0f;
     const float selectionRight = hasTask ? sb.task.left - gap : rect.right - sb.right_reserved - gap;
-    DrawTextEndEllipsis(dc, factory, small_fmt, brTextSecondary_.get(), vm.status.selection_text,
+    DrawTextEndEllipsis(compositor_, small_fmt, brTextSecondary_.get(), vm.status.selection_text,
         selectionLeft, y, std::max(0.0f, selectionRight - selectionLeft), status_height_);
 
     const float rightReserved = sb.right_reserved;
@@ -1552,7 +2312,7 @@ void MainRenderer::DrawStatusBar(const WindowViewModel& vm, const D2D1_RECT_F& r
         const float trackX=taskRight-trackWidth;
         const float textX=std::max(taskX,trackX-queryGap-textWidth);
         MakeBrush(dc,theme.accent,brAccentText_);
-        DrawTextEndEllipsis(dc,factory,small_fmt,brAccentText_.get(),progress_text,
+        DrawTextEndEllipsis(compositor_, small_fmt,brAccentText_.get(),progress_text,
             textX,y,textWidth,status_height_);
         fluent::ProgressSpec progress;
         progress.bounds=D2D1::RectF(trackX,y,std::min(taskRight,trackX+trackWidth),y+status_height_);
@@ -1616,22 +2376,47 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
         task_pill_was_active_ = false;
         task_pill_done_at_ = vm.status.task_failed ? 0 : now;
         task_pill_animate_ = motion::SystemAnimationsEnabled();
+        if (task_pill_animate_ && (!vm.status.task_failed || vm.status.task_failed_items > 0))
+            task_pill_pop_at_ = now;
     }
-    float strength = active ? 1.0f : 0.0f;   // capsule background opacity
+    // Partial failure (pulse_ops_dialogs.html 状态栏胶囊): red until the next
+    // operation, the click opens the list.
+    const bool bad = !active && vm.status.task_failed_items > 0;
+    if (task_pill_pop_at_ != 0 && now - task_pill_pop_at_ >= kTaskPillPopMs) task_pill_pop_at_ = 0;
+    float strength = active || bad ? 1.0f : 0.0f;   // capsule background opacity
     bool done = false;
+    const bool offers = !active && !bad && (vm.status.task_can_undo || vm.status.task_can_open);
+    task_pill_hold_ms_ = offers ? kTaskPillActionsMs : kTaskPillDoneMs;
+    task_action_rects_[0] = task_action_rects_[1] = D2D1_RECT_F{};
     if (!active && task_pill_done_at_ != 0) {
-        const ULONGLONG age = now - task_pill_done_at_;
-        if (age < kTaskPillDoneMs) {
+        ULONGLONG age = now - task_pill_done_at_;
+        // Pointer on the pill: hold it, with a moment left after it leaves.
+        if (offers && IsHovered(vm, HitTestResult::StatusBarTask) && age < task_pill_hold_ms_ &&
+            age > task_pill_hold_ms_ - 1500) {
+            task_pill_done_at_ = now - (task_pill_hold_ms_ - 1500);
+            age = task_pill_hold_ms_ - 1500;
+        }
+        if (age < task_pill_hold_ms_) {
             done = true;
             strength = 1.0f;
-        } else if (task_pill_animate_ && age < kTaskPillDoneMs + kTaskPillFadeMs) {
+        } else if (task_pill_animate_ && age < task_pill_hold_ms_ + kTaskPillFadeMs) {
             done = true;
             strength = 1.0f - motion::EaseOutCubic(
-                static_cast<float>(age - kTaskPillDoneMs) / static_cast<float>(kTaskPillFadeMs));
+                static_cast<float>(age - task_pill_hold_ms_) / static_cast<float>(kTaskPillFadeMs));
         } else {
             task_pill_done_at_ = 0;
         }
     }
+    // 撤销 / 打开 while the finished pill is fully shown.
+    const bool show_actions = offers && done && strength >= 1.0f;
+    const std::wstring undo_label = l10n::Get(l10n::StringId::Undo);
+    const std::wstring open_label = l10n::Get(l10n::StringId::Open);
+    const float action_pad = 6.0f * scale_;
+    const float undo_w = show_actions && vm.status.task_can_undo
+        ? MeasureTextWidth(factory, fmt, undo_label) + action_pad * 2.0f : 0.0f;
+    const float open_w = show_actions && vm.status.task_can_open
+        ? MeasureTextWidth(factory, fmt, open_label) + action_pad * 2.0f : 0.0f;
+    const float actions_w = undo_w + open_w > 0.0f ? undo_w + open_w + 4.0f * scale_ : 0.0f;
     const bool indeterminate = active && vm.status.task_progress < 0.0f;
     task_pill_spinning_ = indeterminate;
 
@@ -1640,20 +2425,37 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
     const float cy = (area.top + area.bottom) * 0.5f;
     const float pill_h = std::min(area.bottom - area.top - 4.0f * scale_, 22.0f * scale_);
     // The capsule collapses with its fade, so the text slides home instead of jumping.
-    const float ring_d = 12.0f * scale_ * (active ? 1.0f : done ? strength : 0.0f);
+    const float ring_d = 12.0f * scale_ * (active || bad ? 1.0f : done ? strength : 0.0f);
     const float pad_l = 7.0f * scale_ * strength;
     const float pad_r = 10.0f * scale_ * strength;
-    const float gap = 6.0f * scale_ * (active ? 1.0f : done ? strength : 0.0f);
+    const float gap = 6.0f * scale_ * (active || bad ? 1.0f : done ? strength : 0.0f);
     const float text_w = text.empty() ? 0.0f : MeasureTextWidth(factory, fmt, text);
-    const float pill_w = std::min(area_w, pad_l + ring_d + gap + text_w + pad_r + 1.0f);
+    const float pill_w = std::min(area_w, pad_l + ring_d + gap + text_w + actions_w +
+                                          (actions_w > 0.0f ? 4.0f * scale_ - pad_r : 0.0f) + pad_r + 1.0f);
     const D2D1_RECT_F pill = D2D1::RectF(area.right - pill_w, cy - pill_h * 0.5f,
                                          area.right, cy + pill_h * 0.5f);
     const bool hovered = IsHovered(vm, HitTestResult::StatusBarTask);
+    // State colour: accent running, amber paused, green done, red partial.
+    const D2D1_COLOR_F amber = vm.dark ? HexColor(0xF0B041) : HexColor(0xC98410);
+    const D2D1_COLOR_F green = vm.dark ? HexColor(0x3CCF8E) : HexColor(0x16A36A);
+    const D2D1_COLOR_F tone = bad ? theme.danger : done ? green
+        : (active && vm.status.task_paused) ? amber : theme.accent;
+    // Pop on finish: .7 -> 1.08 -> 1 (pillpop, 500 ms).
+    D2D1_MATRIX_3X2_F saved_transform{};
+    const bool popping = task_pill_pop_at_ != 0 && (done || bad);
+    if (popping) {
+        const float t = std::clamp(static_cast<float>(now - task_pill_pop_at_) / kTaskPillPopMs, 0.0f, 1.0f);
+        const float k = t < 0.6f ? 0.7f + 0.38f * motion::EaseOutCubic(t / 0.6f)
+                                 : 1.08f - 0.08f * motion::EaseOutCubic((t - 0.6f) / 0.4f);
+        dc->GetTransform(&saved_transform);
+        dc->SetTransform(D2D1::Matrix3x2F::Scale(k, k, D2D1::Point2F((pill.left + pill.right) * 0.5f, cy)) *
+                         saved_transform);
+    }
 
     if (strength > 0.0f) {
-        D2D1_COLOR_F fill = done ? theme.accent : theme.text;
-        fill.a = done ? (vm.dark ? 0.24f : 0.14f) * strength
-                      : (hovered ? (vm.dark ? 0.12f : 0.08f) : (vm.dark ? 0.07f : 0.045f));
+        D2D1_COLOR_F fill = tone;
+        fill.a = done ? (vm.dark ? 0.20f : 0.13f) * strength
+                      : (hovered ? (vm.dark ? 0.24f : 0.18f) : (vm.dark ? 0.16f : 0.12f));
         ComPtr<ID2D1SolidColorBrush> fill_brush;
         dc->CreateSolidColorBrush(fill, &fill_brush);
         if (fill_brush.get())
@@ -1664,8 +2466,12 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
         const D2D1_POINT_2F c = D2D1::Point2F(pill.left + pad_l + ring_d * 0.5f, cy);
         const float r = ring_d * 0.5f - 1.0f * scale_;
         const float stroke = 1.75f * scale_;
-        if (done) {
-            D2D1_COLOR_F accent = theme.accent;
+        if (bad) {
+            DrawIconText(c.x - ring_d * 0.5f - 2.0f * scale_, cy - ring_d * 0.5f - 2.0f * scale_,
+                         ring_d + 4.0f * scale_, ring_d + 4.0f * scale_,
+                         L"\xE7BA", L"!", tone, 0.82f);
+        } else if (done) {
+            D2D1_COLOR_F accent = tone;
             accent.a = std::max(strength, 0.0f);
             DrawIconText(c.x - ring_d * 0.5f - 2.0f * scale_, cy - ring_d * 0.5f - 2.0f * scale_,
                          ring_d + 4.0f * scale_, ring_d + 4.0f * scale_,
@@ -1676,24 +2482,56 @@ void MainRenderer::DrawTaskPill(const WindowViewModel& vm, const D2D1_RECT_F& ar
             ComPtr<ID2D1SolidColorBrush> track_brush;
             dc->CreateSolidColorBrush(track, &track_brush);
             if (track_brush.get()) dc->DrawEllipse(D2D1::Ellipse(c, r, r), track_brush.get(), stroke);
-            MakeBrush(dc, theme.accent, brAccent_);
-            if (indeterminate) {
-                const float spin = static_cast<float>(now % 1000) * 0.36f;
-                DrawRingArc(dc, brAccent_.get(), c, r, spin, 90.0f, stroke);
-            } else {
-                const float value = std::clamp(vm.status.task_progress / 100.0f, 0.0f, 1.0f);
-                DrawRingArc(dc, brAccent_.get(), c, r, 0.0f, std::max(value * 360.0f, 12.0f), stroke);
+            ComPtr<ID2D1SolidColorBrush> tone_brush;
+            dc->CreateSolidColorBrush(tone, &tone_brush);
+            if (tone_brush.get()) {
+                if (indeterminate) {
+                    const float spin = static_cast<float>(now % 1000) * 0.36f;
+                    DrawRingArc(dc, tone_brush.get(), c, r, spin, 90.0f, stroke);
+                } else {
+                    const float value = std::clamp(vm.status.task_progress / 100.0f, 0.0f, 1.0f);
+                    DrawRingArc(dc, tone_brush.get(), c, r, 0.0f, std::max(value * 360.0f, 12.0f), stroke);
+                }
             }
         }
         text_x += ring_d + gap;
     }
     if (!text.empty()) {
-        D2D1_COLOR_F color = theme.accent;
-        if (vm.status.task_failed && !active) color = theme.text_secondary;
+        D2D1_COLOR_F color = tone;
+        if (vm.status.task_failed && !active && !bad) color = theme.text_secondary;
         MakeBrush(dc, color, brAccentText_);
-        DrawTextEndEllipsis(dc, factory, fmt, brAccentText_.get(), text, text_x, area.top,
-                            std::max(0.0f, area.right - text_x - pad_r + 1.0f), status_height_);
+        const float text_right = actions_w > 0.0f ? pill.right - actions_w
+                                                  : area.right - pad_r + 1.0f;
+        DrawTextEndEllipsis(compositor_, fmt, brAccentText_.get(), text, text_x, area.top,
+                            std::max(0.0f, text_right - text_x), status_height_);
     }
+    if (actions_w > 0.0f) {
+        // Plain text buttons at the right end (pulse_ops_dialogs.html .pa).
+        float x = pill.right - 4.0f * scale_ - open_w - undo_w;
+        const float top = pill.top + 2.0f * scale_;
+        const float bottom = pill.bottom - 2.0f * scale_;
+        const std::wstring* labels[2] = { &undo_label, &open_label };
+        const float widths[2] = { undo_w, open_w };
+        for (int i = 0; i < 2; ++i) {
+            if (widths[i] <= 0.0f) continue;
+            const D2D1_RECT_F button = D2D1::RectF(x, top, x + widths[i], bottom);
+            task_action_rects_[i] = button;
+            if (IsHovered(vm, HitTestResult::StatusBarTask, -1, i)) {
+                D2D1_COLOR_F hover = theme.text;
+                hover.a = vm.dark ? 0.10f : 0.08f;
+                ComPtr<ID2D1SolidColorBrush> hover_brush;
+                dc->CreateSolidColorBrush(hover, &hover_brush);
+                if (hover_brush.get())
+                    FillRoundedRect(dc, hover_brush.get(), button.left, button.top, widths[i],
+                                    bottom - top, 6.0f * scale_);
+            }
+            MakeBrush(dc, theme.text, brAccentText_);
+            DrawTextEndEllipsis(compositor_, fmt, brAccentText_.get(), *labels[i], x + action_pad, area.top,
+                                widths[i] - action_pad * 2.0f + 1.0f, status_height_);
+            x += widths[i];
+        }
+    }
+    if (popping) dc->SetTransform(saved_transform);
 }
 
 MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(
@@ -1701,8 +2539,12 @@ MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(
     TabStripMetrics m;
 
     const TitleChrome chrome = MakeTitleChrome(window_w, scale_, title_bar_height_);
-    m.x0 = EffectiveSidebarWidth(window_w) + margin_;
-    const float tabsRight = chrome.settings_left - 8.0f * scale_;
+    m.x0 = TitleSidebarWidth(window_w) + margin_;
+    // However many tabs are open, a stretch of title bar right of the "+"
+    // button stays empty so the window can still be grabbed there; tabs
+    // compact that much earlier instead.
+    constexpr float kTabDragReserveDip = 56.0f;
+    const float tabsRight = chrome.settings_left - (8.0f + kTabDragReserveDip) * scale_;
 
     // Group chips: one at the start of each consecutive same-group run. Their
     // widths come out of the strip budget before tabs are sized; positions
@@ -1753,21 +2595,16 @@ MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(
         // Recently closed: keep the widths the pointer was aiming at.
         m.w = tab_freeze_w_;
         m.active_w = tab_freeze_active_w_;
-        m.compact = tab_freeze_compact_;
     } else if (visibleCount == 0 || normalW >= minW) {
         m.w = visibleCount == 0 ? 0.0f : std::min(kTabMaxW * scale_, normalW);
         m.active_w = m.w;
     } else {
-        // Crowded: inactive tabs keep only their icon, the active one its title.
-        const float activeW = m.active >= 0 ? kTabActiveMinW * scale_ : 0.0f;
-        const size_t rest = visibleCount - (m.active >= 0 ? 1 : 0);
-        float iconW = rest == 0 ? minW
-            : (spare - (m.active >= 0 ? activeW + control_gap_ : 0.0f)) / static_cast<float>(rest) - control_gap_;
-        iconW = std::min(iconW, minW);
-        m.compact = true;
-        m.overflow = iconW < kTabCompactW * scale_;
-        m.w = m.overflow ? kTabCompactW * scale_ : iconW;
-        m.active_w = m.active >= 0 ? activeW : m.w;
+        // Crowded: tabs stop shrinking at the minimum and keep their titles;
+        // the strip scrolls instead (Edge's scrollable tab strip). The active
+        // tab always shows close, so it gets that room on top.
+        m.w = minW;
+        m.active_w = m.active >= 0 ? kTabActiveMinW * scale_ : m.w;
+        m.overflow = true;
     }
     if (m.active < 0) m.active_w = m.w;
     m.y = kTabStripTopGapDip * scale_;
@@ -1853,7 +2690,6 @@ void MainRenderer::FreezeTabWidths(const WindowViewModel& vm, float window_w) {
     for (const auto& t : vm.tabs) if (!t.hidden && !t.pinned) ++count;
     tab_freeze_w_ = m.w;
     tab_freeze_active_w_ = m.active_w;
-    tab_freeze_compact_ = m.compact;
     tab_freeze_count_ = count;
 }
 

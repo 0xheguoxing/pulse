@@ -6,6 +6,7 @@
 #include <cwctype>
 #include <iterator>
 #include <algorithm>
+#include <vector>
 
 namespace pulse::app::folder_size {
 std::wstring Key(std::wstring path) {
@@ -130,6 +131,37 @@ SavedValues ReadValues(const std::wstring& file) {
     }
     return values;
 }
+namespace {
+// Like WriteUtf8FileAtomic, but for a cache that can always be rebuilt: the
+// copy is hidden, so a folder showing Pulse's data folder does not count the
+// short-lived .tmp (or the cache) among its items, and it skips write-through
+// and the flush, which only protect against losing it in a power cut.
+bool WriteCacheFile(const std::wstring& path, const std::wstring& text) {
+    std::vector<uint8_t> bytes;
+    if (text.size() > kMaxUtf8FileBytes || !EncodeUtf8Bytes(text, bytes) || bytes.size() > kMaxUtf8FileBytes)
+        return false;
+    const std::wstring temp = path + L".tmp";
+    constexpr DWORD kAttributes = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+    // An existing hidden file is replaced only when the new one is hidden too.
+    const HANDLE file = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+        kAttributes | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    size_t done = 0;
+    while (done < bytes.size()) {
+        DWORD written = 0;
+        const DWORD remaining = static_cast<DWORD>((std::min)(bytes.size() - done, static_cast<size_t>(UINT32_MAX)));
+        if (!WriteFile(file, bytes.data() + done, remaining, &written, nullptr) || written == 0) break;
+        done += written;
+    }
+    CloseHandle(file);
+    // The renamed copy keeps its attributes, so the cache itself is hidden too.
+    if (done != bytes.size() || !MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileW(temp.c_str());
+        return false;
+    }
+    return true;
+}
+} // namespace
 bool WriteValues(const std::wstring& file, const SavedValues& values) {
     if (file.empty()) return true;
     std::wstring text = L"{\"version\":3,\"folders\":[";
@@ -147,6 +179,6 @@ bool WriteValues(const std::wstring& file, const SavedValues& values) {
         text += L'"';
     }
     text += L"]}";
-    return WriteUtf8FileAtomic(file, text);
+    return WriteCacheFile(file, text);
 }
 } // namespace pulse::app::folder_size

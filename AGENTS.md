@@ -66,3 +66,7 @@ Verify both function and design within this scope; do not stop at a successful c
 ## Commit & Pull Request Guidelines
 
 Use imperative, scoped commit subjects such as `preview: decode UTF-16 BE text`. When a pull request is requested, explain behavior and risk, list actual test results, and link issues when available. For visible UI changes, include before/after screenshots when capture is available; otherwise disclose the visual verification limit. Do not expand testing solely to fill a PR template.
+
+## UI 文字（l10n）
+
+界面文字的唯一来源是 `tools/l10n/catalog.tsv`（name / id_name / id / zh / en / tw）。新增或修改文字只改 catalog，然后运行 `python tools/l10n/gen_strings.py` 重新生成 `string_ids.h`、`localization.h` 的 StringId 枚举、`strings.rcinc`、`strings_zh_tw.rcinc`、`zh_hant_table.inc`；这些生成文件不要手改（CI 的 gen_strings.py --check 会拦截）。tw 列留空时由 OpenCC（版本锁定在 tools/l10n/requirements.txt，s2twp 台湾用词）生成。产品代码取文字用 `l10n::Get(l10n::StringId::X)`，不要再写 `l10n::Pick(L"中文", L"英文")`（CI 的 check_no_pick.py 会拦截）；运行时拼接的片段继续用 `l10n::Cn` / `HantText` 做简→繁转换。后台进程新增提示语要同时在 `src/common/service_text.cpp` 补英文（check_service_text.py 检查）。现有 id 永不改号（测试依赖 id 区间）。

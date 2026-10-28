@@ -15,6 +15,28 @@
 namespace pulse::ui {
 namespace {
 
+// Words as a reader counts them: each CJK character is one, a run of letters
+// or digits is another.
+uint32_t CountWords(const std::wstring& text) {
+    uint32_t words = 0;
+    bool in_word = false;
+    for (const wchar_t c : text) {
+        const bool cjk = (c >= 0x3040 && c <= 0x30FF) || (c >= 0x3400 && c <= 0x4DBF) ||
+                         (c >= 0x4E00 && c <= 0x9FFF) || (c >= 0xAC00 && c <= 0xD7AF) ||
+                         (c >= 0xF900 && c <= 0xFAFF);
+        if (cjk) {
+            ++words;
+            in_word = false;
+        } else if (iswalnum(c) || c == L'\'' || c == L'_') {
+            if (!in_word) ++words;
+            in_word = true;
+        } else {
+            in_word = false;
+        }
+    }
+    return words;
+}
+
 template <class T> using WrlPtr = Microsoft::WRL::ComPtr<T>;
 
 enum : uint32_t {
@@ -128,6 +150,7 @@ void MarkdownView::Clear() {
     doc_title_.clear();
     doc_author_.clear();
     words_ = 0;
+    headings_ = 0;
     all_blocks_.clear();
     all_tables_.clear();
     sections_.clear();
@@ -258,6 +281,9 @@ bool MarkdownView::SetPayload(const std::wstring& payload, const std::wstring& f
         plain_ += b.text;
     }
     parsed_ = true;
+    for (const Block& b : blocks_)
+        if (b.kind == L'h') ++headings_;
+    if (format_.empty()) words_ = CountWords(plain_);
     if (!sections_.empty()) {
         if (sections_[0].begin > 0) sections_.insert(sections_.begin(), Section{});
         for (size_t i = 0; i < sections_.size(); ++i)
@@ -271,7 +297,22 @@ bool MarkdownView::SetPayload(const std::wstring& payload, const std::wstring& f
         tables_.clear();
         ShowSection(0);
     } else {
+        // Plain Markdown: a contents list from h1-h3 once there are three of them.
         toc_.clear();
+        int top = 6;
+        for (const Block& b : blocks_)
+            if (b.kind == L'h') top = (std::min)(top, static_cast<int>(ToU32(b.arg)));
+        for (size_t i = 0; i < blocks_.size(); ++i) {
+            const Block& b = blocks_[i];
+            const int level = static_cast<int>(ToU32(b.arg));
+            if (b.kind != L'h' || level > top + 2 || b.text.empty()) continue;
+            TocEntry entry;
+            entry.level = (std::max)(0, level - top);
+            entry.block = static_cast<int>(i);
+            entry.title = b.text;
+            toc_.push_back(std::move(entry));
+        }
+        if (toc_.size() < 3) toc_.clear();
     }
     return true;
 }
@@ -649,7 +690,7 @@ void MarkdownView::DrawRanges(ID2D1DeviceContext* dc, const Block& b, float ox, 
 }
 
 bool MarkdownView::SidebarVisible(float width) const noexcept {
-    return !toc_.empty() && width >= 640.0f * scale_;
+    return !toc_hidden_ && !toc_.empty() && width >= 640.0f * scale_;
 }
 
 bool MarkdownView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D1_RECT_F& rect,
@@ -822,7 +863,7 @@ bool MarkdownView::DrawDocument(ID2D1DeviceContext* dc, IDWriteFactory2* factory
                 dc->FillRoundedRectangle(D2D1::RoundedRect(box, 6.0f * s, 6.0f * s), brush_.Get());
                 std::wstring label = L"\xD83D\xDDBC  " + b.text;
                 if (b.image_metadata_ready && b.image_path.empty())
-                    label += pulse::l10n::Pick(L"\x3000\xFF08\x672A\x52A0\x8F7D\x8FDC\x7A0B\x6216\x7F3A\x5931\x7684\x56FE\x7247\xFF09", L"   (remote or missing image not loaded)");
+                    label += pulse::l10n::Get(pulse::l10n::StringId::RemoteOrMissingImageNotLoaded).c_str();
                 WrlPtr<IDWriteTextLayout> tl;
                 factory->CreateTextLayout(label.data(), static_cast<UINT32>(label.size()), body_.Get(),
                                           (std::max)(1.0f, b.w - 24.0f * s), b.h, &tl);
@@ -907,7 +948,7 @@ bool MarkdownView::DrawDocument(ID2D1DeviceContext* dc, IDWriteFactory2* factory
         const float fy = oy + footer_y_;
         brush_->SetColor(line);
         dc->FillRectangle(R(origin_x_, fy, origin_x_ + W, fy + 1.0f * s), brush_.Get());
-        std::wstring label = pulse::l10n::Pick(L"下一章", L"Next chapter");
+        std::wstring label = pulse::l10n::Get(pulse::l10n::StringId::NextChapter).c_str();
         const std::wstring& name = sections_[section_ + 1].name;
         if (!name.empty()) label += L"  ·  " + name.substr(0, 60);
         label += L"  ›";
@@ -1174,7 +1215,8 @@ bool MarkdownView::Click(float x, float y) {
         y >= toc_rect_.top && y < toc_rect_.bottom) {
         const int row = TocRowAt(x, y);
         if (row >= 0) {
-            ShowSection(toc_[row].section, toc_[row].block);
+            if (sections_.empty()) pending_block_ = toc_[row].block;
+            else ShowSection(toc_[row].section, toc_[row].block);
             toc_follow_ = false;  // the clicked row is already in view
         }
         return true;

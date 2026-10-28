@@ -1,5 +1,6 @@
 #pragma once
 #include "app_state.h"
+#include "../ui/ui_renderer.h"
 #include <windowsx.h>
 #include <algorithm>
 #include <cmath>

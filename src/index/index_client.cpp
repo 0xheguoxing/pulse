@@ -58,7 +58,11 @@ void IndexClient::Start(HWND notify, UINT status_msg, UINT search_msg, std::wstr
 }
 
 void IndexClient::Stop() {
-    running_ = false;
+    {
+        // Under mu_ so Writer cannot miss the wake between its check and wait.
+        std::lock_guard<std::mutex> lock(mu_);
+        running_ = false;
+    }
     pinyin_ready_ = false;
     pending_cv_.notify_all();
     HANDLE pipe = INVALID_HANDLE_VALUE;
@@ -100,13 +104,100 @@ void IndexClient::StartStoppedService() {
         if (QueryServiceStatus(svc, &status) && status.dwCurrentState == SERVICE_STOPPED &&
             !IndexConfigurationRunning()) {
             service_start_tick_ = now;
-            StartServiceW(svc, 0, nullptr);   // the pipe shows up once it runs
+            // Only a client that is running wants search; this also clears a
+            // switch another session turned off.
+            const wchar_t* args[] = {L"--enable-search"};
+            StartServiceW(svc, 1, args);   // the pipe shows up once it runs
         }
         CloseServiceHandle(svc);
     } else {
         service_start_tick_ = now;   // denied (older DACL) or gone: do not ask every second
     }
     CloseServiceHandle(scm);
+}
+
+bool IndexClient::SetServiceSearch(bool enabled, bool purge_index, DWORD* error) {
+    DWORD failure = NO_ERROR;
+    bool ok = false;
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) {
+        if (error) *error = GetLastError();
+        return false;
+    }
+    if (SC_HANDLE svc = OpenServiceW(scm, kServiceName,
+            SERVICE_QUERY_STATUS | SERVICE_START | SERVICE_USER_DEFINED_CONTROL)) {
+        constexpr DWORD kDisable = 129, kDisablePurge = 130;   // index_host.cpp
+        for (int attempt = 0; attempt < 50; ++attempt) {
+            SERVICE_STATUS status{};
+            if (!QueryServiceStatus(svc, &status)) { failure = GetLastError(); break; }
+            if (status.dwCurrentState == SERVICE_STOPPED) {
+                const wchar_t* args[] = {enabled ? L"--enable-search" : L"--disable-search", L"--purge-index"};
+                const DWORD count = !enabled && purge_index ? 2 : 1;
+                ok = StartServiceW(svc, count, args) != FALSE;
+                if (!ok && GetLastError() == ERROR_SERVICE_ALREADY_RUNNING) { Sleep(100); continue; }
+                if (!ok) failure = GetLastError();
+                break;
+            }
+            if (status.dwCurrentState == SERVICE_RUNNING) {
+                if (enabled) { ok = true; break; }
+                SERVICE_STATUS after{};
+                ok = ControlService(svc, purge_index ? kDisablePurge : kDisable, &after) != FALSE;
+                if (!ok && GetLastError() == ERROR_SERVICE_CANNOT_ACCEPT_CTRL) { Sleep(100); continue; }
+                if (!ok) failure = GetLastError();
+                break;
+            }
+            Sleep(100);   // start or stop pending
+        }
+        if (!ok && failure == NO_ERROR) failure = ERROR_SERVICE_REQUEST_TIMEOUT;
+        CloseServiceHandle(svc);
+    } else {
+        failure = GetLastError();
+    }
+    CloseServiceHandle(scm);
+    if (error) *error = failure;
+    return ok;
+}
+
+namespace {
+void RemoveTree(const std::wstring& root) {
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileExW((root + L"\\*").c_str(), FindExInfoBasic, &data,
+                                   FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        const std::wstring name = data.cFileName;
+        if (name == L"." || name == L"..") continue;
+        const std::wstring path = root + L"\\" + name;
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY)
+            SetFileAttributesW(path.c_str(), data.dwFileAttributes & ~FILE_ATTRIBUTE_READONLY);
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) RemoveTree(path);
+            RemoveDirectoryW(path.c_str());
+        } else {
+            DeleteFileW(path.c_str());
+        }
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+}
+}
+
+void IndexClient::PurgeIndexFolder(const std::wstring& root) {
+    if (root.size() < 4) return;
+    // A helper still finishing its idle exit holds the files for a moment.
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        RemoveTree(root);
+        WIN32_FIND_DATAW data{};
+        HANDLE find = FindFirstFileExW((root + L"\\*").c_str(), FindExInfoBasic, &data,
+                                       FindExSearchNameMatch, nullptr, 0);
+        bool empty = true;
+        if (find != INVALID_HANDLE_VALUE) {
+            do { if (wcscmp(data.cFileName, L".") && wcscmp(data.cFileName, L"..")) empty = false; }
+            while (empty && FindNextFileW(find, &data));
+            FindClose(find);
+        }
+        if (empty) return;
+        Sleep(1000);
+    }
 }
 
 bool IndexClient::SpawnHelper() {
@@ -177,8 +268,11 @@ bool IndexClient::EnsureConnected() {
         }
         pipe_ = h;
     }
-    { std::lock_guard<std::mutex> lock(mu_); scope_ready_ = false; pending_searches_=subscribed_searches_; have_pending_=!pending_searches_.empty(); }
-    connected_ = true;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        scope_ready_ = false; pending_searches_=subscribed_searches_; have_pending_=!pending_searches_.empty();
+        connected_ = true;
+    }
     pending_cv_.notify_one();
     return true;
 }
@@ -221,20 +315,25 @@ void IndexClient::HandleStatus(const uint8_t* p, size_t n) {
     uint32_t ready = 0, count = 0;
     std::wstring text;
     if (!r.GetU32(ready) || !r.GetU32(count) || !r.GetString(text)) return;
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        status_ = std::move(text);
-    }
     uint32_t pinyin_ready = 0;
     // Optional trailing status field: older hosts remain usable and report unavailable.
     if (!r.GetU32(pinyin_ready)) pinyin_ready = 0;
-    pinyin_ready_.store(pinyin_ready == 1);
-    ready_.store(ready != 0);
-    count_.store(count);
     uint64_t revision = 0; uint32_t version = 0;
     if (r.GetU64(revision) && r.GetU32(version) && version == 1) revision_ = revision;
-    else { std::lock_guard lock(mu_); status_ = L"索引进程版本过旧，请重启 Pulse 和索引服务以启用实时搜索"; }
-    if (notify_ && status_msg_) PostMessageW(notify_, status_msg_, 0, 0);
+    else text = L"索引进程版本过旧，请重启 Pulse 和索引服务以启用实时搜索";
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        changed = status_ != text;
+        status_ = std::move(text);
+    }
+    changed |= pinyin_ready_.exchange(pinyin_ready == 1) != (pinyin_ready == 1);
+    changed |= ready_.exchange(ready != 0) != (ready != 0);
+    changed |= count_.exchange(count) != count;
+    // The host rebroadcasts after every journal batch, mostly with only a new
+    // revision; subscribed searches refresh on their own, so only a change
+    // the window can show is worth waking it for.
+    if (changed && notify_ && status_msg_) PostMessageW(notify_, status_msg_, 0, 0);
 }
 
 void IndexClient::HandleSearch(uint32_t id, const uint8_t* p, size_t n) {
@@ -363,7 +462,9 @@ void IndexClient::Writer() {
     while (running_) {
         {
             std::unique_lock<std::mutex> lock(mu_);
-            pending_cv_.wait_for(lock, std::chrono::milliseconds(100),
+            // Every change that can satisfy this is made under mu_ and
+            // notified, so the idle writer sleeps instead of polling.
+            pending_cv_.wait(lock,
                 [this] { return !running_ || (connected_ &&
                     (have_pending_ || !cancelled_sessions_.empty() || volume_refresh_requested_)); });
             if (!running_) return;

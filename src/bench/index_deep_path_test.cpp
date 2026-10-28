@@ -11,7 +11,8 @@ struct EngineTestAccess {
         return leaf;
     }
     static std::wstring Path(Engine& e, int32_t id, bool query) {
-        return query ? e.BuildQueryPathLocked(id) : e.BuildPathLocked(id);
+        (void)query;  // queries and events share BuildPathLocked since a719a89
+        return e.BuildPathLocked(id);
     }
     static void Parent(Engine& e, int32_t id, int32_t parent) { e.live_.nodes[static_cast<size_t>(id)].parent = parent; }
 };

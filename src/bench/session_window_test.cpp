@@ -5,6 +5,8 @@
 // passing: old files migrate to windows[0], and the single-window fields that
 // older versions read stay ahead of windows[] in the file.
 #include "../app/session.h"
+#include "../app/app_model.h"
+#include "../app/places.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -193,7 +195,7 @@ int main() {
         return 0;
     }
 
-    Check(json.find(L"\"version\":8") != std::wstring::npos, "writer emits session version 8");
+    Check(json.find(L"\"version\":9") != std::wstring::npos, "writer emits session version 9");
     Check(json.find(L"\"windows\"") == std::wstring::npos,
           "writer leaves windows[] out when the snapshot has none");
     SessionSnapshot parsed;
@@ -267,15 +269,30 @@ int main() {
           "v8 without windows[] still parses");
     ExpectSampleWindow(old_reader, "v8 read as v7");
 
-    // quickAccessHidden keeps its version-7 gate (not "current version").
-    SessionSnapshot qa7, qa6;
+    // quickAccessHidden keeps its version-7 gate (not "current version"), and
+    // files before 9 gain the default-hidden library bits (Documents, Music).
+    const int qa_defaults = static_cast<int>(kDefaultQuickAccessHiddenMask);
+    SessionSnapshot qa7, qa6, qa8, qa9, fresh;
     Check(ParseSessionJson(L"{\"version\":7,\"quickAccessHidden\":5}", qa7) &&
-              qa7.quick_access_hidden == 5 && qa7.windows.size() == 1 &&
-              qa7.windows[0].layout.quick_access_hidden == 5,
-          "v7 quick-access mask survives the v8 upgrade");
+              qa7.quick_access_hidden == (5 | qa_defaults) && qa7.windows.size() == 1 &&
+              qa7.windows[0].layout.quick_access_hidden == (5 | qa_defaults),
+          "v7 quick-access mask survives the upgrade and hides Documents and Music");
     Check(ParseSessionJson(L"{\"version\":6,\"quickAccessHidden\":5}", qa6) &&
-              qa6.quick_access_hidden == 0,
-          "v6 quick-access mask is still dropped");
+              qa6.quick_access_hidden == qa_defaults,
+          "v6 quick-access mask is still dropped (defaults instead)");
+    Check(ParseSessionJson(L"{\"version\":8,\"quickAccessHidden\":2,\"windows\":[{\"quickAccessHidden\":3},"
+                           L"{\"quickAccessHidden\":0}]}", qa8) &&
+              qa8.quick_access_hidden == (2 | qa_defaults) && qa8.windows.size() == 2 &&
+              qa8.windows[0].layout.quick_access_hidden == (3 | qa_defaults) &&
+              qa8.windows[1].layout.quick_access_hidden == qa_defaults,
+          "v8 per-window quick-access masks hide Documents and Music too");
+    Check(ParseSessionJson(L"{\"version\":9,\"quickAccessHidden\":5,\"windows\":[{\"quickAccessHidden\":0}]}", qa9) &&
+              qa9.quick_access_hidden == 5 && qa9.windows.size() == 1 &&
+              qa9.windows[0].layout.quick_access_hidden == 0,
+          "v9 masks are kept as written (Documents and Music can be shown)");
+    Check(fresh.quick_access_hidden == qa_defaults && WindowLayoutSnapshot{}.quick_access_hidden == qa_defaults &&
+              ParseSessionJson(SessionToJson(fresh), qa9) && qa9.quick_access_hidden == qa_defaults,
+          "a fresh session hides Documents and Music and keeps that through a save");
 
     SessionSnapshot bad_windows;
     Check(ParseSessionJson(L"{\"version\":8,\"left\":10,\"right\":20,\"windows\":[1,2]}", bad_windows) &&
@@ -360,6 +377,41 @@ int main() {
               "M7f: a closed window without tabs is dropped");
         Check(SessionToJson(SampleSession()).find(L"closedWindows") == std::wstring::npos,
               "M7f: no closedWindows[] when nothing was closed");
+    }
+
+    {
+        // Quick-access layout keys and the display order the sidebar uses.
+        using Keys = std::vector<std::wstring>;
+        bool names = true;
+        for (int i = 0; i < static_cast<int>(BuiltinQuickAccess::Count); ++i)
+            names = names && BuiltinQuickAccessFromKey(BuiltinQuickAccessKey(i)) == i;
+        Check(names && BuiltinQuickAccessKey(static_cast<int>(BuiltinQuickAccess::Pictures)) ==
+                           L"builtin:pictures" &&
+                  BuiltinQuickAccessFromKey(L"C:\\builtin") == -1 &&
+                  BuiltinQuickAccessFromKey(L"builtin:nope") == -1 &&
+                  IsBuiltinQuickAccessKey(BuiltinQuickAccessKey(0)),
+              "quick-access link keys round-trip and never look like paths");
+        std::vector<SidebarEntry> links(3);
+        links[0].builtin = static_cast<int>(BuiltinQuickAccess::Recent);
+        links[1].builtin = static_cast<int>(BuiltinQuickAccess::Desktop);
+        links[2].builtin = static_cast<int>(BuiltinQuickAccess::Music);
+        const uint32_t music_hidden = 1u << static_cast<int>(BuiltinQuickAccess::Music);
+        PlacesCatalog places;
+        places.persist = false;
+        places.quick_access_paths = {L"C:\\a", L"C:\\b"};
+        Check(QuickAccessDisplayKeys(links, &places, music_hidden, false) ==
+                  Keys{L"builtin:recent", L"builtin:desktop", L"C:\\a", L"C:\\b"},
+              "default quick-access order: links, then pins; hidden links drop out");
+        places.quick_access_order = {L"C:\\b", L"builtin:music", L"builtin:recent"};
+        Check(QuickAccessDisplayKeys(links, &places, music_hidden, true) ==
+                  Keys{L"C:\\b", L"builtin:music", L"builtin:recent", L"builtin:desktop", L"C:\\a"},
+              "custom quick-access order: saved rows first, missing ones in default places");
+        Check(QuickAccessDisplayKeys(links, &places, music_hidden, false) ==
+                  Keys{L"C:\\b", L"builtin:recent", L"builtin:desktop", L"C:\\a"},
+              "custom quick-access order without the hidden links");
+        Check(QuickAccessDisplayKeys(links, nullptr, 0, true) ==
+                  Keys{L"builtin:recent", L"builtin:desktop", L"builtin:music"},
+              "quick-access order without places lists the links");
     }
 
     std::printf("session_window_test: %d failure(s)\n", g_failures);

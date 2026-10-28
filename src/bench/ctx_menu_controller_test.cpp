@@ -737,6 +737,38 @@ int wmain() {
                   timing.grew == 0,
               "late rows of an answer the menu refused are reported as dropped");
     }
+    {
+        // 以管理员身份运行 on a .bat: batfile's runas command (cmd.exe /C "%1")
+        // started as a command line runs unelevated. The verb goes to the shell.
+        Check(app::ShellOwnsStaticVerb(L"runas") && app::ShellOwnsStaticVerb(L"RunAs") &&
+                  app::ShellOwnsStaticVerb(L"runasuser") && !app::ShellOwnsStaticVerb(L"edit") &&
+                  !app::ShellOwnsStaticVerb(L"runa") && !app::ShellOwnsStaticVerb(L""),
+              "runas / runasuser (any case) are left to the shell");
+        struct Case { const wchar_t* verb; bool shell; };
+        for (const Case c : { Case{ L"runas", true }, Case{ L"edit", false } }) {
+            app::ContextMenuController controller;
+            app::ContextMenuPrefs bat_prefs; bat_prefs.persist = false;
+            std::wstring by_verb, by_command;
+            app::ContextMenuController::ShellOperations operations;
+            operations.query = [](auto, HWND, bool, bool, auto) { return 17u; };
+            operations.execute_verb = [&](const auto&, const auto& verb) { by_verb = verb; };
+            operations.execute_command = [&](const auto& command, const auto&) { by_command = command; };
+            controller.SetShellOperations(std::move(operations));
+            app::StaticVerb row; row.verb = c.verb; row.display = c.verb;
+            row.command = L"C:\\Windows\\System32\\cmd.exe /C \"%1\" %*";
+            controller.CompleteStaticVerbs(L".bat", { row }, controller.cache_generation());
+            controller.StartQuery(bat_prefs, nullptr, { L"C:\\fixture\\setup.bat" }, false, L".bat", false, {}, {});
+            controller.OpenMenu({});
+            controller.CloseMenu();
+            controller.ExecuteShellCommand(app::CmdShellStaticBase, {}, {});
+            if (c.shell)
+                Check(by_verb == L"runas" && by_command.empty(),
+                      "runas with a registry command is invoked as the shell verb (elevates)");
+            else
+                Check(by_verb.empty() && by_command == row.command,
+                      "other static verbs keep their registry command line");
+        }
+    }
     std::printf("%s\n", failures ? "FAILED" : "ALL PASSED");
     return failures ? 1 : 0;
 }

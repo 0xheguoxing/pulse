@@ -17,7 +17,10 @@ using pulse::json::ExtractObject;
 // 2: slow_ext only holds handlers the host proved hung (collect_hung). Files
 // written before that carry disables from the old "everyone still running
 // after 1 s" rule, which hid every healthy extension after three stalls.
-constexpr int kPrefsVersion = 2;
+// 3: 发送到 / 共享 and the system groups default on (Explorer parity). Older
+// files stored the old off defaults as plain values, so they are turned on
+// once; per-row switches in "items" are the user's and stay.
+constexpr int kPrefsVersion = 3;
 
 int ClampCap(int v, int lo, int hi, int fallback) {
     if (v < lo || v > hi) return fallback;
@@ -31,16 +34,15 @@ static_assert(std::size(kOrderKeys) == static_cast<size_t>(BuiltinMenuSurface::C
 } // namespace
 
 void ContextMenuPrefs::ResetToDefaults() {
-    // Explorer parity for the visible groups; 发送到 and the image / system verbs
-    // stay off until the user asks for them from the settings page.
+    // Explorer parity: every group its classic menu shows starts on.
     software = true;
-    share = false;
-    wallpaper = false;
-    rotate = false;
-    shortcut = false;
+    share = true;
+    wallpaper = true;
+    rotate = true;
+    shortcut = true;
     open_with = true;
     open_with_com = false;
-    system_extra = false;
+    system_extra = true;
     print = true;
     open_with_mru = 2;
     item_enabled.clear();
@@ -352,13 +354,13 @@ bool ContextMenuPrefs::FromJson(const std::wstring& json) {
     const std::wstring cats = ExtractObject(json, L"categories");
     const std::wstring& src = cats.empty() ? json : cats;
     software = pulse::json::ExtractBool(src, L"software", true);
-    share = pulse::json::ExtractBool(src, L"share", false);
-    wallpaper = pulse::json::ExtractBool(src, L"wallpaper", false);
-    rotate = pulse::json::ExtractBool(src, L"rotate", false);
-    shortcut = pulse::json::ExtractBool(src, L"shortcut", false);
+    share = pulse::json::ExtractBool(src, L"share", true);
+    wallpaper = pulse::json::ExtractBool(src, L"wallpaper", true);
+    rotate = pulse::json::ExtractBool(src, L"rotate", true);
+    shortcut = pulse::json::ExtractBool(src, L"shortcut", true);
     open_with = pulse::json::ExtractBool(src, L"open_with", true);
     open_with_com = pulse::json::ExtractBool(src, L"open_with_com", false);
-    system_extra = pulse::json::ExtractBool(src, L"system_extra", false);
+    system_extra = pulse::json::ExtractBool(src, L"system_extra", true);
     print = pulse::json::ExtractBool(src, L"print", true);
 
     builtin_hidden = 0;
@@ -425,8 +427,8 @@ bool ContextMenuPrefs::FromJson(const std::wstring& json) {
     // Purge disable state older builds persisted for SendTo (#77): the
     // exemption above keeps it clear, so this migration is idempotent.
     slow_ext.erase(ipc::SendToHandlerCatalogKey());
-    migrated = false;
-    if (pulse::json::ExtractInt(json, L"version", 1) < kPrefsVersion) {
+    const int version = pulse::json::ExtractInt(json, L"version", 1);
+    if (version < 2) {
         // Drop the old heuristic's verdicts (every entry there was recorded
         // as a synthetic 1000 ms "timeout") and the per-type timings nothing
         // reads. Explicit switches in "items" are the user's and stay.
@@ -447,8 +449,11 @@ bool ContextMenuPrefs::FromJson(const std::wstring& json) {
             if (item.flyout && item.category == ipc::CtxMenuCategory::OpenWith)
                 item.from_com = false;
         }
-        migrated = true;
     }
+    if (version < 3) {
+        share = wallpaper = rotate = shortcut = system_extra = true;
+    }
+    migrated = version < kPrefsVersion;
     return true;
 }
 

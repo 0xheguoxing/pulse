@@ -5,7 +5,7 @@
 
 #include "../ui/ui_compositor.h"
 #include "../ui/notification_toast.h"
-#include "../ui/ui_renderer.h"
+#include "../ui/ui_view_model.h"
 #include "../ui/fluent_menu.h"
 #include "../ui/drag_drop.h"
 #include "../ui/file_operation_dialog.h"
@@ -40,6 +40,7 @@
 #include "context_menu_controller.h"
 #include "shell_verbs.h"
 #include "app_prefs.h"
+#include "ai_assistant.h"
 #include "explorer_window_takeover.h"
 #include "shell_window_registry.h"
 #include "saved_search.h"
@@ -81,6 +82,8 @@ namespace pulse {
 constexpr UINT kTimerUi = 1;
 // Scrolls the list while a marquee is dragged past its edge.
 constexpr UINT_PTR kTimerMarqueeScroll = 0x4D51;
+// Repaints when an owner-drawn caret (Settings > 快捷键 search) blinks.
+constexpr UINT_PTR kTimerDrawnCaret = 0x4342;
 
 enum class OmnibarMode { Path, Mixed, Command, Project };
 
@@ -171,6 +174,7 @@ struct AppState : AppCoreOwner {
     decltype(AppCore::sidebar)& sidebar = core.sidebar;
     decltype(AppCore::sidebarRefresh)& sidebarRefresh = core.sidebarRefresh;
     decltype(AppCore::networkLocations)& networkLocations = core.networkLocations;
+    decltype(AppCore::networkPage)& networkPage = core.networkPage;
     decltype(AppCore::recycle_info)& recycle_info = core.recycle_info;
     decltype(AppCore::recycle_refresh_at)& recycle_refresh_at = core.recycle_refresh_at;
     decltype(AppCore::recycle_refresh_left)& recycle_refresh_left = core.recycle_refresh_left;
@@ -249,7 +253,10 @@ struct AppState : AppCoreOwner {
     HWND hwnd = nullptr;
     ui::Compositor compositor;
     ui::NotificationToast notification_toast;
-    ui::MainRenderer renderer{core.render_caches};
+    // Held through a pointer so this header needs only ui_view_model.h; sources
+    // that call the renderer include ui_renderer.h.
+    ui::MainRendererPtr renderer_owner = ui::MakeMainRenderer(core.render_caches);
+    ui::MainRenderer& renderer = *renderer_owner;
     // Vsync-paced frames while highlight glides / list shifts run (frame_pump.h).
     app::FramePump framePump;
     ui::QuickPreviewWindow quickPreview;
@@ -273,7 +280,7 @@ struct AppState : AppCoreOwner {
     // rewrite it; the masks above are indexed by id, so they survive a reorder.
     std::vector<int> sidebarOrder = app::DefaultSidebarOrder();
     // Built-in quick-access links switched off in the section menu.
-    uint32_t sidebarQuickAccessHiddenMask = 0;
+    uint32_t sidebarQuickAccessHiddenMask = app::kDefaultQuickAccessHiddenMask;
     bool starredExpanded = true;
     float sidebarScroll = 0.0f;
     int settingsReleaseExpanded = 0;   // Settings > About release-note row that is open, -1 none
@@ -366,6 +373,15 @@ struct AppState : AppCoreOwner {
         ULONGLONG dwell_start = 0;
         UINT dwell_ms = 0;
         UINT frame_ms = 0;              // kTimerHoverPreviewFrame interval, 0 when off
+        // A folder or This PC drive: its contents instead of a preview, read
+        // on a worker (app_hover_preview.cpp); the card keeps the pointer and
+        // its list scrolls under the wheel.
+        bool folder = false;
+        bool drive = false, drive_locked = false;
+        uint64_t drive_total = 0, drive_free = 0;
+        std::shared_ptr<struct HoverFolderJob> folder_job;
+        float folder_scroll = 0.0f;     // px
+        bool size_started = false;      // this card asked folderSizes to count
     } hoverPreview;
     int dropPaneIndex = -1;
     bool dropHeader = false;            // drop on pane title bar → open folder
@@ -373,6 +389,7 @@ struct AppState : AppCoreOwner {
     bool scrollbarDragging = false;
     bool scrollbarHorizontal = false;
     bool scrollbarSidebar = false;
+    bool scrollbarSettings = false;   // dragging the settings page's scrollbar
     int scrollbarDragStartX = 0;
     int scrollbarDragStartY = 0;
     float scrollbarGrabOffset = 0.0f;
@@ -386,6 +403,7 @@ struct AppState : AppCoreOwner {
     bool splitterDragging = false;
     int splitterDragIndex = -1;
     D2D1_RECT_F splitterParentBounds{};
+    float splitterSnap = 0.0f;   // ratio the dragged divider is held at (1/3, 1/2, 2/3), 0 = free
     app::SplitOrientation splitterOrientation = app::SplitOrientation::Vertical;
     std::vector<app::SplitContainer*> splitterNodes;
 
@@ -440,6 +458,15 @@ struct AppState : AppCoreOwner {
     std::unordered_map<int, TabTrack> chipTracks;
     std::unordered_map<int, float> chipOffsets;
 
+    // Ctrl+wheel view zoom: touchpad pinch arrives as small Ctrl+wheel deltas,
+    // so whole WHEEL_DELTA notches are counted (reset on reversal or a pause).
+    int zoomWheelRemainder = 0;
+    ULONGLONG zoomWheelTick = 0;
+    // Pane header size slider being dragged; folder prefs are saved on release.
+    bool paneSizeDragging = false;
+    int paneSizeDragPane = -1;
+    bool paneSizeSavePending = false;
+
     // Smooth scroll animation.
     bool scrollAnimating = false;
     float scrollTargetY = 0.0f;
@@ -465,6 +492,7 @@ struct AppState : AppCoreOwner {
     // GUI verification for the color picker popup (QFluent replica).
     bool colorpickshot = false;
     bool colorpickshot_dark = true;
+    bool colorpickshot_tags = false;   // --tagmanagershot: the 管理标签 panel instead
     std::wstring colorpickshot_out;
     // Smoke test: open the interactive color picker dialog on launch.
     bool colorpickdialog = false;
@@ -493,6 +521,12 @@ struct AppState : AppCoreOwner {
     HWND hwndAddressEdit = nullptr;
     bool addressEditing = false;
     bool addressSearching = false;
+    // Opened by 连接服务器: bare host names count as servers (app_network_page.h).
+    bool addressConnectMode = false;
+    // 别名 suggestions under the path editor; Up/Down pick, Enter opens.
+    std::vector<ui::AddressSuggestionView> addressSuggest;
+    std::wstring addressSuggestHeader;
+    int addressSuggestSel = -1;
     bool searchHistoryOpen = false;
     bool searchScopePending = false;
     bool sidebarResizing = false;
@@ -517,7 +551,8 @@ struct AppState : AppCoreOwner {
     // only compared, never dereferenced).
     const app::LayoutTab* tabFlashKey = nullptr;
     ULONGLONG tabFlashAt = 0;
-    uint64_t tagGroupsRevision = 0;  // tag catalog revision last published for grouping
+    uint64_t tagGroupsRevision = 0;
+    uint64_t cloudSyncRevision = 0;  // CloudSyncProbe answers this window has painted  // tag catalog revision last published for grouping
     float addressSearchAnimation = 0.0f;
     float addressScopeAnimation = 0.0f;
     ULONGLONG addressAnimationTick = 0;
@@ -532,6 +567,59 @@ struct AppState : AppCoreOwner {
 
     std::wstring pending_undo_json; // loaded from session, imported in WM_CREATE
     uint64_t opsCompleted = 0;
+    // Rows on their way to the Recycle Bin slide out before the listing drops
+    // them (motion 5b). Cleared when the delete fails, shortly after it ends.
+    std::vector<std::wstring> leavingPaths;
+    uint64_t leavingSince = 0;   // ui::motion::NowMs
+    uint64_t leavingDoneAt = 0;  // ui::motion::NowMs, 0 while running
+    uint64_t leavingTask = 0;
+    // A recycle left these where they were: the Recycle Bin would not keep
+    // them (FinishedTask::recycle_refused). WM_RECYCLE_REFUSED asks whether
+    // to delete them for good.
+    std::vector<std::wstring> recycleRefused;
+    ops::RecycleRefusal recycleRefusal = ops::RecycleRefusal::None;
+    // A drag from Pulse dropped into a folder a pane shows: its cards land on
+    // the new rows (drag_drop.h LandDragStack). Times are ui::motion::NowMs.
+    struct DragLanding {
+        std::wstring dir;
+        const app::Pane* pane = nullptr;   // the pane that took the drop
+        std::vector<std::wstring> names;
+        uint64_t since = 0;
+        uint64_t reveal_at = 0;   // 0 until the cards were sent
+    } dragLanding;
+    // Theme switch: the old theme's last frame (Compositor::HeldFrame) stays
+    // outside a circle that grows from the button until it covers the window.
+    struct ThemeReveal {
+        uint64_t start = 0;   // ui::motion::NowMs, 0 when idle
+        float x = 0.0f, y = 0.0f;   // client px
+    } themeReveal;
+    // Motion v2 "layout": a preset that adds or removes panes lets them glide
+    // to their new rects (smooth spring); new panes grow in from their edge.
+    struct PaneLayoutMotion {
+        std::vector<std::pair<const void*, D2D1_RECT_F>> last, from;
+        D2D1_RECT_F content{};
+        uint64_t start = 0;   // ui::motion::NowMs, 0 when idle
+    } paneLayoutMotion;
+    // Items a paste, drop, 压缩 or shell verb brings into the folder are
+    // selected as they show up (arrival_select.h). Names are lower-cased;
+    // times are GetTickCount64.
+    struct ArrivalSelect {
+        std::wstring dir;                          // fs::NormalizePath
+        const app::Pane* pane = nullptr;
+        std::unordered_set<std::wstring> baseline;  // listed when armed
+        std::unordered_set<std::wstring> expected;  // reported by the operation
+        std::vector<std::wstring> chosen;           // what it selected last
+        uint64_t task_id = 0;
+        uint64_t armed_at = 0;
+        uint64_t until = 0;                         // 0 while the task runs
+    } arrivalSelect;
+    // 压缩 runs on a thread of its own per archive (zip_compress_ui.h).
+    struct ZipJob {
+        uint64_t id = 0;
+        std::wstring zip_path;
+        std::shared_ptr<std::atomic<bool>> cancel;
+    };
+    std::vector<ZipJob> zipJobs;
     std::unique_ptr<ui::FileOperationWindow> operationWindow;
     uint64_t operationUiTaskId = 0;
     uint64_t operationDismissedTaskId = 0;
@@ -543,6 +631,7 @@ struct AppState : AppCoreOwner {
     std::chrono::steady_clock::time_point operationFinishedAt{};
     HWND hwndRenameEdit = nullptr;
     int renameIndex = -1;
+    bool renameAlias = false;   // the rename field edits the 别名, not the name
     // Last key press, click or wheel turn in this window, any of its child
     // controls included (GetTickCount64; the message loop, NoteUserInput).
     // External opens avoid interrupting a window in use (M7a, plan §6).
@@ -551,6 +640,21 @@ struct AppState : AppCoreOwner {
     // the last window takes along the windows closed since then.
     uint64_t previous_use_tick = 0;
     bool renameIgnoreKillFocus = false;
+    // Inline rename (P1f): the note under the field, the extension question
+    // waiting for Enter / Esc, and the widest the icon-grid field has been.
+    std::wstring renameHint;
+    ULONGLONG renameHintUntil = 0;  // GetTickCount64; 0 = until answered
+    ULONGLONG renameShakeAt = 0;    // GetTickCount64 of the last refused character (the field shakes)
+    float renameScrollRoom = 0.0f;  // list made taller while a rename field hangs below its end
+    // The single selected icon-grid item's whole name glides into view once,
+    // right after the selection lands on it (RevealExpandedName).
+    float selectScrollRoom = 0.0f;  // list made taller for it while it stays selected
+    const void* revealTab = nullptr;
+    int revealIndex = -1;
+    uint64_t revealSince = 0;
+    bool revealDone = true;
+    bool renameConfirmExt = false;
+    float renameFieldW = 0.0f;
     // 解散文件夹: the recycle that ends each folder's chain, after which the
     // parent is listed afresh.
     struct DissolveStep {
@@ -568,6 +672,15 @@ struct AppState : AppCoreOwner {
     ULONGLONG renameClickDue = 0;
     ULONGLONG renameClickStarted = 0;
     std::wstring renameClickPath;
+    // Single click opens (appPrefs.single_click_open): the row a plain press
+    // landed on opens on release unless the press became a drag or marquee.
+    bool singleOpenCandidate = false;
+    app::Pane* singleOpenPane = nullptr;
+    app::Tab* singleOpenTab = nullptr;
+    int singleOpenIndex = -1;
+    ULONGLONG singleOpenTick = 0;    // the double click right after an open is swallowed
+    ULONGLONG activateClickTick = 0; // WM_MOUSEACTIVATE: that click only brings the window forward
+    ULONGLONG hoverSelectFired = 0;  // ctxHoverSince of the hover that already selected
     // A click on a folder's size label that started a calculation; the
     // double-click it turns into opens the folder and stops that calculation.
     std::wstring folderSizeClickPath;
@@ -577,6 +690,7 @@ struct AppState : AppCoreOwner {
     bool tagRenameIgnoreKillFocus = false;
     HFONT editFont = nullptr;
     HBRUSH editBrush = nullptr;
+    AiAssistantState aiAssistant;   // Pulse 助手 (ai_assistant.h)
 
     // Stage 1B-2: Fluent menus, OLE drag & drop, breadcrumb segments.
     std::unique_ptr<ui::FluentMenu> menu;
@@ -599,6 +713,8 @@ struct AppState : AppCoreOwner {
     int dropSidebar = -1;
     bool dropTray = false;
     bool dropQuickAccess = false;  // folders over the Quick access header: pin
+    int dropFavorite = -1;         // 收藏栏: files over this favorite folder (index into the bar)
+    bool dropFavoriteAdd = false;  // 收藏栏's empty part: what is dropped gets starred
     std::wstring dropBadge;
     float dropBadgeX = 0.0f;
     float dropBadgeY = 0.0f;
@@ -618,6 +734,7 @@ struct AppState : AppCoreOwner {
     bool teachShownThisSession = false; // at most one tip per launch
     std::wstring dropDestDir;                 // resolved drop destination ("" = none/tray)
     std::wstring dropLaunchProgram;           // program row that opens the dropped items
+    std::wstring dropLaunchShortcut;          // ...when that row is a shortcut: the .lnk
     // Toolbar drop mode (app_toolbar_apps.cpp): while files are dragged over
     // the window the toolbar holds the pinned apps only.
     bool toolbarDropMode = false;
@@ -646,36 +763,15 @@ struct AppState : AppCoreOwner {
     // the dragged tag follows cursor deltas 1:1, swaps with a sibling when its
     // edge crosses the sibling's center (sibling slides 150 ms InOutQuad), and
     // on release slides home with a distance-proportional duration.
-    bool tagDragPending = false;
-    bool tagDragActive = false;
-    POINT tagDragStartPt{};
-    int tagDragTag = -1;                 // places.tags index of the dragged tag
-    std::wstring tagDragPath;            // pulse:tag:<index> at press time
-    int tagDragLastY = 0;
-    float tagDragGrabDy = 0.0f;          // cursor y minus dragged slot top at activation
-    float tagDragFloatTop = 0.0f;        // dragged slot top (px, cursor-delta driven)
-    float tagDragY = 0.0f;               // dragged slot center for the renderer
-    float tagFlowTop = 0.0f;             // tag flow range / slot geometry (px)
-    float tagFlowBottom = 0.0f;
-    float tagSlotH = 0.0f;
-    float tagPitch = 0.0f;
-    std::vector<int> tagOrder;           // display position -> places.tags index
-    struct TagTrack { float start = 0.0f; int durationMs = 150; std::chrono::steady_clock::time_point t0; };
-    std::unordered_map<std::wstring, TagTrack> tagTracks; // label -> slide track (slot units)
-    std::unordered_map<std::wstring, float> tagOffsets;   // label -> current offset (slot units)
-    // Insertion indicator line at the tentative gap's top edge; chases the
-    // target slot with the same 180ms easeOutCubic as the sibling slides.
-    bool tagGapVisible = false;
-    float tagGapLineY = 0.0f;            // current animated position (px)
-    float tagGapFrom = 0.0f;
-    float tagGapTo = 0.0f;
-    std::chrono::steady_clock::time_point tagGapT0{};
 
     bool starDragPending = false;
     bool starDragActive = false;
     POINT starDragStartPt{};
     std::wstring starDragPath;
     size_t starDragTarget = 0;
+    // 收藏夹分组: the group the dragged folder ends up in (the target row's;
+    // SIZE_MAX starDragTarget: dropped on the group's own row).
+    std::wstring starDragGroup;
 
     // Sidebar section header drag: reorders the sections. The dragged section
     // stays in place (drawn raised) while an insertion line shows the new slot.
@@ -698,6 +794,7 @@ struct AppState : AppCoreOwner {
     bool pinDragActive = false;
     POINT pinDragStartPt{};
     std::wstring pinDragPath;
+    std::wstring pinDragKey;             // quick-access layout key of the dragged row
     int pinDragRun = -1;                 // slot.run of the dragged row (highlight)
     int pinDragToIndex = -1;             // target position among the pins
     float pinGapLineY = 0.0f;
@@ -765,10 +862,84 @@ struct AppState : AppCoreOwner {
     std::wstring trayRaisePath; // stepping back: this card drops in on top
     float trayOpen = 0.0f;      // eased drag-over highlight
     float traySpread = 0.0f;    // eased stack fan-out while hovered
+    // The tray's motion runs on ui::motion::NowMs (QueryPerformanceCounter):
+    // GetTickCount64 moves in 15.6 ms steps, so display-rate frames got no
+    // progress or a double step. Every tray timestamp below uses that clock.
     ULONGLONG trayLastTick = 0;
+    // The tray is moving and the frame pump paints it once per display frame
+    // (Render advances it); the UI timer only notices that motion starts.
+    bool trayAnimating = false;
     int trayDeckOffset = 0;     // cyclic index of the top card (newest-first order)
     int trayWheelAccum = 0;     // sub-notch wheel delta accumulator
     size_t trayDeckLastTotal = 0; // collect detection (stack resets to newest)
+
+    // Staging tray shelf (pulse_tray_redesign.html): strip / drop / shelf
+    // layers, sprung panel height, live copy-move mode. TickTrayShelf
+    // advances it; BuildVm copies it into vm.tray_deck.
+    struct TrayShelfAnim {
+        int stage = 0;               // ui::TrayStage shown
+        int prev_stage = -1;         // layer fading out
+        ULONGLONG swap_at = 0;       // layer swap start
+        float height = 40.0f;        // panel height, DIPs (spring)
+        float velocity = 0.0f;       // DIPs / s
+        float drop_from = 0.0f;      // height when the drop layer opened
+        bool initialized = false;
+        float mode_t = 0.0f;         // copy (0) -> move (1) colour blend
+        bool last_move = false;
+        ULONGLONG label_at = 0;      // main label rise-in after a mode flip
+        float fan_spread = 0.0f;
+        ULONGLONG bump_at = 0;       // count bump after a collect
+        int last_total = -1;
+        std::wstring flash_path;     // 送到 chip that just received items
+        ULONGLONG flash_at = 0;
+        // Same-name probe against the current folder (cached, re-probed
+        // when the folder or the tray changes, at most every 1.5 s).
+        std::wstring conflict_dir;
+        uint64_t conflict_sig = 0;
+        ULONGLONG conflict_at = 0;
+        int conflicts = 0;
+        std::vector<uint64_t> conflict_ids;  // items behind conflicts (open view subsets)
+        // "已暂存" row pills: hashes of every staged path.
+        uint64_t staged_sig = 0;
+        std::shared_ptr<const std::unordered_set<uint64_t>> staged;
+    } trayShelf;
+    bool trayMoveMode = false;       // tray-wide release mode; staging as move sets it
+    bool dragFilesOver = false;      // an OLE file drag is over this window (drop layer)
+    bool dropTrayMove = false;       // drop layer: the 移动暂存 half is active
+    struct TrayReleaseNote {
+        uint64_t task = 0;           // copy / move submitted by the shelf
+        size_t count = 0;
+        bool move = false;
+        std::wstring dest;           // target folder
+    } trayRelease;
+    // Ctrl+C / Ctrl+X inside Pulse only write the system clipboard; the shelf
+    // then offers to stage that copy (剪贴板 N 项 · 收入). The offer is gone
+    // once anything else changes the clipboard.
+    struct TrayClipOffer {
+        std::vector<std::wstring> paths;
+        bool move = false;
+        DWORD seq = 0;               // GetClipboardSequenceNumber after the write
+        ULONGLONG at = 0;            // pop-in start
+    } trayClip;
+    // Expanded tray (⌃ on the shelf): every item grouped by source folder, a
+    // type filter, check boxes that narrow the release, a two-file compare.
+    struct TrayOpenView {
+        bool open = false;
+        ULONGLONG opened_at = 0;     // row stagger (60 + 40·i ms)
+        int filter = 0;              // 0 all, 1 images, 2 documents, 3 other
+        std::vector<uint64_t> checked;  // item ids, check order
+        float scroll = 0.0f;         // list offset, DIPs
+        bool compare = false;        // compare card beside the sidebar
+        ULONGLONG compare_at = 0;
+        std::vector<uint64_t> removing;  // Del: rows sliding out (320 ms)
+        ULONGLONG remove_at = 0;
+    } trayView;
+    std::wstring trayReleaseOpen;    // folder the release snack's 打开 opens
+    std::wstring trayClearedJson;    // tray before 清空, for the snack's 撤销
+    struct TrayZipJob {
+        uint64_t id = 0;             // zipJobs id while the shelf ring spins
+        std::shared_ptr<std::atomic<float>> progress;
+    } trayZip;
 
     // Right details panel (view-menu toggle, session-persisted).
     bool showDetailsPanel = false;
@@ -812,6 +983,17 @@ struct AppState : AppCoreOwner {
     bool marqueePending = false;
     bool marqueeActive = false;
     bool marqueeAdditive = false;
+    bool marqueeToggle = false;      // Ctrl: items in the band flip against marqueeBase
+    // Press on a row outside its icon + name (Details / List): a release
+    // without movement clicks that row with these modifiers; movement turns
+    // it into a marquee.
+    int marqueeRowIndex = -1;
+    bool marqueeRowCtrl = false;
+    bool marqueeRowShift = false;
+    // Selection before the press, restored when Esc cancels the marquee.
+    std::unordered_set<int> marqueeBefore;
+    bool marqueeBeforeAll = false;
+    int marqueeBeforeIndex = -1;
     app::Pane* blankClickPane = nullptr;
     app::Tab* blankClickTab = nullptr;
     uint64_t blankClickGeneration = 0;

@@ -87,7 +87,7 @@ std::wstring TagAdsFailureMessage(const TagAdsFailure& failure) {
     const wchar_t* stage = failure.stage == TagAdsFailureStage::JournalRead ? L"journal-read" :
         failure.stage == TagAdsFailureStage::JournalWrite ? L"journal-write" :
         failure.stage == TagAdsFailureStage::Pending ? L"pending" : L"stream-write";
-    return std::wstring(l10n::Pick(L"文件标签元数据同步尚未完成；待重试。", L"File tag metadata sync is pending retry.")) +
+    return std::wstring(l10n::Get(l10n::StringId::FileTagMetadataSyncIsPendingRetry).c_str()) +
         L" " + failure.path + L" (" + stage + L", " + std::to_wstring(failure.error) + L")";
 }
 void ApplyTagAdsNotice(TagAdsNoticeState& owned, const std::vector<TagAdsFailure>& failures,
@@ -100,7 +100,7 @@ void ApplyTagAdsNotice(TagAdsNoticeState& owned, const std::vector<TagAdsFailure
     }
     // A later unrelated notification owns its banner; a sync retry cannot erase it.
     if (!owns_banner && (!show_new || !title.empty() || !message.empty())) return;
-    owned.title = l10n::Pick(L"文件标签同步", L"File tag sync");
+    owned.title = l10n::Get(l10n::StringId::FileTagSync).c_str();
     const TagAdsFailure* shown = &failures.back();
     for (const auto& failure : failures)
         if (failure.stage != TagAdsFailureStage::Pending) shown = &failure;

@@ -1,0 +1,4 @@
+# Pinned conversion engine for tools/l10n/gen_strings.py (and CI).
+# The zh-TW text and the runtime phrase tables are generated with exactly this
+# version; upgrading it will rewrite generated files and needs a reviewed diff.
+opencc==1.4.2

@@ -28,7 +28,7 @@ std::vector<DWORD> Children() {
     PROCESSENTRY32W entry{sizeof(entry)};
     if (snapshot != INVALID_HANDLE_VALUE) {
         if (Process32FirstW(snapshot, &entry)) do {
-            if (entry.th32ParentProcessID == GetCurrentProcessId() && entry.th32ProcessID != fixture_host && _wcsicmp(entry.szExeFile, L"Pulse.Index.exe") == 0) ids.push_back(entry.th32ProcessID);
+            if (entry.th32ParentProcessID == GetCurrentProcessId() && entry.th32ProcessID != fixture_host && _wcsicmp(entry.szExeFile, L"Pulse.Content.exe") == 0) ids.push_back(entry.th32ProcessID);
         } while (Process32NextW(snapshot, &entry));
         CloseHandle(snapshot);
     }
@@ -238,6 +238,30 @@ int RunInstantReconcileAudit(const std::filesystem::path& base) {
     return failures ? 1 : 0;
 }
 
+int RunInstantScopeResumeTest(const std::filesystem::path& base) {
+    const auto profile = base / L"scope-profile";
+    std::filesystem::create_directories(profile);
+    SetEnvironmentVariableW(L"LOCALAPPDATA", profile.c_str());
+    ContentSearchClient client;
+    client.Start(nullptr, 0, ContentAgentMode::Instant);
+    Check(Await([&] { return client.ConfigurationReady(); }), "scope configuration loads");
+    VolumeInfo volume; volume.mount_point = L"C:\\"; volume.supported = true;
+    auto disabled = SharedContentScope(client.GetConfig(), {volume}, {L"C:\\excluded"});
+    client.Configure(disabled);
+    Check(Await([&] { return config_storage::SameConfig(client.GetConfig(), disabled); }),
+        "disabled drive and exclusion reach content configuration");
+    client.Suspend();
+    volume.enabled = true;
+    auto enabled = SharedContentScope(disabled, {volume}, {});
+    client.Configure(enabled);
+    Check(Await([&] { return config_storage::SameConfig(client.GetConfig(), enabled); }),
+        "re-enabled drive and cleared exclusions synchronize after suspension");
+    Check(config_storage::SameConfig(LoadContentIndexConfig(), enabled), "restored scope is persisted");
+    Check(Children().empty(), "scope synchronization does not launch a content agent");
+    client.Stop();
+    return failures ? 1 : 0;
+}
+
 int RunInstantLifecycleTests(const std::filesystem::path& base) {
     const auto profile = base / L"profile", files = base / L"files";
     std::filesystem::create_directories(profile); std::filesystem::create_directories(files);
@@ -410,6 +434,38 @@ int RunInstantLifecycleTests(const std::filesystem::path& base) {
     if (rename_error) printf("ANCESTOR_RENAME error=%d message=%s\n", rename_error.value(), rename_error.message().c_str());
     Check(!rename_error && Await([&] { scoped_pump(); return scoped_removed; }), "renaming an ancestor removes stale descendants from a scoped query");
     scoped.Stop();
+
+    // Unscoped search narrowed to several folders (the user-folder default):
+    // root empty, roots set. The wire carries roots.front() in the root field
+    // with flag 16; every listed folder is searched, nothing else, and live
+    // changes follow the same set.
+    ContentSearchClient multi;
+    multi.Start(nullptr, 0, ContentAgentMode::Instant); Await([&] { return multi.ConfigurationReady(); });
+    const auto multi_a = files / L"multi-a", multi_b = files / L"multi-b", multi_out = files / L"multi-out";
+    for (const auto& folder : {multi_a, multi_b, multi_out}) std::filesystem::create_directories(folder);
+    Write(multi_a / L"m1.txt", "multi_marker"); Write(multi_b / L"m2.txt", "multi_marker"); Write(multi_out / L"m3.txt", "multi_marker");
+    auto multi_request = request;
+    multi_request.root.clear(); multi_request.roots = {multi_a.wstring(), multi_b.wstring()};
+    multi_request.needle = L"multi_marker"; multi_request.generation += 700; multi_request.subscribe = true;
+    multi.SearchAsync(multi_request);
+    std::map<std::wstring, bool> multi_hits; bool multi_done = false;
+    auto multi_pump = [&] { ContentSearchUpdate update; while (multi.TakeUpdate(update)) {
+        if (update.progress.generation != multi_request.generation) continue;
+        multi_done |= update.progress.done && !update.progress.delta;
+        for (const auto& hit : update.hits) {
+            const auto name = std::filesystem::path(hit.path).filename().wstring();
+            if (hit.removed) multi_hits.erase(name); else multi_hits[name] = true;
+        }
+    } };
+    Check(Await([&] { multi_pump(); return multi_done; }), "multi-folder query completes");
+    Check(multi_hits.count(L"m1.txt") && multi_hits.count(L"m2.txt"), "multi-folder query searches every requested folder");
+    Check(!multi_hits.count(L"m3.txt"), "multi-folder query skips folders outside the request");
+    Write(multi_b / L"m4.txt", "multi_marker"); Write(multi_out / L"m5.txt", "multi_marker");
+    Check(Await([&] { multi_pump(); return multi_hits.count(L"m4.txt") != 0; }), "live change in a requested folder appears");
+    Sleep(600); multi_pump();
+    Check(!multi_hits.count(L"m5.txt"), "live change outside the requested folders stays out");
+    multi.Cancel(multi_request.session_id);
+    multi.Stop();
 
     ContentSearchClient locked;
     locked.Start(nullptr, 0, ContentAgentMode::Instant); Await([&] { return locked.ConfigurationReady(); });

@@ -133,7 +133,7 @@ int main(int argc, char** argv) {
             Get(StringId::TagSearchHint) == (chinese ? L"搜索或新建标签…" : L"Search or create a tag…") &&
             Get(StringId::ColorRed) == (chinese ? L"红色" : L"Red") &&
             Get(StringId::EditBadge) == (chinese ? L"编辑徽章" : L"Edit badge") &&
-            Get(StringId::Unstar) == (chinese ? L"取消星标" : L"Unstar"));
+            Get(StringId::Unstar) == (chinese ? L"取消收藏" : L"Unstar"));
         wchar_t tag_message[256]{};
         const auto& tag_pattern = Get(StringId::TagDeleteUsedFormat);
         swprintf_s(tag_message, tag_pattern.c_str(), L"100% 工作", size_t{3});
@@ -166,7 +166,7 @@ int main(int argc, char** argv) {
         passed &= Report("tab menu TabCloseRight follows display language",
             Get(StringId::TabCloseRight) == (std::wstring(language) == L"zh-CN" ? L"关闭右侧标签页" : L"Close tabs to the right"));
         passed &= Report("tab menu TabGroupName follows display language",
-            Get(StringId::TabGroupName) == (std::wstring(language) == L"zh-CN" ? L"标签组名称…" : L"Tab group name…"));
+            Get(StringId::TabGroupName) == (std::wstring(language) == L"zh-CN" ? L"标签页组名称…" : L"Tab group name…"));
         passed &= Report("tab menu TabGroupNew follows display language",
             Get(StringId::TabGroupNew) == (std::wstring(language) == L"zh-CN" ? L"在组中新建标签页" : L"New tab in group"));
         passed &= Report("tab menu TabUngroup follows display language",
@@ -313,6 +313,35 @@ int main(int argc, char** argv) {
     SetLanguage(L"zh-CN");
     passed &= Report("zh-CN service text is unchanged",
         ServiceText(L"已索引 1,234 项 · 实时更新") == L"已索引 1,234 项 · 实时更新");
+
+    // Unregistered text must still convert for the zh-TW UI: Pick/Cn fall
+    // back to phrase- and character-wise conversion instead of leaking
+    // Simplified. Test-file literals never enter the generated phrase table.
+    SetLanguage(L"zh-TW");
+    {
+        const wchar_t* probe = L"未登记的软件与文件夹设置";
+        const wchar_t* converted = Cn(probe);
+        const std::wstring text(converted);
+        passed &= Report("zh-TW Cn converts unregistered text",
+            text != std::wstring(probe) && text.find(L'软') == std::wstring::npos &&
+            text.find(L'夹') == std::wstring::npos);
+        passed &= Report("zh-TW Cn caches conversions", Cn(probe) == converted);
+        passed &= Report("zh-TW Pick converts unregistered text", Pick(probe, L"x") == converted);
+        std::atomic<bool> cn_ok{true};
+        std::thread cn_reader([&] {
+            for (int i = 0; i < 200; ++i) {
+                const std::wstring seen(Cn(probe));
+                if (seen != text) cn_ok = false;
+            }
+        });
+        for (int i = 0; i < 200; ++i) Cn(L"并发转换检查");
+        cn_reader.join();
+        passed &= Report("zh-TW Cn conversions are thread-safe", cn_ok.load());
+    }
+    SetLanguage(L"en-US");
+    passed &= Report("Pick serves English outside Chinese UI",
+        std::wstring_view(Pick(L"未登记的软件", L"fallback")) == L"fallback");
+    SetLanguage(L"zh-CN");
 
     passed &= CheckSystemLanguage();
     std::printf("\n== localization tests: %s ==\n", passed ? "PASS" : "FAIL");

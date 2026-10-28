@@ -1,5 +1,6 @@
 // fs_recycle.cpp
 #include "fs_recycle.h"
+#include "drive_kind.h"
 #include "../common/recycle_index.h"
 #include "../common/current_user_security.h"
 #include <shellapi.h>
@@ -54,6 +55,29 @@ std::wstring RecycleIndexPath(const std::wstring& content_path) {
     return content_path.substr(0, slash + 1) + name;
 }
 
+// A folder whose $I record holds no total (some tools leave it 0): add up
+// what is inside, bounded so a huge tree cannot stall the listing.
+uint64_t RecycledFolderBytes(const std::wstring& dir, int& budget) {
+    uint64_t total = 0;
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileExW((dir + L"\\*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch,
+                                   nullptr, FIND_FIRST_EX_LARGE_FETCH);
+    if (find == INVALID_HANDLE_VALUE) return 0;
+    do {
+        if (--budget < 0) break;
+        const std::wstring_view name = data.cFileName;
+        if (name == L"." || name == L"..") continue;
+        if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (!(data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                total += RecycledFolderBytes(dir + L"\\" + data.cFileName, budget);
+        } else {
+            total += (static_cast<uint64_t>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+        }
+    } while (FindNextFileW(find, &data));
+    FindClose(find);
+    return total;
+}
+
 bool ReadRecycleIndex(const std::wstring& index_path, RecycleItem& out) {
     out = {};
     const std::wstring name = FileNameOf(index_path);
@@ -82,6 +106,9 @@ bool ReadRecycleIndex(const std::wstring& index_path, RecycleItem& out) {
         bytes.HighPart = attrs.nFileSizeHigh;
         bytes.LowPart = attrs.nFileSizeLow;
         out.size = bytes.QuadPart;
+    } else if (out.is_dir && out.size == 0) {
+        int budget = 20000;
+        out.size = RecycledFolderBytes(out.content_path, budget);
     }
     return true;
 }
@@ -119,6 +146,7 @@ void EnumerateRecycleBin(std::vector<DirEntry>& out, RecycleBinInfo* info) {
         wchar_t root[4] = { static_cast<wchar_t>(L'A' + i), L':', L'\\', 0 };
         const UINT type = GetDriveTypeW(root);
         if (type != DRIVE_FIXED && type != DRIVE_REMOVABLE) continue;
+        if (IsRemoteLikeDrive(root)) continue;  // cloud mount: no local bin to scan
         const std::wstring bin = NormalizePath(std::wstring(root) + L"$Recycle.Bin");
         if (!EnumerateRecycleBinAtRoot(bin, out)) complete = false;
     }

@@ -37,7 +37,9 @@ bool ShellWindowsEnabled(const AppState& s) {
 
 bool ExplorerTakeoverEnabled(const AppState& s) {
     if (s.isolatedTest) return ShellIntegrationAllowed(s, L"PULSE_TEST_EXPLORER_TAKEOVER");
-    return ShellIntegrationAllowed(s, nullptr) && s.appPrefs.integration_enabled && s.appPrefs.take_over_explorer_windows;
+    // 兼容打开方式 relies on the takeover: Explorer opens the folder, Pulse takes the window.
+    return ShellIntegrationAllowed(s, nullptr) && s.appPrefs.integration_enabled &&
+           (s.appPrefs.take_over_explorer_windows || s.appPrefs.integration_folders_compat);
 }
 
 void SyncExplorerTakeover(AppState& s) {
@@ -76,6 +78,8 @@ bool SameFolder(const std::wstring& a, const std::wstring& b) {
                                   path::StripExtendedPathPrefix(fs::NormalizePath(b)));
 }
 
+} // namespace
+
 // Adds `name` to the selection instead of replacing it: the shell sends one
 // SelectItem per item when a program selects several files.
 void AddNameToSelection(AppState& s, app::Tab& tab, const std::wstring& name) {
@@ -94,8 +98,6 @@ void AddNameToSelection(AppState& s, app::Tab& tab, const std::wstring& name) {
         break;
     }
 }
-
-} // namespace
 
 void SyncShellWindows(AppState& s) {
     SyncExplorerTakeover(s);

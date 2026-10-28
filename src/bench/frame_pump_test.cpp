@@ -58,7 +58,11 @@ void TestUiTimerPacer() {
     Check(!pacer.Update(true, 1500, period), L"activity keeps the fast period without re-arming the timer");
     Check(pacer.Update(true, 1000 + UiTimerPacer::kLingerMs, period) && period == UiTimerPacer::kIdleMs,
           L"quiet window relaxes to the idle poll");
-    Check(!pacer.Update(true, 9000, period), L"idle period is set once, not every tick");
+    Check(!pacer.Update(true, 1000 + UiTimerPacer::kLingerMs + 500, period), L"idle period is set once, not every tick");
+    Check(pacer.Update(true, 1000 + UiTimerPacer::kLingerMs + UiTimerPacer::kQuietAfterMs, period) &&
+              period == UiTimerPacer::kQuietMs,
+          L"a longer quiet spell relaxes to the quiet poll");
+    Check(!pacer.Update(true, 9000, period), L"quiet period is set once, not every tick");
     pacer.NoteActivity(9000);
     Check(pacer.Update(true, 9000, period) && period == UiTimerPacer::kActiveMs,
           L"input or paint restores the fast period at once");
@@ -66,8 +70,25 @@ void TestUiTimerPacer() {
           L"hidden window polls at the hidden period even while active");
     Check(pacer.Update(true, 9002, period) && period == UiTimerPacer::kActiveMs,
           L"showing an active window returns to the fast period");
-    Check(UiTimerPacer::kActiveMs < UiTimerPacer::kIdleMs && UiTimerPacer::kIdleMs < UiTimerPacer::kHiddenMs,
-          L"period ordering: active < idle < hidden");
+    Check(UiTimerPacer::kActiveMs < UiTimerPacer::kIdleMs && UiTimerPacer::kIdleMs < UiTimerPacer::kQuietMs &&
+              UiTimerPacer::kQuietMs < UiTimerPacer::kHiddenMs,
+          L"period ordering: active < idle < quiet < hidden");
+
+    // Starved tick: a frame handler runs it once it is a period plus slack late.
+    UiTimerPacer ticks;
+    Check(!ticks.TickOverdue(5000), L"no tick yet: nothing is overdue");
+    ticks.NoteActivity(5000);
+    ticks.Update(true, 5000, period);
+    ticks.NoteTick(5000);
+    Check(!ticks.TickOverdue(5000 + UiTimerPacer::kActiveMs), L"a tick due on time is not overdue");
+    Check(ticks.TickOverdue(5000 + UiTimerPacer::kActiveMs + UiTimerPacer::kOverdueSlackMs),
+          L"a tick a period plus slack late is overdue");
+    ticks.NoteTick(5040);
+    Check(!ticks.TickOverdue(5041), L"running the tick clears the overdue state");
+    Check(ticks.Update(true, 5000 + UiTimerPacer::kLingerMs, period) && period == UiTimerPacer::kIdleMs &&
+              !ticks.TickOverdue(5040 + UiTimerPacer::kActiveMs + UiTimerPacer::kOverdueSlackMs) &&
+              ticks.TickOverdue(5040 + UiTimerPacer::kIdleMs + UiTimerPacer::kOverdueSlackMs),
+          L"overdue follows the current period (idle poll)");
 }
 
 } // namespace
@@ -301,6 +322,23 @@ int wmain() {
     pump.Disarm();
     Collect(pump, hwnd, 60, true);  // one in flight may still land
     Check(Collect(pump, hwnd, 200, true).empty(), L"disarmed pump goes quiet");
+
+    // Decorative motion: ArmPaced keeps ~30 fps on clock ticks; Arm lifts it.
+    pump.ArmPaced(1000.0 / 30.0);
+    const std::vector<double> paced = Collect(pump, hwnd, 1000, true);
+    std::vector<double> paced_gaps;
+    for (size_t i = 1; i < paced.size(); ++i) paced_gaps.push_back(paced[i] - paced[i - 1]);
+    std::sort(paced_gaps.begin(), paced_gaps.end());
+    const double paced_median = paced_gaps.empty() ? 0 : paced_gaps[paced_gaps.size() / 2];
+    const double paced_min = paced_gaps.empty() ? 0 : paced_gaps.front();
+    std::wprintf(L"[INFO] paced: %zu frames/s, median gap %.2f ms, min %.2f ms\n", paced.size(), paced_median, paced_min);
+    Check(paced.size() >= 20 && paced.size() <= 34, L"paced pump delivers about 30 frames per second");
+    Check(paced_min >= 1000.0 / 30.0 - 8.0, L"paced frames never come faster than the interval");
+    pump.Arm();
+    const std::vector<double> lifted = Collect(pump, hwnd, 500, true);
+    Check(lifted.size() >= 25, L"Arm after ArmPaced returns to the display rate");
+    pump.Disarm();
+    Collect(pump, hwnd, 60, true);
 
     pump.Arm();
     Check(!Collect(pump, hwnd, 100, true).empty(), L"re-armed pump resumes");

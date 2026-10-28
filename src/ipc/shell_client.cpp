@@ -203,10 +203,12 @@ bool ShellClient::SendFrame(uint32_t type, uint32_t id, const std::vector<uint8_
 bool InterceptShellSubmitForReview(ShellClient&, uint32_t type, uint32_t id);
 #endif
 
-uint32_t ShellClient::Submit(uint32_t type, const std::vector<uint8_t>& payload, const Accepted& accepted) {
+uint32_t ShellClient::Submit(uint32_t type, const std::vector<uint8_t>& payload, const Accepted& accepted,
+                             bool retry) {
     if (!running_.load()) return 0;
     Pending p;
     p.type = type; p.payload = payload;
+    p.retried = !retry;  // HandleDisconnect fails a request that already had its one retry
     do { p.id = next_id_.fetch_add(1); } while (p.id == 0);
     if (accepted) accepted(p.id);
 #ifdef PULSE_ELEVATED_TEST_CLIENT
@@ -258,6 +260,29 @@ uint32_t ShellClient::Rename(const std::wstring& path, const std::wstring& new_n
     w.PutString(path);
     w.PutString(new_name);
     return Submit(REQ_RENAME, w.data(), accepted);
+}
+
+uint32_t ShellClient::ShellVerb(const std::vector<std::wstring>& paths, uint32_t owner_hwnd,
+                                bool background, const std::wstring& verb, const Accepted& accepted) {
+    if (paths.empty()) return 0;
+    PayloadWriter w;
+    w.PutU32(owner_hwnd);
+    w.PutU32(background ? SVF_BACKGROUND : 0u);
+    w.PutString(verb);
+    w.PutStringArray(paths);
+    return Submit(REQ_SHELL_VERB, w.data(), accepted);
+}
+
+uint32_t ShellClient::ShellTransfer(uint32_t op, uint32_t flags, const std::wstring& dest,
+                                   const std::vector<std::wstring>& sources,
+                                   const std::vector<std::wstring>& names, const Accepted& accepted) {
+    PayloadWriter w;
+    w.PutU32(op);
+    w.PutU32(flags);
+    w.PutString(dest);
+    w.PutStringArray(sources);
+    w.PutStringArray(names);
+    return Submit(REQ_SHELL_TRANSFER, w.data(), accepted, false);
 }
 
 uint32_t ShellClient::CreateFolder(const std::wstring& path, const Accepted& accepted) {

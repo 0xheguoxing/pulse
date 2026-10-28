@@ -45,7 +45,9 @@ $testNames = @('pulse_rename_ops_test', 'pulse_child_edit_test', 'pulse_localiza
     'pulse_image_preview_integrity_test', 'pulse_udf_listing_test', 'pulse_preview_integrity_test',
     'pulse_change_tracking_memory_test', 'pulse_change_feed_memory_test', 'pulse_usn_packet_queue_test',
     'pulse_content_progress_ui_test', 'pulse_operation_presentation_test', 'pulse_column_strip_test', 'pulse_entry_sort_key_test',
-    'pulse_file_lock_test', 'pulse_dialogs_test')
+    'pulse_file_lock_test', 'pulse_dialogs_test',
+    # AI enhancement pack: catalog/install, JSON, broker, tools, MCP over real pipes.
+    'pulse_ai_pack_test', 'pulse_ai_json_test', 'pulse_ai_broker_test', 'pulse_ai_tools_test', 'pulse_ai_mcp_test')
 $testTargets = (@('pulse', 'pulse_index_engine_test', 'pulse_index_host_stress',
     'pulse_preview_test', 'pulse_preview_handler_probe', 'pulse_playback_controls_test', 'pulse_ops_test') + $testNames) -join ' '
 $batch = Join-Path $build 'compile-release.bat'
@@ -144,12 +146,24 @@ if (-not $liveDone -or $live.ExitCode -ne 0) {
     throw 'Live content selection regression failed'
 }
 Remove-Item Env:PULSE_LUMATEXT
-# Strip the embedded test suite from the shipped executable after verification.
-(Get-Content -LiteralPath $batch -Raw).Replace('-DPULSE_WITH_SELFTEST=ON', '-DPULSE_WITH_SELFTEST=OFF').Replace("--target $testTargets", '--target pulse') |
+# Strip the embedded test suite and GUI probes from the shipped executable after verification.
+(Get-Content -LiteralPath $batch -Raw).Replace('-DPULSE_WITH_SELFTEST=ON', '-DPULSE_WITH_SELFTEST=OFF -DPULSE_WITH_TEST_HOOKS=OFF').Replace("--target $testTargets", '--target pulse') |
     Set-Content -LiteralPath $batch -Encoding ascii
 & $batch
 if ($LASTEXITCODE -ne 0) { throw 'Production compilation failed' }
 & (Join-Path $repo 'scripts/check_release_payload.ps1') -BuildDir $build
+# Content enhancement pack assets of this channel, matching the catalog in pulse.exe.
+$contentPack = Join-Path $build 'content-pack'
+& (Join-Path $repo 'scripts/check_content_pack.ps1') -PackDir $contentPack -BuildDir $build
+$contentDist = Join-Path $repo "dist/content-pack-$Channel"
+New-Item -ItemType Directory -Path $contentDist -Force | Out-Null
+Copy-Item -Path (Join-Path $contentPack '*') -Destination $contentDist -Force
+# AI enhancement pack assets of this channel, likewise.
+$aiPack = Join-Path $build 'ai-pack'
+& (Join-Path $repo 'scripts/check_content_pack.ps1') -Key ai -PackDir $aiPack -BuildDir $build
+$aiDist = Join-Path $repo "dist/ai-pack-$Channel"
+New-Item -ItemType Directory -Path $aiDist -Force | Out-Null
+Copy-Item -Path (Join-Path $aiPack '*') -Destination $aiDist -Force
 if ($Channel -eq 'win81') {
     python tools/audit_win81_imports.py $build
     if ($LASTEXITCODE -ne 0) { throw 'Windows 8.1 startup import guard failed' }
@@ -160,8 +174,3 @@ Copy-Item -Path (Join-Path $sdkRoot 'share/LumaText/licenses/*') -Destination $l
 # Pulse setup: bootstrapper + xz payload (scripts/pack_setup.bat).
 & (Join-Path $repo 'scripts/pack_setup.bat') $build $Channel
 if ($LASTEXITCODE -ne 0) { throw 'Installer packaging failed' }
-# The portable ZIP targets Windows 10/11 x64, so only the normal channel packages it,
-# from the same verified production build as the installer.
-if ($Channel -eq 'windows') {
-    & (Join-Path $repo 'scripts/package_portable.ps1') -BuildDir $build
-}

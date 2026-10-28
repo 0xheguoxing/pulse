@@ -1,0 +1,163 @@
+// ai_assistant_chat.h - Pulse 助手's conversation: the blocks the panel shows,
+// the status chip's words, and the driver that fills them.
+//
+// A2 drives it with a local demo that plays the design's script on the open
+// folder (read only, nothing moves); A3 replaces the driver with the DeepSeek
+// agent loop. Internal to src/app (not part of AppState's header).
+#pragma once
+
+#include "../ui/ai_panel_view.h"
+#include "../ui/ui_view_model.h"
+
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace pulse {
+struct AppState;
+struct AiAgent;   // the DeepSeek agent loop (ai_assistant_agent.cpp)
+
+struct AiChat {
+    std::vector<ui::AiBlockView> blocks;
+    uint32_t next_id = 1;
+    bool busy = false;            // a turn runs (send shows stop)
+    bool noted = false;           // the demo note is in this conversation
+    std::wstring last_prompt;
+
+    // The status bar chip while the assistant works (Idle: not ours).
+    ui::StatusAiState chip = ui::StatusAiState::Idle;
+    std::wstring chip_text;
+    float chip_progress = -1.0f;
+    bool unread = false;
+
+    // Thinking block whose seconds count up (0: none).
+    uint32_t think_id = 0;
+    uint64_t think_start = 0;
+    uint64_t turn_start = 0;
+
+    // Driver: steps run in order, each after its delay; a step returns the
+    // ms until it runs again (streaming) or -1 when it is done.
+    struct Step {
+        uint32_t delay = 0;
+        std::function<int(AppState&)> run;
+    };
+    std::deque<Step> queue;
+    uint64_t next_at = 0;
+    // Paused at a confirmation card until the user answers.
+    uint32_t confirm_id = 0;
+    std::function<void(AppState&, bool)> on_confirm;
+    std::function<void(AppState&)> on_extra;      // the confirmation's link button
+    // A paused task (flow C): its card and what its buttons do.
+    uint32_t pause_id = 0;
+    std::function<void(AppState&, ui::AiErrAct)> on_task_act;
+    // The latest result card's undo and 在 Pulse 中查看.
+    uint32_t result_id = 0;
+    std::function<void(AppState&)> on_undo;
+    std::function<void(AppState&)> on_show;
+    std::function<void(AppState&)> on_purge;      // 永久删除这些… (flow D)
+    // The cleanup card (flow D) while it can still change: its checkboxes,
+    // 查看 links and file rows (row, file; file -1 for a category).
+    uint32_t clean_id = 0;
+    std::function<void(AppState&, ui::AiPanelPart, int, int)> on_clean;
+    // The duplicates card (flow E) while it can still change: part DupFile
+    // (group, file), DupRule, DupMore (-1, -1).
+    uint32_t dup_id = 0;
+    std::function<void(AppState&, ui::AiPanelPart, int, int)> on_dup;
+    // The model conversation; created by the first real turn.
+    std::shared_ptr<AiAgent> agent;
+    // The peek bubble over the chip once the panel is closed (.peek).
+    uint64_t peek_at = 0;         // shows from (0: none)
+    uint64_t peek_until = 0;      // hides at
+    uint64_t peek_turn = 0;       // turn_start of the turn it was shown for
+    std::wstring peek_text;       // the turn's summary (organize_files sets it)
+    bool peek_undo = false;       // the turn's result card can still undo
+    // The turn failed: the peek leads with 重试 (连接模型) in the card's tone.
+    bool peek_failed = false;
+    ui::AiErrTone peek_tone = ui::AiErrTone::Err;
+    std::wstring peek_title;
+
+    ui::AiBlockView* Find(uint32_t id);
+    ui::AiBlockView& Add(ui::AiBlockKind kind, uint64_t now_ms);
+};
+
+// A failed turn (the agent builds it from the stream's error; error card A in
+// plans/ai/Pulse_AI助手_错误与快捷键.html).
+struct AiChatError {
+    ui::AiErrTone tone = ui::AiErrTone::Err;
+    ui::AiIcon icon = ui::AiIcon::AlertCircle;
+    std::wstring title, sub, detail, hint;
+    std::vector<ui::AiErrButton> buttons;
+    std::wstring peek_title;      // shorter title for the bubble (empty: title)
+    bool cut = false;             // cut off: a partial answer keeps an amber strip
+};
+
+AiChat& Chat(AppState& s);
+// Starts a turn for `prompt`; `context` is the composer's folder chip text.
+void AiChatSubmit(AppState& s, const std::wstring& prompt, const std::wstring& context);
+void AiChatStop(AppState& s);
+void AiChatReset(AppState& s);
+// Conversation parts the panel reports (block index into blocks).
+void AiChatActivate(AppState& s, ui::AiPanelPart part, int block);
+// The cleanup card's rows: part CleanCheck / CleanLink (index block * 32 +
+// row) or CleanFile ((block * 32 + row) * 32 + file).
+void AiChatClean(AppState& s, ui::AiPanelPart part, int index);
+// The duplicates card: DupFile (index block * 64 + group * 8 + file),
+// DupRule / DupMore (index block).
+void AiChatDup(AppState& s, ui::AiPanelPart part, int index);
+
+// Shared by the demo driver and the agent loop.
+void AiChatPush(AppState& s, uint32_t delay, std::function<int(AppState&)> run);   // queues and schedules
+// Runs the steps that are due. The frame pump calls it: while motion runs its
+// posted frames outrank WM_TIMER, which would hold the queue back for seconds.
+void AiChatRunDue(AppState& s);
+void AiChatSetChip(AiChat& c, ui::StatusAiState state, std::wstring text, float progress = -1.0f);
+void AiChatFinish(AppState& s, bool done_chip);   // ends the turn
+std::wstring AiChatEffortName(const AppState& s);
+std::wstring AiChatModelId(const AppState& s);
+std::wstring AiChatFormatSize(uint64_t bytes);
+// The turn's acts row: copy / retry / helpful and "model · effort · s · tools".
+// failed: the turn ended on an error; the row shows only the model and no rating.
+void AiChatAddActs(AppState& s, int tools, bool failed = false);
+// A plan group's icon and tint from the kinds of its items.
+void AiChatGroupLook(const std::vector<std::wstring>& names, ui::AiIcon& icon, ui::AiTint& tint);
+// The peek bubble: shows `delay` ms from now for 4.2 s, once per turn, when
+// the turn is done and the panel is closed.
+void AiChatPeek(AppState& s, uint32_t delay);
+void AiChatHidePeek(AppState& s);
+void AiChatFillPeek(AppState& s, bool panel_open, ui::AiPeekView& peek);
+void AiChatUndoLast(AppState& s);   // the latest result card's 撤销
+// Ends the turn on `err`: the card (or the cut strip), the error chip and,
+// with the panel closed, the peek.
+void AiChatFail(AppState& s, AiChatError err);
+// Sends the last prompt again in place of the failed turn (no second bubble).
+void AiChatRetryTurn(AppState& s);
+// The error card button behind an ErrAction hit (false: none).
+bool AiChatErrAction(AppState& s, int index, ui::AiErrAct& act);
+// Runs the chat's own error buttons: 重试, 去充值, 复制详情.
+void AiChatErrRun(AppState& s, int index);
+
+// The agent loop (ai_assistant_agent.cpp).
+bool AiAgentConnected();        // a model key is stored (checked at most every 2 s)
+void AiAgentKeyChanged();       // after the key or the address was saved or removed
+std::wstring AiAgentBaseUrl();  // ai.json assistant.base_url, else the default
+std::wstring AiAgentDefaultBaseUrl();   // https://api.deepseek.com
+std::wstring AiAgentHost();     // "api.deepseek.com"
+std::wstring AiAssistantModelName(const AppState& s);   // the model a request uses, as the service names it
+void AiAgentStart(AppState& s, const std::wstring& prompt, bool with_context);
+void AiAgentStop(AppState& s);   // cancels the request and any tool still running
+// Flow A: the 搜索条件 card's chip × and + 条件 search again in Pulse without
+// the model; 接着做 fills the composer (复制路径 copies at once).
+void AiAgentQueryChip(AppState& s, int block, int chip);
+void AiAgentQueryAdd(AppState& s, int block);
+void AiAgentFollow(AppState& s, int block, int item);
+// Puts `text` into the composer without sending it and focuses it (ai_assistant.cpp).
+void AiAssistantFillComposer(AppState& s, const std::wstring& text);
+// 语音输入: recognized words go after what is there (a space only between
+// letters or digits), the caret at the end. Never sends.
+void AiAssistantAppendComposer(AppState& s, const std::wstring& words);
+void AiChatCopyText(HWND hwnd, const std::wstring& text);
+
+} // namespace pulse

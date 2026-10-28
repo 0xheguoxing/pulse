@@ -1,9 +1,18 @@
 #include "../ui/edit_host.h"
 #include "../ui/FluentTokens.h"
+#include "../ui/ui_renderer.h"
 // app_hosted_edit.cpp — extracted from app_main.cpp.
 #include "app_internal.h"
+#include "app_network_page.h"
 #include "address_bar_command.h"
+#include "filter_tag_complete.h"
+#include "folder_alias.h"
+#include "keymap.h"
 #include "tab_shortcuts.h"
+#include "window_overview_ui.h"
+#include "window_switcher.h"
+#include <imm.h>
+#include <chrono>
 #include "../ui/address_search_layout.h"
 #include "../ui/lumatext_renderer.h"
 #include "../ui/fluent_menu.h"
@@ -12,10 +21,12 @@
 #include "../ui/batch_rename_dialog.h"
 #include "../ui/quick_preview_window.h"
 #include "../ui/typography.h"
+#include "../ui/ui_motion.h"
 #include "../ui/color_picker.h"
 #include "../common/localization.h"
 #include "../common/text_format.h"
 #include "../common/path_utils.h"
+#include "../fs/device_path.h"
 #include "../common/diagnostics_exporter.h"
 #include "snapshot_patch.h"
 #include "session.h"
@@ -55,7 +66,32 @@ std::wstring FormatAddressPath(const std::wstring& text) {
     return t;
 }
 
+// The editor shows This PC by its display name, so committing it unchanged
+// (or typing it) must reach This PC, not a folder of that name resolved
+// against the working directory (it opened "C:\Program Files\Pulse\此电脑").
+static bool IsThisPcDisplayName(std::wstring_view text) {
+    while (!text.empty() && (iswspace(text.front()) || text.front() == L'"')) text.remove_prefix(1);
+    while (!text.empty() && (iswspace(text.back()) || text.back() == L'"' || text.back() == L'\\'))
+        text.remove_suffix(1);
+    if (text.empty()) return false;
+    const auto same = [&](std::wstring_view name) {
+        return !name.empty() && CompareStringOrdinal(text.data(), static_cast<int>(text.size()),
+            name.data(), static_cast<int>(name.size()), TRUE) == CSTR_EQUAL;
+    };
+    return same(l10n::Get(l10n::StringId::ThisPc)) || same(L"This PC") ||
+        same(L"\u6B64\u7535\u8111") || same(L"\u672C\u6A5F");
+}
+
 std::wstring AddressNavigationTarget(const std::wstring& text, bool* shortcut) {
+    // 别名 jump: "发布包" or "发布包\\v1.0.56" opens the aliased folder.
+    if (std::wstring aliased; app::AliasStore::Instance().ResolveTyped(text, aliased)) {
+        if (shortcut) *shortcut = true;
+        return FormatAddressPath(aliased);
+    }
+    if (IsThisPcDisplayName(text)) {
+        if (shortcut) *shortcut = true;
+        return std::wstring();
+    }
     const app::AddressShortcut resolved = app::ResolveAddressShortcut(text);
     if (shortcut) *shortcut = resolved.resolved;
     if (!resolved.resolved) return FormatAddressPath(text);
@@ -109,7 +145,17 @@ void PlaceHostedEdit(HWND hwnd, HWND owner, const D2D1_RECT_F& cell, float scale
     // the LumaText redraw guard, briefly hiding the redirected edit surface.
     if (SendMessageW(hwnd,EM_GETMARGINS,0,0)!=margins)
         SendMessageW(hwnd,EM_SETMARGINS,EC_LEFTMARGIN|EC_RIGHTMARGIN,margins);
-    SetWindowPos(hwnd, HWND_TOP, pt.x, y, w, lineH, SWP_NOACTIVATE);
+    // Layout also runs after every parent frame; an unconditional move still
+    // sends WM_WINDOWPOSCHANGING and reports a layout change to the IME.
+    RECT current{};
+    GetWindowRect(hwnd, &current);
+    MapWindowPoints(nullptr, GetParent(hwnd), reinterpret_cast<POINT*>(&current), 2);
+    const bool placed = current.left == pt.x && current.top == y &&
+        current.right - current.left == w && current.bottom - current.top == lineH;
+    const bool topmost = GetWindow(hwnd, GW_HWNDPREV) == nullptr;
+    if (placed && topmost) return;
+    SetWindowPos(hwnd, topmost ? nullptr : HWND_TOP, pt.x, y, w, lineH,
+                 SWP_NOACTIVATE | (topmost ? SWP_NOZORDER : 0u));
 }
 
 HWND CreateHostedEdit(AppState& s, SUBCLASSPROC proc) {
@@ -151,6 +197,58 @@ void EnsureEditVisuals(AppState& s) {
 
 void HideRenameOverlay(AppState& s, bool commit);
 
+// Inline rename status (P1f): the note UpdateRenameStatus last put up, and
+// the text it looked at (it reacts to changes only).
+static std::wstring g_renameStatusHint;
+static std::wstring g_renameTyped;
+
+// Windows drops a name's trailing spaces and periods; the rename takes the
+// name as it will really be.
+static std::wstring TrimNameEnd(std::wstring name) {
+    while (!name.empty() && (name.back() == L' ' || name.back() == L'.')) name.pop_back();
+    return name;
+}
+
+// Another item in the renamed item's folder already has `name` (on disk,
+// not the possibly stale listing). The item itself never counts: changing
+// only the case of its name is a rename too.
+static bool NameTakenBesides(const app::Tab& tab, int index, const std::wstring& name) {
+    if (_wcsicmp(name.c_str(), tab.EntryAt(static_cast<size_t>(index)).name.c_str()) == 0) return false;
+    const std::wstring full = EntryFullPath(tab, index);
+    const size_t slash = full.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return false;
+    return GetFileAttributesW((full.substr(0, slash + 1) + name).c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+// The name a rename to `typed` takes: trimmed like Windows trims it, and
+// numbered "name (2).ext" when another item has it - the rename itself
+// never replaces anything (MoveFileEx without REPLACE_EXISTING).
+static std::wstring RenameTarget(const app::Tab& tab, int index, const std::wstring& typed) {
+    std::wstring name = TrimNameEnd(typed);
+    if (name.empty() || !NameTakenBesides(tab, index, name)) return name;
+    const bool dir = tab.EntryAt(static_cast<size_t>(index)).is_dir;
+    const size_t dot = dir ? std::wstring::npos : name.find_last_of(L'.');
+    const bool has_ext = dot != std::wstring::npos && dot > 0;
+    const std::wstring stem = has_ext ? name.substr(0, dot) : name;
+    const std::wstring ext = has_ext ? name.substr(dot) : std::wstring();
+    for (int n = 2; n < 1000; ++n) {
+        std::wstring candidate = stem + L" (" + std::to_wstring(n) + L")" + ext;
+        if (!NameTakenBesides(tab, index, candidate)) return candidate;
+    }
+    return name;
+}
+
+// Edit font at the icon grids' file-name size, one per scale (a handful of
+// DPI changes at most over a session, so earlier ones are kept, not freed
+// under an EDIT that may still use them).
+static HFONT NameEditFont(float scale) {
+    static std::vector<std::pair<float, HFONT>> fonts;
+    for (const auto& [at, font] : fonts) if (at == scale) return font;
+    HFONT font = ui::typography::CreateEditFont(scale, 13.0f);
+    fonts.emplace_back(scale, font);
+    return font;
+}
+
 void ShowAddressEditor(AppState& s) {
     app::Tab* tab = ActiveTab(s);
     if (!tab) return;
@@ -159,6 +257,9 @@ void ShowAddressEditor(AppState& s) {
     if (s.filterEditing) HideFilterEditor(s, true);
     s.addressSearching = false;
     s.addressEditing = true;
+    s.addressConnectMode = false;  // BeginConnectServer sets it after this
+    s.addressSuggest.clear();
+    s.addressSuggestSel = -1;
     // DestroyWindow synchronously sends WM_KILLFOCUS to the old editor.
     s.addressIgnoreKillFocus = true;
     if (s.hwndAddressEdit) {
@@ -211,8 +312,12 @@ void HideAddressEditor(AppState& s, bool navigate) {
         // cmd / powershell / pwsh / wt open a console here instead of navigating.
         const app::AddressBarCommand command = app::ParseAddressBarCommand(buf);
         if (command.program != app::AddressBarProgram::None) RunAddressBarCommand(s, command);
-        else NavigateTo(s, AddressNavigationTarget(buf));
+        // smb://, a bare IP, or anything typed after 连接服务器 (app_network_page.h).
+        else if (!OpenServerAddressText(s, buf)) NavigateTo(s, AddressNavigationTarget(buf));
     }
+    s.addressConnectMode = false;
+    s.addressSuggest.clear();
+    s.addressSuggestSel = -1;
     s.addressIgnoreKillFocus = true;
     ShowWindow(s.hwndAddressEdit, SW_HIDE);
     s.addressEditing = false;
@@ -223,12 +328,88 @@ void HideAddressEditor(AppState& s, bool navigate) {
     InvalidateRect(s.hwnd, nullptr, FALSE);
 }
 
-void DismissPathEditorOutside(AppState& s, int x, int y) {
-    if (!s.addressEditing || s.addressSearching) return;
-    const auto bounds = s.renderer.AddressBarRect(static_cast<float>(s.compositor.Width()));
-    if (x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom) return;
+bool DismissPathEditorOutside(AppState& s, int x, int y) {
+    if (!s.addressEditing || s.addressSearching) return false;
+    const float w = static_cast<float>(s.compositor.Width());
+    const auto bounds = s.renderer.AddressBarRect(w);
+    if (x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom) return false;
+    const int row = s.renderer.AddressSuggestionAt(w, s.addressSuggest.size(), static_cast<float>(x),
+                                                   static_cast<float>(y));
+    if (row >= 0) {
+        const std::wstring path = s.addressSuggest[static_cast<size_t>(row)].path;
+        HideAddressEditor(s, false);
+        NavigateTo(s, path);
+        return true;
+    }
+    if (row == -2) return true;  // the card's padding: keep editing
     // Owner-drawn controls need not transfer keyboard focus from the native edit.
     HideAddressEditor(s, false);
+    return false;
+}
+
+void UpdateAddressSuggestions(AppState& s) {
+    const size_t before = s.addressSuggest.size();
+    s.addressSuggest.clear();
+    s.addressSuggestHeader.clear();
+    s.addressSuggestSel = -1;
+    const auto done = [&] { if (before || !s.addressSuggest.empty()) InvalidateRect(s.hwnd, nullptr, FALSE); };
+    if (!s.addressEditing || s.addressSearching || !s.hwndAddressEdit) return done();
+    const int len = GetWindowTextLengthW(s.hwndAddressEdit);
+    if (len <= 0 || len > 260) return done();
+    std::wstring text(static_cast<size_t>(len) + 1, L'\0');
+    text.resize(static_cast<size_t>(GetWindowTextW(s.hwndAddressEdit, text.data(), len + 1)));
+    while (!text.empty() && iswspace(text.back())) text.pop_back();
+    if (text == L">") {
+        // ">" opens the command palette; posted, as this runs inside EN_CHANGE.
+        PostMessageW(s.hwnd, WM_COMMAND_PALETTE, 0, 0);
+        return done();
+    }
+    while (!text.empty() && iswspace(text.front())) text.erase(text.begin());
+    // "\\..." and 连接服务器: known servers, from memory only (no network).
+    if (FillServerSuggestions(s, text)) return done();
+    if (app::AliasStore::Instance().Empty()) return done();
+    // Paths, shell: and %VAR% shortcuts keep the plain editor; "别名\rest"
+    // suggests the aliased folder plus the rest (pulse_alias.html).
+    if (text.empty() || text.find_first_of(L":%\"") != std::wstring::npos ||
+        text.front() == L'\\' || text.front() == L'/') return done();
+    const size_t cut = text.find_first_of(L"\\/");
+    std::wstring head = text.substr(0, cut);
+    while (!head.empty() && iswspace(head.back())) head.pop_back();
+    std::wstring rest = cut == std::wstring::npos ? std::wstring() : text.substr(cut);
+    for (auto& c : rest) if (c == L'/') c = L'\\';
+    while (!rest.empty() && rest.back() == L'\\') rest.pop_back();
+    if (head.empty()) return done();
+    const auto aliases = app::AliasStore::Instance().SuggestRanked(head, 6);
+    if (aliases.empty()) return done();
+    // A real subfolder with that very name wins over any alias.
+    const app::Tab* tab = ActiveTab(s);
+    if (tab && !tab->current_path.empty() && !fs::IsVirtualPath(tab->current_path)) {
+        std::wstring child = tab->current_path;
+        if (child.back() != L'\\') child += L'\\';
+        child += text;
+        const DWORD attrs = GetFileAttributesW(child.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY))
+            s.addressSuggest.push_back({text, ClipboardPath(child), l10n::Get(l10n::StringId::AliasSuggestSubfolder), true});
+    }
+    s.addressSuggestHeader = l10n::Get(s.addressSuggest.empty() ? l10n::StringId::AliasSuggestHeader
+                                                                 : l10n::StringId::AliasSuggestSubfolderFirst);
+    for (const auto& [rank, e] : aliases) {
+        if (s.addressSuggest.size() >= 6) break;
+        std::wstring path = e.path;
+        if (!rest.empty()) {
+            if (!path.empty() && path.back() == L'\\') path.pop_back();
+            path += rest;
+        }
+        if (!s.addressSuggest.empty() && _wcsicmp(s.addressSuggest.front().path.c_str(), path.c_str()) == 0)
+            continue;
+        const auto hint = rank == 2 ? l10n::StringId::AliasSuggestByPinyin
+                        : rank == 4 ? l10n::StringId::AliasSuggestByName
+                                    : l10n::StringId::AliasSuggestEnter;
+        s.addressSuggest.push_back({e.alias + rest, std::move(path), l10n::Get(hint), false});
+    }
+    // Enter takes the first row unless the text is a known shortcut (desktop, ...).
+    if (!app::ResolveAddressShortcut(text).resolved) s.addressSuggestSel = 0;
+    done();
 }
 
 void ApplyFilterCue(AppState& s) {
@@ -325,6 +506,7 @@ void ClearPaneFilter(AppState& s) {
 
 void HideFilterEditor(AppState& s, bool commit) {
     if (!s.hwndFilterEdit || !s.filterEditing) return;
+    CloseFilterTagSuggestions(s);
     const bool owned_focus = GetFocus() == s.hwndFilterEdit;
     const bool select_mode = s.filterSelectMode;
     const std::wstring restore = s.filterSelectRestore;
@@ -378,12 +560,26 @@ void LayoutRenameOverlay(AppState& s) {
         break;
     }
     if (field.right <= field.left) return;
+    if (wraps) s.renameFieldW = std::max(s.renameFieldW, field.right - field.left);  // never narrows
     // Icon grids edit the name wrapped over as many lines as it needs (the
     // field grows with it, see RenameFieldRect); other views scroll one line.
     const bool wrapped_before = GetPropW(s.hwndRenameEdit, L"Pulse.EditWrap") != nullptr;
     if (wraps) SetPropW(s.hwndRenameEdit, L"Pulse.EditWrap", reinterpret_cast<HANDLE>(1));
     else RemovePropW(s.hwndRenameEdit, L"Pulse.EditWrap");
-    if (wraps != wrapped_before) InvalidateRect(s.hwndRenameEdit, nullptr, FALSE);
+    // Exact line width for LumaText: the field's text box (frame inset 3 dip
+    // and 2 px pad a side), unrounded, as RenameFieldRect wrapped it.
+    const float wrapW = (field.right - field.left) - 6.0f * s.scale - 4.0f;
+    if (wraps && wrapW > 1.0f)
+        SetPropW(s.hwndRenameEdit, L"Pulse.EditWrapW",
+                 reinterpret_cast<HANDLE>(static_cast<UINT_PTR>(std::lround(wrapW * 64.0f))));
+    else RemovePropW(s.hwndRenameEdit, L"Pulse.EditWrapW");
+    if (wraps != wrapped_before) {
+        // The EDIT's own font (IME composition, native metrics) follows the
+        // painted one: the 13 dip file-name size in icon grids.
+        SendMessageW(s.hwndRenameEdit, WM_SETFONT,
+                     reinterpret_cast<WPARAM>(wraps ? NameEditFont(s.scale) : s.editFont), FALSE);
+        InvalidateRect(s.hwndRenameEdit, nullptr, FALSE);
+    }
     // Seat the EDIT inside the Fluent frame: frame stroke + text padding.
     const float insetX = 3.0f * s.scale;
     const float insetY = 2.0f * s.scale;
@@ -407,6 +603,42 @@ void LayoutRenameOverlay(AppState& s) {
         SetWindowPos(s.hwndRenameEdit, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
 }
 
+// The whole rename field shows: a long name near the bottom scrolls the list.
+static void EnsureRenameFieldVisible(AppState& s) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || s.renameIndex < 0) return;
+    const ui::WindowViewModel vm = BuildVm(s, false);
+    for (const auto& slot : vm.pane_slots) {
+        if (!slot.focused) continue;
+        const D2D1_RECT_F list = s.renderer.PaneListRect(slot.pane, slot.rect);
+        const D2D1_RECT_F field = s.renderer.RenameFieldRect(slot.pane, list, s.renameIndex);
+        const float over = field.bottom + 4.0f * s.scale - list.bottom;
+        if (field.right > field.left && over > 0.5f) {
+            // Scrolled to the end already: the list grows for now (until
+            // the rename ends) so the card can still come fully into view.
+            const float want = tab->scroll_y + over;
+            const float most = MaxScrollForActivePane(s);
+            if (want > most) s.renameScrollRoom += want - most;
+            if (!ui::motion::SystemAnimationsEnabled()) {
+                tab->scroll_y = want;
+                s.scrollTargetY = want;
+                ClampScroll(s);
+                LayoutRenameOverlay(s);
+            } else {
+                // The list glides there; the field follows it every frame
+                // (LayoutRenameOverlay after each present).
+                s.scrollTargetY = want;
+                s.scrollHorizontal = false;
+                s.scrollLastUpdateTime = std::chrono::steady_clock::now();
+                s.scrollAnimating = true;
+                if (s.framePump.Running()) s.framePump.Arm();
+                else if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+            }
+        }
+        break;
+    }
+}
+
 // Typing can add or remove a wrapped line: regrow the field and its frame.
 static void RegrowRenameField(AppState& s) {
     if (!s.hwndRenameEdit || s.renameIndex < 0 || !s.hwnd) return;
@@ -416,8 +648,28 @@ static void RegrowRenameField(AppState& s) {
     LayoutRenameOverlay(s);
     RECT after{};
     GetWindowRect(s.hwndRenameEdit, &after);
-    if (!EqualRect(&before, &after)) InvalidateRect(s.hwnd, nullptr, FALSE);
+    if (!EqualRect(&before, &after)) {
+        EnsureRenameFieldVisible(s);
+        InvalidateRect(s.hwnd, nullptr, FALSE);
+    }
 }
+// Every Pulse window of this process repaints: rows cache their alias.
+static void BroadcastAliasChanged(AppState& s) {
+    if (!s.hwnd) return;
+    struct Ctx { wchar_t cls[64]; DWORD pid; } ctx{};
+    GetClassNameW(s.hwnd, ctx.cls, ARRAYSIZE(ctx.cls));
+    ctx.pid = GetCurrentProcessId();
+    EnumWindows([](HWND w, LPARAM p) -> BOOL {
+        const Ctx& c = *reinterpret_cast<const Ctx*>(p);
+        DWORD pid = 0;
+        GetWindowThreadProcessId(w, &pid);
+        wchar_t cls[64]{};
+        if (pid == c.pid && GetClassNameW(w, cls, ARRAYSIZE(cls)) && wcscmp(cls, c.cls) == 0)
+            InvalidateRect(w, nullptr, FALSE);
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&ctx));
+}
+
 void ShowRenameOverlay(AppState& s) {
     if(DeferContentSelection(s,[](AppState& v){ShowRenameOverlay(v);})) return;
     app::Tab* tab = ActiveTab(s);
@@ -434,6 +686,13 @@ void ShowRenameOverlay(AppState& s) {
     if (s.addressEditing) HideAddressEditor(s, false);
     if (s.filterEditing) HideFilterEditor(s, true);
     s.renameIndex = tab->selected_index;
+    s.renameFieldW = 0.0f;
+    s.renameHint.clear();
+    s.renameConfirmExt = false;
+    s.renameShakeAt = 0;
+    s.renameScrollRoom = 0.0f;
+    g_renameStatusHint.clear();
+    g_renameTyped.clear();
     EnsureRowVisible(s, *tab, s.renameIndex);
 
     // Protect the new model index before tearing down a focused old editor.
@@ -452,16 +711,39 @@ void ShowRenameOverlay(AppState& s) {
     }
 
     const std::wstring& name = tab->EntryAt(s.renameIndex).name;
-    SetWindowTextW(s.hwndRenameEdit, name.c_str());
+    std::wstring initial = name;
+    if (s.renameAlias) {
+        const std::wstring alias = app::AliasStore::Instance().Find(EntryFullPath(*tab, s.renameIndex));
+        if (!alias.empty()) initial = alias;
+    }
+    // A file's extension is dimmed while its name is edited wrapped, as it
+    // is under the icon (not a folder's last dot, nor an alias).
+    if (!tab->EntryAt(s.renameIndex).is_dir && !s.renameAlias)
+        SetPropW(s.hwndRenameEdit, L"Pulse.EditDimExt", reinterpret_cast<HANDLE>(1));
+    else RemovePropW(s.hwndRenameEdit, L"Pulse.EditDimExt");
+    SetWindowTextW(s.hwndRenameEdit, initial.c_str());
     LayoutRenameOverlay(s);
+    EnsureRenameFieldVisible(s);
     ShowWindow(s.hwndRenameEdit, SW_SHOW);
     SetForegroundWindow(GetAncestor(s.hwndRenameEdit, GA_ROOT));
     SetFocus(s.hwndRenameEdit);
     int stem = (int)name.find_last_of(L'.');
     bool isDir = tab->EntryAt(s.renameIndex).is_dir;
-    SendMessageW(s.hwndRenameEdit, EM_SETSEL, 0, (stem > 0 && !isDir) ? stem : -1);
+    SendMessageW(s.hwndRenameEdit, EM_SETSEL, 0, (stem > 0 && !isDir && !s.renameAlias) ? stem : -1);
     s.renameIgnoreKillFocus = false;
     InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+void ShowAliasOverlay(AppState& s) {
+    app::Tab* tab = ActiveTab(s);
+    if (!tab || !tab->snapshot || tab->SelectedCount() != 1 || tab->selected_index < 0 ||
+        tab->selected_index >= static_cast<int>(tab->EntryCount()) || IsRecycleTab(tab))
+        return;
+    if (EntryFullPath(*tab, tab->selected_index).empty()) return;
+    if (s.renameIndex >= 0) HideRenameOverlay(s, false);
+    s.renameAlias = true;
+    ShowRenameOverlay(s);
+    if (s.renameIndex < 0) s.renameAlias = false;
 }
 
 void HideRenameOverlay(AppState& s, bool commit) {
@@ -473,30 +755,63 @@ void HideRenameOverlay(AppState& s, bool commit) {
     }
     const int index = s.renameIndex;
     s.renameIndex = -1;
-    if (commit) {
+    const bool alias_edit = s.renameAlias;
+    s.renameAlias = false;
+    if (s.renameConfirmExt) commit = false;  // an unanswered extension question never commits
+    s.renameConfirmExt = false;
+    s.renameHint.clear();
+    s.renameFieldW = 0.0f;
+    if (s.renameScrollRoom > 0.0f) {
+        // The room it made goes with the card.
+        s.renameScrollRoom = 0.0f;
+        ClampScroll(s);
+    }
+    if (commit && alias_edit) {
+        app::Tab* tab = ActiveTab(s);
+        wchar_t buf[512];
+        GetWindowTextW(s.hwndRenameEdit, buf, ARRAYSIZE(buf));
+        if (tab && tab->snapshot && index < static_cast<int>(tab->EntryCount())) {
+            const std::wstring full = EntryFullPath(*tab, index);
+            // Typing the real name back is the same as clearing the alias.
+            const bool same = _wcsicmp(buf, tab->EntryAt(index).name.c_str()) == 0;
+            app::AliasStore::Instance().Set(full, same ? std::wstring_view() : std::wstring_view(buf));
+            BroadcastAliasChanged(s);
+        }
+    } else if (commit) {
         app::Tab* tab = ActiveTab(s);
         wchar_t buf[512];
         GetWindowTextW(s.hwndRenameEdit, buf, ARRAYSIZE(buf));
         if (tab && buf[0] && index < (int)(tab->snapshot ? tab->EntryCount() : 0)) {
             std::wstring full = EntryFullPath(*tab, index);
-            if (!full.empty() && buf != tab->EntryAt(index).name) {
+            // As the note under the field said: trimmed, numbered if taken.
+            const std::wstring target = RenameTarget(*tab, index, buf);
+            const std::wstring shell_id = tab->EntryAt(index).shell_id;
+            if (fs::IsDevicePath(full) && !target.empty() && target != tab->EntryAt(index).name) {
+                // A phone file: the shell host renames it (no undo, as in Explorer).
+                if (s.ops.RenameShellItem(shell_id, target)) {
+                    tab->pending_selected_name = target;
+                    tab->pending_selected_names = { target };
+                    tab->pending_selection_revision = tab->selection_revision;
+                    tab->held_renames.push_back({tab->EntryAt(index).name, target});
+                }
+            } else if (!full.empty() && !target.empty() && target != tab->EntryAt(index).name) {
                 ops::OpRequest req;
                 req.type = ops::OpType::Rename;
                 req.sources.push_back(full);
-                req.new_name = buf;
+                req.new_name = target;
                 // Naming the folder 合并到文件夹 just made is part of that
                 // action: one undo takes the name, the move and the folder.
                 if (s.groupRenameUndo && _wcsicmp(full.c_str(), s.groupRenameFolder.c_str()) == 0) {
                     req.undo_group = s.groupRenameUndo;
-                    req.undo_label = l10n::Pick(L"合并到文件夹", L"new folder with selection");
+                    req.undo_label = l10n::Get(l10n::StringId::NewFolderWithSelection).c_str();
                 }
-                tab->pending_selected_name = buf;
-                tab->pending_selected_names = { buf };
+                tab->pending_selected_name = target;
+                tab->pending_selected_names = { target };
                 tab->pending_selection_revision = tab->selection_revision;
                 // The renamed row keeps its place even if the refresh beats
                 // the watcher event (#13).
-                tab->held_renames.push_back({tab->EntryAt(index).name, buf});
-                s.ops.Submit(std::move(req));
+                tab->held_renames.push_back({tab->EntryAt(index).name, target});
+                s.ops.Submit(std::move(req));  // its 别名 follows on completion (app_main)
             }
         }
     }
@@ -600,11 +915,31 @@ D2D1_COLOR_F HostedEditBackground(const AppState& s) {
 
 IDWriteTextFormat* HostedEditFormat(AppState& s, HWND hwnd) {
     if (hwnd == s.hwndAddressEdit) return s.compositor.AddressFormat();
+    // Icon grids edit a name in the face and size it is shown in, so its
+    // lines stay put when editing starts.
+    if (hwnd == s.hwndRenameEdit && GetPropW(hwnd, L"Pulse.EditWrap")) return s.compositor.FileNameFormat();
     return s.compositor.TextFormat();
 }
 
 bool HandleHostedEditMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wParam,
                                     LPARAM lParam, LRESULT& result) {
+    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+        // Keys the user gave to 窗口总览, 切换窗口 or 下一个标签页 (Settings >
+        // 快捷键) act from text boxes like their defaults below: the main
+        // window translates them (keymap_input.h).
+        WPARAM vk = wParam;
+        if (vk == VK_PROCESSKEY) vk = ImmGetVirtualKey(hwnd);
+        if (!app::IsModifierKey(static_cast<UINT>(vk))) {
+            const auto t = app::ActiveKeymap().Translate(app::CurrentChord(static_cast<UINT>(vk)));
+            if (t.kind == app::Keymap::Translation::Rewrite &&
+                (t.action == app::KeyAction::Overview || t.action == app::KeyAction::SwitchWindow ||
+                 t.action == app::KeyAction::NextTab)) {
+                SetFocus(s.hwnd);
+                result = SendMessageW(s.hwnd, msg, vk, lParam);
+                return true;
+            }
+        }
+    }
     if ((msg == WM_KEYDOWN || msg == WM_CHAR) &&
         app::IsTabShortcut(static_cast<UINT>(wParam),
                            (GetKeyState(VK_CONTROL) & 0x8000) != 0,
@@ -613,6 +948,18 @@ bool HandleHostedEditMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wParam,
         if (msg == WM_KEYDOWN) HandleKeyDown(&s, s.hwnd, msg, wParam, lParam);
         result = 0;
         return true;
+    }
+    if (msg == WM_KEYDOWN && (GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000)) {
+        // Window keys an edit box has no use for: 窗口总览 and the window
+        // switcher answer on the main window, which also takes the keys
+        // that follow (Esc, arrows), so the focus moves there first.
+        WPARAM vk = wParam;
+        if (vk == VK_PROCESSKEY) vk = ImmGetVirtualKey(hwnd);
+        if (IsWindowOverviewKey(vk) || app::IsWindowSwitcherScanCode(lParam)) {
+            SetFocus(s.hwnd);
+            result = SendMessageW(s.hwnd, WM_KEYDOWN, vk, lParam);
+            return true;
+        }
     }
     EnsureEditVisuals(s);
     return ui::HandleChildEditMessage(s.compositor, HostedEditFormat(s, hwnd),
@@ -655,11 +1002,25 @@ LRESULT CALLBACK AddressEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 return 0;
             }
             HideAddressEditor(*s, false);
-            ShowOmnibar(*s, wParam == L'K' ? OmnibarMode::Mixed : OmnibarMode::Path);
+            ShowOmnibar(*s, wParam == L'K' ? OmnibarMode::Command : OmnibarMode::Path);
             return 0;
         }
         if (s->addressSearching && wParam == VK_TAB) {
             ShowAddressSearchScope(*s);
+            return 0;
+        }
+        if (!s->addressSearching && !s->addressSuggest.empty() && (wParam == VK_DOWN || wParam == VK_UP)) {
+            const int n = static_cast<int>(s->addressSuggest.size());
+            int& sel = s->addressSuggestSel;
+            sel = wParam == VK_DOWN ? (sel + 1 >= n ? -1 : sel + 1) : (sel < 0 ? n - 1 : sel - 1);
+            InvalidateRect(s->hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (wParam == VK_RETURN && !s->addressSearching && s->addressSuggestSel >= 0 &&
+            s->addressSuggestSel < static_cast<int>(s->addressSuggest.size())) {
+            const std::wstring path = s->addressSuggest[static_cast<size_t>(s->addressSuggestSel)].path;
+            HideAddressEditor(*s, false);
+            NavigateTo(*s, path);
             return 0;
         }
         if (wParam == VK_RETURN) {
@@ -673,6 +1034,13 @@ LRESULT CALLBACK AddressEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         }
         if (wParam == VK_ESCAPE) {
+            if (!s->addressSearching && !s->addressSuggest.empty()) {
+                // First Esc closes the suggestions, the next one the editor.
+                s->addressSuggest.clear();
+                s->addressSuggestSel = -1;
+                InvalidateRect(s->hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (s->menu && s->menu->IsOpen()) s->menu->Dismiss();
             else if (s->addressSearching) EscapeAddressSearch(*s);
             else HideAddressEditor(*s, false);
@@ -713,15 +1081,24 @@ LRESULT CALLBACK FilterEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     if (s && HandleHostedEditMessage(*s, hwnd, msg, wParam, lParam, handled)) return handled;
     switch (msg) {
     case WM_KEYDOWN:
+        // The # completion takes ↑↓ Enter Tab Esc while it is open.
+        if (FilterTagSuggestionsKey(*s, wParam)) return 0;
         if (wParam == VK_RETURN || wParam == VK_ESCAPE) {
             HideFilterEditor(*s, wParam == VK_RETURN);
             return 0;
         }
         break;
+    case WM_KEYUP:
+        if (wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_HOME || wParam == VK_END ||
+            wParam == VK_DELETE)
+            UpdateFilterTagSuggestions(*s);
+        break;
     case WM_CHAR:
+        if (FilterTagSuggestionsSwallowChar(wParam)) return 0;
         if (wParam != VK_RETURN && wParam != VK_ESCAPE) {
             LRESULT lr = DefPresentedHostedEditProc(s, hwnd, msg, wParam, lParam);
             SyncFilterEditor(*s);
+            UpdateFilterTagSuggestions(*s);
             return lr;
         }
         break;
@@ -736,6 +1113,207 @@ LRESULT CALLBACK FilterEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 static LRESULT RenameEditProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, DWORD_PTR dwRefData);
+// Inline rename keys (P1f) --------------------------------------------------
+static bool IsIllegalNameChar(wchar_t c) {
+    return c != 0 && wcschr(L"\\/:*?\"<>|", c) != nullptr;
+}
+
+static void ShowRenameHint(AppState& s, std::wstring text, bool until_answered) {
+    s.renameHint = std::move(text);
+    s.renameHintUntil = until_answered ? 0 : GetTickCount64() + 3000;
+    if (!until_answered) s.renameConfirmExt = false;  // the question is no longer on screen
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+// The note for what the typed name will become: numbered when another item
+// has it, trimmed when it ends in spaces or periods. Runs on text changes
+// only, so a refused character's note stays up; never over the extension
+// question.
+static void UpdateRenameStatus(AppState& s) {
+    if (!s.hwndRenameEdit || s.renameIndex < 0 || s.renameAlias) return;
+    const int length = GetWindowTextLengthW(s.hwndRenameEdit);
+    std::wstring typed(static_cast<size_t>(length) + 1, L'\0');
+    typed.resize(static_cast<size_t>(GetWindowTextW(s.hwndRenameEdit, typed.data(), length + 1)));
+    if (typed == g_renameTyped) return;
+    g_renameTyped = typed;
+    if (s.renameConfirmExt) return;
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || !tab->snapshot || s.renameIndex >= static_cast<int>(tab->EntryCount())) return;
+    std::wstring note;
+    const std::wstring trimmed = TrimNameEnd(typed);
+    const std::wstring target = RenameTarget(*tab, s.renameIndex, typed);
+    if (!target.empty() && target != trimmed) {
+        wchar_t line[700]{};
+        swprintf_s(line, l10n::Get(l10n::StringId::RenameWillBecomeNumbered).c_str(), target.c_str());
+        note = line;
+    } else if (!trimmed.empty() && trimmed != typed) {
+        note = l10n::Get(l10n::StringId::RenameTrailingTrimmed);
+    }
+    if (!note.empty()) {
+        if (s.renameHint != note) ShowRenameHint(s, note, true);
+    } else if (!g_renameStatusHint.empty() && s.renameHint == g_renameStatusHint) {
+        s.renameHint.clear();
+        if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+    }
+    g_renameStatusHint = note;
+}
+
+// A refused character: it is not typed; the field shakes and says why.
+static void RefuseRenameChar(AppState& s) {
+    // The Animation effects switch is asked once, when the shake starts.
+    s.renameShakeAt = ui::motion::SystemAnimationsEnabled() ? GetTickCount64() : 0;
+    ShowRenameHint(s, l10n::Get(l10n::StringId::ANameCanTContainAnyOfTheseCharacters), false);
+}
+
+// F2 again cycles the selection: name -> whole name -> extension, like
+// File Explorer. Folders and 别名 have no extension to pick.
+static void CycleRenameSelection(AppState& s, HWND hwnd) {
+    const int length = GetWindowTextLengthW(hwnd);
+    std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+    text.resize(static_cast<size_t>(GetWindowTextW(hwnd, text.data(), length + 1)));
+    const int len = static_cast<int>(text.size());
+    const app::Tab* tab = ActiveTab(s);
+    const bool file = tab && tab->snapshot && !s.renameAlias && s.renameIndex >= 0 &&
+        s.renameIndex < static_cast<int>(tab->EntryCount()) && !tab->EntryAt(static_cast<size_t>(s.renameIndex)).is_dir;
+    const size_t dot = text.find_last_of(L'.');
+    const int stem = file && dot != std::wstring::npos && dot > 0 ? static_cast<int>(dot) : len;
+    DWORD a = 0, b = 0;
+    SendMessageW(hwnd, EM_GETSEL, reinterpret_cast<WPARAM>(&a), reinterpret_cast<LPARAM>(&b));
+    int from = 0, to = stem;
+    if (stem >= len) to = len;                                       // nothing to cycle
+    else if (a == 0 && static_cast<int>(b) == stem) to = len;        // name -> whole
+    else if (a == 0 && static_cast<int>(b) == len) { from = stem + 1; to = len; }  // whole -> extension
+    SendMessageW(hwnd, EM_SETSEL, static_cast<WPARAM>(from), static_cast<LPARAM>(to));
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
+
+// Typing again answers the extension question with "keep editing".
+static void DropRenameQuestion(AppState& s) {
+    if (!s.renameConfirmExt) return;
+    s.renameConfirmExt = false;
+    s.renameHint.clear();
+    if (s.hwnd) InvalidateRect(s.hwnd, nullptr, FALSE);
+}
+
+static std::wstring_view NameExtension(std::wstring_view name) {
+    const size_t dot = name.find_last_of(L'.');
+    return dot == std::wstring_view::npos || dot == 0 ? std::wstring_view() : name.substr(dot);
+}
+
+// A file (not a folder or a 别名) whose typed name ends in another extension.
+static bool RenameChangesExtension(AppState& s) {
+    const app::Tab* tab = ActiveTab(s);
+    if (!tab || !tab->snapshot || s.renameAlias || s.renameIndex < 0 ||
+        s.renameIndex >= static_cast<int>(tab->EntryCount()) || !s.hwndRenameEdit)
+        return false;
+    const auto& entry = tab->EntryAt(static_cast<size_t>(s.renameIndex));
+    if (entry.is_dir) return false;
+    wchar_t buf[512]{};
+    GetWindowTextW(s.hwndRenameEdit, buf, ARRAYSIZE(buf));
+    const std::wstring typed = TrimNameEnd(buf);  // "a.txt." keeps .txt
+    if (typed.empty() || entry.name == typed) return false;
+    const std::wstring_view before = NameExtension(entry.name);
+    const std::wstring_view after = NameExtension(typed);
+    return before.size() != after.size() ||
+           (!before.empty() && CompareStringOrdinal(before.data(), static_cast<int>(before.size()), after.data(),
+                                                    static_cast<int>(after.size()), TRUE) != CSTR_EQUAL);
+}
+
+// Tab / Shift+Tab: commit, then rename the next / previous item in view order.
+static void RelayRename(AppState& s, int dir) {
+    app::Tab* tab = ActiveTab(s);
+    const int from = s.renameIndex;
+    if (!tab || from < 0 || s.renameAlias) {
+        HideRenameOverlay(s, true);
+        return;
+    }
+    const ui::WindowViewModel vm = BuildVm(s, false);
+    const int view = vm.pane.ViewIndex(from);
+    const int next = view + dir;
+    HideRenameOverlay(s, true);
+    if (view < 0 || next < 0 || next >= static_cast<int>(vm.pane.EntryCount())) return;
+    const int source = vm.pane.SourceIndex(next);
+    if (source < 0) return;
+    tab->SelectOnly(source);
+    ShowRenameOverlay(s);
+}
+
+// Enter (dir 0) or Tab (dir +-1). A changed extension asks once first, like
+// File Explorer: Enter again renames, Esc goes back to the extension.
+static void SubmitRename(AppState& s, int dir) {
+    if (s.renameConfirmExt) {
+        s.renameConfirmExt = false;  // answered
+    } else if (RenameChangesExtension(s)) {
+        s.renameConfirmExt = true;
+        ShowRenameHint(s, l10n::Get(l10n::StringId::RenameExtensionConfirm), true);
+        return;
+    }
+    if (dir == 0) HideRenameOverlay(s, true);
+    else RelayRename(s, dir);
+}
+
+static void BackToExtension(AppState& s, HWND hwnd) {
+    DropRenameQuestion(s);
+    const int length = GetWindowTextLengthW(hwnd);
+    std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+    text.resize(static_cast<size_t>(GetWindowTextW(hwnd, text.data(), length + 1)));
+    const size_t dot = text.find_last_of(L'.');
+    const int from = dot == std::wstring::npos || dot == 0 ? length : static_cast<int>(dot) + 1;
+    SendMessageW(hwnd, EM_SETSEL, static_cast<WPARAM>(from), static_cast<LPARAM>(length));
+}
+
+// Pasted text loses what a name cannot hold; line breaks go quietly.
+static bool PasteRenameText(AppState& s, HWND hwnd) {
+    if (!IsClipboardFormatAvailable(CF_UNICODETEXT) || !OpenClipboard(hwnd)) return false;
+    std::wstring text;
+    if (HANDLE data = GetClipboardData(CF_UNICODETEXT)) {
+        if (const auto* chars = static_cast<const wchar_t*>(GlobalLock(data))) {
+            text = chars;
+            GlobalUnlock(data);
+        }
+    }
+    CloseClipboard();
+    std::wstring clean;
+    bool refused = false;
+    for (const wchar_t c : text) {
+        if (c == L'\r' || c == L'\n' || c == L'\t') continue;
+        if (IsIllegalNameChar(c)) {
+            refused = true;
+            continue;
+        }
+        clean.push_back(c);
+    }
+    if (clean.size() == text.size()) return false;  // nothing to drop: the EDIT pastes
+    DropRenameQuestion(s);
+    SendMessageW(hwnd, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(clean.c_str()));
+    if (refused) RefuseRenameChar(s);
+    return true;
+}
+
+// Keys taken before the shared edit handling sees them.
+static bool RenameKeyFilter(AppState& s, HWND hwnd, UINT msg, WPARAM wParam) {
+    const bool plain = (GetKeyState(VK_CONTROL) & 0x8000) == 0 && (GetKeyState(VK_MENU) & 0x8000) == 0;
+    if (msg == WM_KEYDOWN && wParam == VK_TAB && plain) {
+        SubmitRename(s, (GetKeyState(VK_SHIFT) & 0x8000) ? -1 : 1);
+        return true;
+    }
+    if (msg == WM_CHAR && wParam == L'\t') return true;
+    if (msg == WM_KEYDOWN && wParam == VK_F2 && plain && (GetKeyState(VK_SHIFT) & 0x8000) == 0) {
+        CycleRenameSelection(s, hwnd);
+        return true;
+    }
+    if (msg == WM_CHAR && IsIllegalNameChar(static_cast<wchar_t>(wParam))) {
+        MessageBeep(MB_OK);
+        RefuseRenameChar(s);
+        return true;
+    }
+    if ((msg == WM_CHAR && wParam >= 0x20) || (msg == WM_CHAR && wParam == VK_BACK) ||
+        (msg == WM_KEYDOWN && wParam == VK_DELETE))
+        DropRenameQuestion(s);
+    if (msg == WM_PASTE) return PasteRenameText(s, hwnd);
+    return false;
+}
+
 LRESULT CALLBACK RenameEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                                        UINT_PTR /*uIdSubclass*/, DWORD_PTR dwRefData) {
     static const bool trace = GetEnvironmentVariableW(L"PULSE_EDIT_TRACE", nullptr, 0) > 0;
@@ -767,15 +1345,21 @@ LRESULT CALLBACK RenameEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 static LRESULT RenameEditProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, DWORD_PTR dwRefData) {
     AppState* s = reinterpret_cast<AppState*>(dwRefData);
     LRESULT handled = 0;
+    if (s && RenameKeyFilter(*s, hwnd, msg, wParam)) {
+        RegrowRenameField(*s);
+        UpdateRenameStatus(*s);
+        return 0;
+    }
     if (s && HandleHostedEditMessage(*s, hwnd, msg, wParam, lParam, handled)) return handled;
     switch (msg) {
     case WM_KEYDOWN:
         if (wParam == VK_RETURN) {
-            HideRenameOverlay(*s, true);
+            SubmitRename(*s, 0);
             return 0;
         }
         if (wParam == VK_ESCAPE) {
-            HideRenameOverlay(*s, false);
+            if (s->renameConfirmExt) BackToExtension(*s, hwnd);
+            else HideRenameOverlay(*s, false);
             return 0;
         }
         break;
@@ -790,7 +1374,10 @@ static LRESULT RenameEditProcImpl(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         msg == WM_CLEAR || msg == WM_UNDO || msg == EM_UNDO || msg == EM_REPLACESEL ||
         msg == WM_SETTEXT || msg == WM_IME_COMPOSITION || msg == WM_IME_ENDCOMPOSITION;
     const LRESULT result = DefPresentedHostedEditProc(s, hwnd, msg, wParam, lParam);
-    if (s && edits_text) RegrowRenameField(*s);
+    if (s && edits_text) {
+        RegrowRenameField(*s);
+        UpdateRenameStatus(*s);
+    }
     return result;
 }
 

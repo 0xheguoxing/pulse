@@ -1,6 +1,7 @@
 // drag_drop.cpp — See drag_drop.h for the contract.
 #include "drag_drop.h"
 #include "../fs/fs_recycle.h"
+#include "../common/shell_id.h"
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shobjidl.h>
@@ -9,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cwctype>
+#include <mutex>
 #include <vector>
 
 namespace pulse::ui {
@@ -22,6 +24,11 @@ UINT PreferredEffectFormat() {
 
 UINT PerformedEffectFormat() {
     static UINT fmt = RegisterClipboardFormatW(CFSTR_PERFORMEDDROPEFFECT);
+    return fmt;
+}
+
+UINT LogicalPerformedEffectFormat() {
+    static UINT fmt = RegisterClipboardFormatW(CFSTR_LOGICALPERFORMEDDROPEFFECT);
     return fmt;
 }
 
@@ -54,6 +61,18 @@ DWORD ReadDwordFormat(IDataObject* obj, CLIPFORMAT format) {
     return value;
 }
 
+void WriteDwordFormat(IDataObject* obj, CLIPFORMAT format, DWORD value) {
+    if (!obj) return;
+    FORMATETC fmt{ format, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM medium{};
+    medium.tymed = TYMED_HGLOBAL;
+    medium.hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(DWORD));
+    if (!medium.hGlobal) return;
+    *static_cast<DWORD*>(GlobalLock(medium.hGlobal)) = value;
+    GlobalUnlock(medium.hGlobal);
+    if (FAILED(obj->SetData(&fmt, &medium, TRUE))) ReleaseStgMedium(&medium);
+}
+
 HRESULT CreateShellFilesDataObject(const std::vector<std::wstring>& paths,
                                    IDataObject** out) {
     if (!out) return E_POINTER;
@@ -63,7 +82,7 @@ HRESULT CreateShellFilesDataObject(const std::vector<std::wstring>& paths,
     pidls.reserve(paths.size());
     for (const auto& path : paths) {
         PIDLIST_ABSOLUTE pidl = nullptr;
-        if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) || !pidl) {
+        if (FAILED(shell_id::ParseId(path, &pidl)) || !pidl) {
             for (auto* p : pidls) CoTaskMemFree(p);
             return E_FAIL;
         }
@@ -219,6 +238,36 @@ bool ExtractHDropPaths(IDataObject* obj, std::vector<std::wstring>& out) {
         out.push_back(std::move(path));
     }
     ReleaseStgMedium(&medium);
+    return !out.empty();
+}
+
+bool IsShellItemId(const std::wstring& path) {
+    return path.size() > 2 && path[0] == L':' && path[1] == L':';
+}
+
+bool ExtractShellItemIds(IDataObject* obj, std::vector<std::wstring>& out) {
+    out.clear();
+    if (!obj) return false;
+    IShellItemArray* array = nullptr;
+    if (FAILED(SHCreateShellItemArrayFromDataObject(obj, IID_PPV_ARGS(&array))) || !array) return false;
+    DWORD count = 0;
+    if (FAILED(array->GetCount(&count))) count = 0;
+    for (DWORD i = 0; i < count; ++i) {
+        IShellItem* item = nullptr;
+        LPWSTR name = nullptr;
+        if (SUCCEEDED(array->GetItemAt(i, &item)) && item &&
+            SUCCEEDED(item->GetDisplayName(SIGDN_DESKTOPABSOLUTEPARSING, &name)) && name) {
+            // A phone item travels as its ID list: its parsing name does not parse back.
+            out.emplace_back(IsShellItemId(name) ? shell_id::FromItem(item) : std::wstring(name));
+        }
+        if (name) CoTaskMemFree(name);
+        if (item) item->Release();
+        if (out.size() != i + 1 || !IsShellItemId(out.back())) {
+            out.clear();
+            break;
+        }
+    }
+    array->Release();
     return !out.empty();
 }
 
@@ -393,7 +442,7 @@ HGLOBAL FileDataObject::RenderShellIdList() const {
     pidls.reserve(paths_.size());
     for (const auto& path : paths_) {
         PIDLIST_ABSOLUTE pidl = nullptr;
-        if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)) || !pidl) {
+        if (FAILED(shell_id::ParseId(path, &pidl)) || !pidl) {
             for (auto* p : pidls) CoTaskMemFree(p);
             return nullptr;
         }
@@ -466,6 +515,7 @@ bool FileDataObject::IsSupportedFormat(const FORMATETC* fmt) const {
     return fmt->cfFormat == CF_HDROP ||
            fmt->cfFormat == (CLIPFORMAT)PreferredEffectFormat() ||
            fmt->cfFormat == (CLIPFORMAT)PerformedEffectFormat() ||
+           fmt->cfFormat == (CLIPFORMAT)LogicalPerformedEffectFormat() ||
            fmt->cfFormat == (CLIPFORMAT)FileNameWFormat() ||
            fmt->cfFormat == (CLIPFORMAT)FileNameFormat() ||
            fmt->cfFormat == (CLIPFORMAT)ShellIdListFormat();
@@ -486,6 +536,8 @@ HRESULT FileDataObject::GetData(FORMATETC* fmt, STGMEDIUM* out) {
         h = RenderDword(DROPEFFECT_COPY | DROPEFFECT_MOVE);
     } else if (fmt->cfFormat == (CLIPFORMAT)PerformedEffectFormat()) {
         h = RenderDword(performed_effect_);
+    } else if (fmt->cfFormat == (CLIPFORMAT)LogicalPerformedEffectFormat()) {
+        h = RenderDword(logical_effect_);
     } else if (fmt->cfFormat == (CLIPFORMAT)FileNameWFormat()) {
         h = RenderFileNameW();
     } else if (fmt->cfFormat == (CLIPFORMAT)FileNameFormat()) {
@@ -502,12 +554,13 @@ HRESULT FileDataObject::GetData(FORMATETC* fmt, STGMEDIUM* out) {
 
 HRESULT FileDataObject::SetData(FORMATETC* fmt, STGMEDIUM* medium, BOOL release) {
     if (!fmt || !medium) return E_INVALIDARG;
+    const bool logical = fmt->cfFormat == (CLIPFORMAT)LogicalPerformedEffectFormat();
     if (fmt->cfFormat != (CLIPFORMAT)PerformedEffectFormat() &&
-        fmt->cfFormat != (CLIPFORMAT)PreferredEffectFormat())
+        fmt->cfFormat != (CLIPFORMAT)PreferredEffectFormat() && !logical)
         return DV_E_FORMATETC;
     if (medium->tymed != TYMED_HGLOBAL || !medium->hGlobal) return DV_E_TYMED;
     if (DWORD* p = static_cast<DWORD*>(GlobalLock(medium->hGlobal))) {
-        performed_effect_ = *p;
+        (logical ? logical_effect_ : performed_effect_) = *p;
         GlobalUnlock(medium->hGlobal);
     }
     if (release) ReleaseStgMedium(medium);
@@ -541,9 +594,64 @@ ULONG ListDropSource::Release() {
     return r;
 }
 
+namespace {
+DragVisualFactory g_drag_visual_factory = nullptr;
+} // namespace
+
+void SetDragVisualFactory(DragVisualFactory factory) { g_drag_visual_factory = factory; }
+
+namespace {
+// UI threads only, but windows may run on their own: keep it locked.
+std::mutex g_land_mu;
+bool g_land_expect = false;
+ULONGLONG g_land_expect_at = 0;
+HWND g_land_hwnd = nullptr;
+std::vector<RECT> g_land_rects;
+} // namespace
+
+void ExpectDragLanding() {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    g_land_expect = true;
+    g_land_expect_at = GetTickCount64();
+}
+
+bool TakeDragLandingExpectation() {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    const bool fresh = g_land_expect && GetTickCount64() - g_land_expect_at < 2000;
+    g_land_expect = false;
+    return fresh;
+}
+
+void SetDragLandingWindow(HWND hwnd) {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    g_land_hwnd = hwnd;
+    if (!hwnd) g_land_rects.clear();
+}
+
+bool DragLandingAwaiting() {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    return g_land_hwnd != nullptr;
+}
+
+bool LandDragStack(const std::vector<RECT>& screen_rects) {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    if (!g_land_hwnd || screen_rects.empty()) return false;
+    g_land_rects = screen_rects;
+    const HWND hwnd = g_land_hwnd;
+    g_land_hwnd = nullptr;  // one answer per drop
+    return PostMessageW(hwnd, kDragLandMessage, 0, 0) != FALSE;
+}
+
+std::vector<RECT> TakeDragLandingRects() {
+    std::lock_guard<std::mutex> lock(g_land_mu);
+    return std::move(g_land_rects);
+}
+
 HRESULT ListDropSource::QueryContinueDrag(BOOL escape_pressed, DWORD key_state) {
+    if (visual_) visual_->Track();
     if (escape_pressed) {
         if (esc_hook_ && esc_hook_()) return S_OK; // target consumed Esc (spring-back)
+        cancelled_ = true;
         return DRAGDROP_S_CANCEL;
     }
     if (!(key_state & (MK_LBUTTON | MK_RBUTTON))) return DRAGDROP_S_DROP;
@@ -558,6 +666,9 @@ DWORD DoFileDragDrop(const std::vector<std::wstring>& paths, DWORD allowed_effec
     IDataObject* data = nullptr;
     FileDataObject* fallback = nullptr;
     if (FAILED(CreateShellFilesDataObject(paths, &data)) || !data) {
+        // Shell item ids have no CF_HDROP form: without the shell's object
+        // there is nothing a target could read.
+        if (IsShellItemId(paths.front())) return DROPEFFECT_NONE;
         fallback = FileDataObject::Create(paths);
         data = fallback;
     } else {
@@ -575,12 +686,30 @@ DWORD DoFileDragDrop(const std::vector<std::wstring>& paths, DWORD allowed_effec
 
     auto* source = new ListDropSource();
     source->SetEscHook(std::move(esc_consumed));
+    DragVisual* visual = g_drag_visual_factory ? g_drag_visual_factory(paths) : nullptr;
+    source->SetVisual(visual);
     DWORD effect = DROPEFFECT_NONE;
     // Explorer's file drags also allow LINK. Apps that open a dropped file
     // often answer LINK, and without it they show the no-drop cursor (#235).
     // Preferred DropEffect above keeps only the caller's copy/move, so drop
     // targets that pick a default (Explorer, Pulse) still copy or move.
-    ::DoDragDrop(data, source, allowed_effects | DROPEFFECT_LINK, &effect);
+    const HRESULT drag_hr = ::DoDragDrop(data, source, allowed_effects | DROPEFFECT_LINK, &effect);
+    if (effect == DROPEFFECT_NONE && drag_hr == DRAGDROP_S_DROP) {
+        // Optimized move (Pulse, Explorer): the target moved the items itself
+        // and reports NONE so that we do not delete them; it still moved.
+        const DWORD logical = fallback ? fallback->LogicalEffect()
+            : ReadDwordFormat(data, (CLIPFORMAT)LogicalPerformedEffectFormat());
+        if (logical == DROPEFFECT_MOVE) effect = DROPEFFECT_MOVE;
+    }
+    if (visual) {
+        // Hand off before the effect fix-up below: a drop that Explorer
+        // performed asynchronously still landed, so only a refused or
+        // cancelled drag flies the stack back.
+        source->SetVisual(nullptr);
+        const bool dropped = drag_hr == DRAGDROP_S_DROP && !source->Cancelled();
+        visual->Finish(effect, !dropped);
+        visual = nullptr;
+    }
     if (effect == DROPEFFECT_NONE) {
         if (fallback && fallback->PerformedEffect() != 0) {
             effect = fallback->PerformedEffect();
@@ -629,7 +758,7 @@ HRESULT WindowDropTarget::DragEnter(IDataObject* obj, DWORD key_state, POINTL pt
     if (!effect) return E_POINTER;
     sources_.clear();
     preferred_ = 0;
-    if (!ExtractHDropPaths(obj, sources_)) {
+    if (!ExtractHDropPaths(obj, sources_) && !ExtractShellItemIds(obj, sources_)) {
         *effect = DROPEFFECT_NONE;
         return S_OK;
     }
@@ -663,7 +792,7 @@ HRESULT WindowDropTarget::Drop(IDataObject* obj, DWORD key_state, POINTL pt, DWO
     if (!effect) return E_POINTER;
     const DWORD allowed = *effect & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
     std::vector<std::wstring> sources;
-    if (!allowed || !ExtractHDropPaths(obj, sources)) {
+    if (!allowed || (!ExtractHDropPaths(obj, sources) && !ExtractShellItemIds(obj, sources))) {
         *effect = DROPEFFECT_NONE;
         DragLeave();
         return S_OK;
@@ -673,17 +802,16 @@ HRESULT WindowDropTarget::Drop(IDataObject* obj, DWORD key_state, POINTL pt, DWO
     const DWORD preferred = PreferredDropEffect(obj);
     DWORD performed = cb_.drop ? cb_.drop(sources, ClientPoint(pt), key_state, allowed, preferred) & allowed
                                : DROPEFFECT_NONE;
-    *effect = performed;
-    // Tell the source what we did (Explorer uses this for move semantics).
-    FORMATETC fmt{ (CLIPFORMAT)PerformedEffectFormat(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-    STGMEDIUM medium{};
-    medium.tymed = TYMED_HGLOBAL;
-    medium.hGlobal = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(DWORD));
-    if (medium.hGlobal) {
-        *static_cast<DWORD*>(GlobalLock(medium.hGlobal)) = performed;
-        GlobalUnlock(medium.hGlobal);
-        if (FAILED(obj->SetData(&fmt, &medium, TRUE))) ReleaseStgMedium(&medium);
-    }
+    // Pulse never leaves deleting to the source: a move is queued as an ops
+    // Move that removes the originals only after their copy landed. So a move
+    // is reported as an optimized move (pdwEffect and Performed DropEffect
+    // NONE, Logical Performed DropEffect MOVE). Reporting MOVE would ask the
+    // source for an unoptimized move, and Explorer then deletes the originals
+    // while the queued move has not read them yet, e.g. Shift+drag to a share.
+    const DWORD reported = performed == DROPEFFECT_MOVE ? DROPEFFECT_NONE : performed;
+    *effect = reported;
+    WriteDwordFormat(obj, (CLIPFORMAT)PerformedEffectFormat(), reported);
+    WriteDwordFormat(obj, (CLIPFORMAT)LogicalPerformedEffectFormat(), performed);
     sources_.clear();
     return S_OK;
 }

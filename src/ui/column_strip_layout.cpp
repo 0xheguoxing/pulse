@@ -11,6 +11,7 @@ float ColumnStripWidthDip(const std::vector<float>& widths_dip, size_t slot) noe
 }
 
 size_t ColumnStripWidthSlot(int column_id, size_t ancestor_count) noexcept {
+    if (column_id == kColumnStripBodyId) return kColumnStripBodySlot;
     if (column_id == kColumnStripChildId || column_id < 0) return 0;
     const size_t index = static_cast<size_t>(column_id);
     return index < ancestor_count ? ancestor_count - index : 0;
@@ -24,25 +25,23 @@ ColumnStripLayout LayoutColumnStrip(const D2D1_RECT_F& pane_bounds, float top,
     out.body = pane_bounds;
     const float unit = std::max(0.5f, scale);
     const float width = std::max(0.0f, pane_bounds.right - pane_bounds.left);
-    const float available = width - kColumnStripCurrentMinDip * unit;
-    if (available <= 0.0f) return out;
+    const float min_w = kColumnStripMinDip * unit;
+    if (width < min_w) return out;
 
+    const float body_w = std::min(width, ColumnStripWidthDip(widths_dip, kColumnStripBodySlot) * unit);
     float content = 0.0f;
     for (size_t k = 1; k <= ancestor_count; ++k) content += ColumnStripWidthDip(widths_dip, k) * unit;
-    const float parent_w = ancestor_count ? ColumnStripWidthDip(widths_dip, 1) * unit : 0.0f;
 
-    // The child column stays while the parent still fits beside it;
-    // otherwise the ancestors get the room (they scroll when they overflow).
-    float child_w = 0.0f;
+    // The selected folder's contents come before the ancestors; the column
+    // narrows to fit. A selected file adds nothing: its properties live in
+    // the details panel.
+    float trail_w = 0.0f;
     if (child_slot) {
         const float w = ColumnStripWidthDip(widths_dip, 0) * unit;
-        if (w + std::min(parent_w, content) <= available) child_w = w;
+        if (body_w + w <= width) trail_w = w;
+        else if (width - body_w >= min_w) trail_w = width - body_w;
     }
-    // Ancestors get at most half of what the child column leaves (never less
-    // than the parent's width); the rest scrolls so the list stays readable.
-    const float share = std::max(parent_w, (width - child_w) * kColumnStripAncestorShare);
-    const float viewport_w = std::min({content, available - child_w, share});
-    if (child_w <= 0.0f && viewport_w <= 0.0f) return out;
+    const float viewport_w = std::max(0.0f, std::min(content, width - body_w - trail_w));
 
     out.active = true;
     const float bottom = std::max(top, pane_bounds.bottom);
@@ -51,7 +50,7 @@ ColumnStripLayout LayoutColumnStrip(const D2D1_RECT_F& pane_bounds, float top,
     out.scroll_px = std::clamp(out.max_scroll_px - std::max(0.0f, scroll_from_right_dip) * unit,
                                0.0f, out.max_scroll_px);
     out.body.left = pane_bounds.left + viewport_w;
-    out.body.right = pane_bounds.right - child_w;
+    out.body.right = out.body.left + body_w;
     if (viewport_w > 0.0f) {
         out.viewport = D2D1::RectF(pane_bounds.left, top, out.body.left, bottom);
         float x = pane_bounds.left - out.scroll_px;
@@ -64,9 +63,9 @@ ColumnStripLayout LayoutColumnStrip(const D2D1_RECT_F& pane_bounds, float top,
             x += w;
         }
     }
-    if (child_w > 0.0f) {
+    if (trail_w > 0.0f) {
         out.columns.push_back({kColumnStripChildId,
-                               D2D1::RectF(out.body.right, top, pane_bounds.right, bottom)});
+                               D2D1::RectF(out.body.right, top, out.body.right + trail_w, bottom)});
     }
     return out;
 }

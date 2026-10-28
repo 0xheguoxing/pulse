@@ -1,9 +1,14 @@
 // app_hover_preview.cpp - The hover preview card (see app_hover_preview.h).
 #include "app_hover_preview.h"
+#include "../fs/cloud_state.h"
 #include "app_internal.h"
+#include "app_details_tree.h"
+#include "entry_sort.h"
 #include "../common/localization.h"
+#include "../common/text_format.h"
 #include "../common/preview_extensions.h"
 #include "../ui/video_preview.h"
+#include "../ui/ui_renderer.h"
 #include <windowsx.h>
 #include <shellapi.h>
 #include <mmsystem.h>
@@ -11,12 +16,36 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <atomic>
 #include <cwctype>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include <unordered_map>
 
 namespace pulse {
+
+// A folder card's listing, read on its own thread: the card cancels it when
+// it goes, and reads what it published so far every frame.
+struct HoverFolderJob {
+    std::wstring path;
+    std::atomic_bool cancelled{false};
+    std::atomic_bool done{false};
+    std::mutex lock;
+    std::shared_ptr<const ui::HoverFolderInfo> result;  // null while reading
+
+    std::shared_ptr<const ui::HoverFolderInfo> Result() {
+        std::lock_guard<std::mutex> guard(lock);
+        return result;
+    }
+    void Publish(std::shared_ptr<const ui::HoverFolderInfo> info) {
+        std::lock_guard<std::mutex> guard(lock);
+        result = std::move(info);
+    }
+};
+
 namespace {
 
 // How long the pointer rests on a row before its preview is asked for.
@@ -44,8 +73,8 @@ std::wstring TypeName(const std::wstring& name) {
     if (type.empty()) {
         std::wstring upper = ext.size() > 1 ? ext.substr(1) : std::wstring();
         for (auto& c : upper) c = static_cast<wchar_t>(towupper(c));
-        type = upper.empty() ? std::wstring(l10n::Pick(L"文件", L"File"))
-                             : upper + l10n::Pick(L" 文件", L" file");
+        type = upper.empty() ? std::wstring(l10n::Get(l10n::StringId::TypeFile).c_str())
+                             : upper + l10n::Get(l10n::StringId::File).c_str();
     }
     if (cache.size() > 256) cache.clear();
     cache.emplace(ext, type);
@@ -97,6 +126,362 @@ bool SlowToDecode(const fs::DirEntry& entry, const std::wstring& path) {
                                   L".heic", L".heif", L".hif", L".avif"});
 }
 
+// ---- Folder cards ------------------------------------------------------
+
+// Folders open on click: their card waits this much longer than a file's,
+// so passing over them on the way to a file shows none.
+constexpr int kFolderExtraDwellMs = 300;
+
+uint64_t FileTimeValue(const FILETIME& time) {
+    return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+}
+
+std::wstring JoinPath(const std::wstring& parent, const std::wstring& name) {
+    if (parent.empty() || parent.back() == L'\\') return parent + name;
+    return parent + L'\\' + name;
+}
+
+// The composition bar's kind of a file, by extension.
+int FolderKind(const std::wstring& name) {
+    static const std::unordered_map<std::wstring, int> kinds = [] {
+        std::unordered_map<std::wstring, int> map;
+        const auto add = [&map](int kind, std::initializer_list<const wchar_t*> list) {
+            for (const wchar_t* ext : list) map.emplace(ext, kind);
+        };
+        add(ui::kHoverKindImage, {L".jpg", L".jpeg", L".jfif", L".png", L".gif", L".bmp", L".webp", L".heic",
+                                  L".heif", L".hif", L".avif", L".tif", L".tiff", L".svg", L".ico", L".psd",
+                                  L".raw", L".dng", L".cr2", L".cr3", L".nef", L".arw", L".orf", L".rw2"});
+        add(ui::kHoverKindVideo, {L".mp4", L".mkv", L".mov", L".avi", L".wmv", L".flv", L".webm", L".m4v",
+                                  L".ts", L".mts", L".m2ts", L".mpg", L".mpeg", L".3gp"});
+        add(ui::kHoverKindAudio, {L".mp3", L".flac", L".wav", L".aac", L".m4a", L".ogg", L".opus", L".wma",
+                                  L".ape", L".aiff"});
+        add(ui::kHoverKindDocument, {L".doc", L".docx", L".xls", L".xlsx", L".xlsm", L".ppt", L".pptx", L".pdf",
+                                     L".txt", L".md", L".rtf", L".odt", L".ods", L".odp", L".csv", L".wps",
+                                     L".et", L".dps", L".epub", L".xps"});
+        add(ui::kHoverKindCode, {L".c", L".cc", L".cpp", L".h", L".hpp", L".cs", L".js", L".mjs", L".ts",
+                                 L".tsx", L".jsx", L".py", L".java", L".go", L".rs", L".rb", L".php", L".html",
+                                 L".css", L".scss", L".json", L".xml", L".yml", L".yaml", L".toml", L".sh",
+                                 L".ps1", L".bat", L".cmd", L".lua", L".kt", L".swift", L".sql", L".vue"});
+        add(ui::kHoverKindArchive, {L".zip", L".rar", L".7z", L".tar", L".gz", L".tgz", L".bz2", L".xz",
+                                    L".zst", L".cab", L".iso"});
+        return map;
+    }();
+    const auto it = kinds.find(LowerExtension(name));
+    return it == kinds.end() ? ui::kHoverKindOther : it->second;
+}
+
+// The listing's visibility rule (Tab::AllowsAttributes), for the worker.
+bool ShownChild(DWORD attrs, bool show_hidden, bool show_protected) {
+    if (!(attrs & FILE_ATTRIBUTE_HIDDEN)) return true;
+    return show_hidden && (!(attrs & FILE_ATTRIBUTE_SYSTEM) || show_protected);
+}
+
+// Why a folder could not be listed (ERROR_ACCESS_DENIED gets its own note).
+DWORD FolderOpenError(const std::wstring& path) {
+    const std::wstring pattern = JoinPath(fs::NormalizePath(path), L"*");
+    WIN32_FIND_DATAW data{};
+    HANDLE find = FindFirstFileExW(pattern.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+    if (find == INVALID_HANDLE_VALUE) return GetLastError();
+    FindClose(find);
+    return ERROR_SUCCESS;
+}
+
+struct FolderReadOptions {
+    ui::SortColumn sort_column = ui::SortColumn::Name;
+    ui::SortDirection sort_direction = ui::SortDirection::Asc;
+    app::FolderSortMode folder_sort = app::FolderSortMode::FoldersFirst;
+    bool show_hidden = false;
+    bool show_protected = false;
+    bool drive = false;
+};
+
+struct SortCancelled {};
+
+// PULSE_TEST_HOVER_FOLDER_LOG=file: one timing line per folder read, for the
+// performance probe; nothing is measured or written without it.
+struct FolderReadTiming {
+    std::wstring path;
+    LARGE_INTEGER start{};
+    double enum_ms = -1.0, sort_ms = -1.0, ready_ms = -1.0;
+    size_t total = 0, listed = 0;
+    int asked = 0;
+    const char* end = "done";
+
+    explicit FolderReadTiming(const std::wstring& folder) : path(folder) { QueryPerformanceCounter(&start); }
+    double Ms() const {
+        LARGE_INTEGER now{}, freq{};
+        QueryPerformanceCounter(&now);
+        QueryPerformanceFrequency(&freq);
+        return static_cast<double>(now.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+    }
+    ~FolderReadTiming() {
+        wchar_t out[MAX_PATH]{};
+        if (!GetEnvironmentVariableW(L"PULSE_TEST_HOVER_FOLDER_LOG", out, MAX_PATH)) return;
+        const double end_ms = Ms();
+        std::string utf8(static_cast<size_t>(WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, nullptr, 0,
+                                                                 nullptr, nullptr)), '\0');
+        if (!utf8.empty()) {
+            WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, utf8.data(), static_cast<int>(utf8.size()), nullptr, nullptr);
+            utf8.pop_back();
+        }
+        char line[256];
+        const int n = snprintf(line, sizeof(line),
+            "\t%s\ttotal=%zu\tlisted=%zu\tenum_ms=%.1f\tsort_ms=%.1f\tready_ms=%.1f\tasked=%d\tend_ms=%.1f\n",
+            end, total, listed, enum_ms, sort_ms, ready_ms, asked, end_ms);
+        if (n <= 0) return;
+        utf8.append(line, static_cast<size_t>((std::min)(n, static_cast<int>(sizeof(line)) - 1)));
+        static std::mutex write_lock;
+        std::lock_guard<std::mutex> guard(write_lock);
+        HANDLE file = CreateFileW(out, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        DWORD written = 0;
+        WriteFile(file, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+        CloseHandle(file);
+    }
+};
+
+// The worker: the folder's children in the pane's order, then how many
+// entries the first subfolders hold, within a short budget.
+void ReadFolder(const std::shared_ptr<HoverFolderJob>& job, const FolderReadOptions& options) {
+    const auto cancelled = [job] { return job->cancelled.load(); };
+    FolderReadTiming timing(job->path);
+    auto info = std::make_shared<ui::HoverFolderInfo>();
+    std::vector<fs::DirEntry> entries;
+    bool listed = false;
+    try {
+        fs::EnumerationOptions enumeration;
+        enumeration.cancelled = cancelled;
+        enumeration.timeout_ms = 15000;
+        fs::EnumerateDirectory(job->path, entries, enumeration);
+        listed = true;
+    } catch (...) {
+    }
+    timing.enum_ms = timing.Ms();
+    timing.total = entries.size();
+    if (cancelled()) {
+        timing.end = "cancelled";
+        job->done = true;
+        return;
+    }
+    if (!listed) {
+        timing.end = "failed";
+        info->state = FolderOpenError(job->path) == ERROR_ACCESS_DENIED ? ui::HoverFolderInfo::State::Denied
+                                                                         : ui::HoverFolderInfo::State::Failed;
+        job->Publish(info);
+        job->done = true;
+        return;
+    }
+    std::erase_if(entries, [&options](const fs::DirEntry& entry) {
+        return entry.name == L"." || entry.name == L".." ||
+               !ShownChild(entry.attrs, options.show_hidden, options.show_protected);
+    });
+    for (const auto& entry : entries) {
+        if (entry.is_dir) {
+            ++info->folders;
+        } else {
+            ++info->files;
+            ++info->kinds[static_cast<size_t>(FolderKind(entry.name))];
+        }
+    }
+    try {
+        const app::ScopedFolderSortMode folder_mode(options.folder_sort);
+        app::SortEntries(entries, options.sort_column, options.sort_direction, [&cancelled] {
+            if (cancelled()) throw SortCancelled{};
+        });
+    } catch (...) {
+    }
+    timing.sort_ms = timing.Ms();
+    if (cancelled()) {
+        timing.end = "cancelled";
+        job->done = true;
+        return;
+    }
+    const size_t keep = (std::min)(entries.size(), ui::kHoverFolderMaxItems);
+    info->items.reserve(keep);
+    for (size_t i = 0; i < keep; ++i) {
+        const fs::DirEntry& entry = entries[i];
+        ui::HoverFolderItem item;
+        item.name = entry.name;
+        item.attrs = entry.attrs;
+        item.is_dir = entry.is_dir;
+        item.kind = entry.is_dir ? ui::kHoverKindOther : FolderKind(entry.name);
+        item.size = entry.size;
+        item.modified = FileTimeValue(entry.mtime);
+        info->items.push_back(std::move(item));
+    }
+    if (options.drive) {
+        wchar_t file_system[MAX_PATH + 1]{};
+        const std::wstring root = JoinPath(job->path, L"");
+        if (GetVolumeInformationW(root.c_str(), nullptr, 0, nullptr, nullptr, nullptr, file_system, MAX_PATH + 1))
+            info->file_system = file_system;
+    }
+    info->state = ui::HoverFolderInfo::State::Ready;
+    job->Publish(info);
+    timing.ready_ms = timing.Ms();
+    timing.listed = keep;
+    if (fs::IsUncPath(job->path)) {
+        timing.end = "unc";
+        job->done = true;
+        return;
+    }
+    auto counted = std::make_shared<ui::HoverFolderInfo>(*info);
+    const ULONGLONG start = GetTickCount64();
+    int asked = 0;
+    bool any = false;
+    for (auto& item : counted->items) {
+        if (cancelled() || asked >= 48 || GetTickCount64() - start > 800) break;
+        if (!item.is_dir || (item.attrs & FILE_ATTRIBUTE_REPARSE_POINT) || fs::IsCloudPlaceholder(item.attrs))
+            continue;
+        ++asked;
+        std::vector<fs::DirEntry> children;
+        try {
+            fs::EnumerationOptions enumeration;
+            enumeration.cancelled = cancelled;
+            enumeration.timeout_ms = 400;
+            fs::EnumerateDirectory(JoinPath(job->path, item.name), children, enumeration);
+        } catch (...) {
+            continue;
+        }
+        int count = 0;
+        for (const auto& child : children)
+            if (child.name != L"." && child.name != L".." &&
+                ShownChild(child.attrs, options.show_hidden, options.show_protected))
+                ++count;
+        item.children = count;
+        any = true;
+    }
+    if (any && !cancelled()) job->Publish(counted);
+    timing.asked = asked;
+    if (cancelled()) timing.end = "cancelled";
+    job->done = true;
+}
+
+// The folder a row's card lists: a real folder or a This PC drive; not the
+// recycle bin, change records or virtual locations.
+bool FolderCardPath(const app::Tab& tab, int row, std::wstring& path) {
+    const fs::DirEntry& entry = tab.EntryAt(static_cast<size_t>(row));
+    if (!entry.is_dir || entry.change_record_only || IsRecycleTab(&tab)) return false;
+    path = EntryFullPath(tab, row);
+    return !path.empty() && !fs::IsVirtualPath(path);
+}
+
+void CancelFolderWork(AppState& s) {
+    auto& card = s.hoverPreview;
+    if (card.folder_job) {
+        card.folder_job->cancelled = true;
+        card.folder_job.reset();
+    }
+    if (card.size_started) {
+        // A count the card started goes with it; the folder's own label
+        // keeps whatever was known before.
+        card.size_started = false;
+        const auto work = s.folderSizes.GetWork(card.path);
+        if (work.manual && work.Running()) s.folderSizes.Cancel(card.path);
+    }
+}
+
+// Starts reading `path` for the card, unless that is already under way
+// (the settled pointer asked for it before the card opened).
+void StartFolderJob(AppState& s, const app::Tab& tab, const fs::DirEntry& entry, const std::wstring& path,
+                    bool wait = false) {
+    auto& card = s.hoverPreview;
+    if (card.folder_job && card.folder_job->path == path && !card.folder_job->cancelled) return;
+    if (card.folder_job) card.folder_job->cancelled = true;
+    auto job = std::make_shared<HoverFolderJob>();
+    job->path = path;
+    card.folder_job = job;
+    if (entry.drive_locked) {
+        auto info = std::make_shared<ui::HoverFolderInfo>();
+        info->state = ui::HoverFolderInfo::State::Failed;
+        job->Publish(info);
+        job->done = true;
+        return;
+    }
+    FolderReadOptions options;
+    options.sort_column = tab.sort_column;
+    options.sort_direction = tab.sort_direction;
+    options.folder_sort = tab.EffectiveFolderSort();
+    options.show_hidden = tab.show_hidden_files;
+    options.show_protected = tab.show_protected_os_files;
+    options.drive = entry.drive_type != 0;
+    if (wait) {  // --shot: the listing is in before the picture is taken
+        ReadFolder(job, options);
+        return;
+    }
+    try {
+        std::thread([job, options] { ReadFolder(job, options); }).detach();
+    } catch (...) {
+        job->done = true;
+    }
+}
+
+std::wstring FolderTypeName(const fs::DirEntry& entry) {
+    if (!entry.drive_type) return l10n::Get(l10n::StringId::KindFolder).c_str();
+    switch (entry.drive_remote_like ? static_cast<uint8_t>(DRIVE_REMOTE) : entry.drive_type) {
+    case DRIVE_REMOVABLE: return l10n::Get(l10n::StringId::RemovableDisk_2).c_str();
+    case DRIVE_REMOTE: return l10n::Get(l10n::StringId::NetworkDrive).c_str();
+    case DRIVE_CDROM: return l10n::Get(l10n::StringId::OpticalDrive).c_str();
+    case DRIVE_FIXED: return l10n::Get(l10n::StringId::LocalDisk_2).c_str();
+    default: return l10n::Get(l10n::StringId::Drive).c_str();
+    }
+}
+
+// The card's folder fields for the row it opens on; a file's card clears them.
+void SetFolderCard(AppState& s, const app::Tab& tab, const fs::DirEntry& entry, bool wait = false) {
+    auto& card = s.hoverPreview;
+    card.folder = entry.is_dir;
+    card.drive = entry.is_dir && entry.drive_type != 0;
+    card.drive_locked = card.drive && entry.drive_locked;
+    card.drive_total = card.drive ? entry.drive_total : 0;
+    card.drive_free = card.drive ? entry.drive_free : 0;
+    card.folder_scroll = 0.0f;
+    card.size_started = false;
+    if (!card.folder) {
+        if (card.folder_job) {
+            card.folder_job->cancelled = true;
+            card.folder_job.reset();
+        }
+        return;
+    }
+    StartFolderJob(s, tab, entry, card.path, wait);
+    // Its size: what the folder size service knows, else a count of its own
+    // (local folders; a drive shows its capacity instead).
+    if (card.drive || fs::IsUncPath(card.path)) return;
+    const auto value = s.folderSizes.Get(card.path);
+    const auto work = s.folderSizes.GetWork(card.path);
+    if (!value.has_value && !work.Running()) {
+        s.folderSizes.Calculate(card.path);
+        card.size_started = true;
+    }
+}
+
+// The 大小 fact: a running count shows how far it got.
+void FolderSizeFact(AppState& s, const std::wstring& path, std::wstring& text, bool& running) {
+    const auto value = s.folderSizes.Get(path);
+    const auto work = s.folderSizes.GetWork(path);
+    running = work.Running();
+    if (running) {
+        const uint64_t bytes = (std::max)(work.bytes, value.has_value ? value.bytes : 0ull);
+        text = bytes ? L"\u2265 " + format::ByteSize(bytes) : std::wstring(L"\u2026");
+    } else if (value.has_value) {
+        text = (value.partial ? L"\u2265 " : L"") + format::ByteSize(value.bytes);
+    } else {
+        text = L"\u2014";
+    }
+}
+
+// The pointer on the folder card, or in the gap between it and its row.
+bool InFolderCard(const AppState& s, POINT point) {
+    const auto& card = s.hoverPreview;
+    if (!card.visible || !card.folder) return false;
+    const D2D1_RECT_F r = s.renderer.HoverCardRect();
+    if (r.right <= r.left) return false;
+    const float grace = 10.0f * s.scale;
+    const float x = static_cast<float>(point.x), y = static_cast<float>(point.y);
+    return x >= r.left - grace && x < r.right + grace && y >= r.top && y < r.bottom;
+}
+
 // Repaints for the card's animations (dwell line, loading sweep, video
 // progress); 0 stops them.
 void SetFrameTimer(AppState& s, UINT ms) {
@@ -128,7 +513,13 @@ void Arm(AppState& s) {
     card.quiet_row = card.quiet_pane = -1;
     const ULONGLONG now = GetTickCount64();
     const bool browsing = card.hidden_at != 0 && now - card.hidden_at < 450;
-    const int delay = browsing ? 60 : app::NormalizeHoverPreviewDelay(s.appPrefs.hover_preview_delay_ms);
+    int delay = browsing ? 60 : app::NormalizeHoverPreviewDelay(s.appPrefs.hover_preview_delay_ms);
+    {
+        app::Tab* hovered = TabAtSlot(s, s.hoverPaneIndex);
+        if (hovered && hovered->snapshot && !hovered->loading && s.hoverRow < static_cast<int>(hovered->EntryCount()) &&
+            hovered->EntryAt(static_cast<size_t>(s.hoverRow)).is_dir)
+            delay += kFolderExtraDwellMs;
+    }
     SetTimer(s.hwnd, kTimerHoverPreview, static_cast<UINT>(delay), nullptr);
     if (browsing) return;
     // Decoding starts once the pointer has settled, not when the card opens:
@@ -138,7 +529,8 @@ void Arm(AppState& s) {
     app::Tab* tab = TabAtSlot(s, s.hoverPaneIndex);
     if (!tab || !tab->snapshot || tab->loading || s.hoverRow >= static_cast<int>(tab->EntryCount())) return;
     const fs::DirEntry& entry = tab->EntryAt(static_cast<size_t>(s.hoverRow));
-    if (entry.is_dir || entry.change_record_only || !SlowToDecode(entry, EntryFullPath(*tab, s.hoverRow)))
+    if (entry.is_dir || entry.change_record_only || entry.pc_launcher || entry.pc_device ||
+        !SlowToDecode(entry, EntryFullPath(*tab, s.hoverRow)))
         return;
     card.dwell_row = s.hoverRow;
     card.dwell_pane = s.hoverPaneIndex;
@@ -154,7 +546,13 @@ void Prefetch(AppState& s) {
     app::Tab* tab = TabAtSlot(s, s.hoverPaneIndex);
     if (!tab || !tab->snapshot || tab->loading || s.hoverRow >= static_cast<int>(tab->EntryCount())) return;
     const fs::DirEntry& entry = tab->EntryAt(static_cast<size_t>(s.hoverRow));
-    if (entry.is_dir || entry.change_record_only) return;
+    if (entry.change_record_only) return;
+    if (entry.is_dir) {
+        // A folder's listing is read over the rest of the dwell.
+        std::wstring path;
+        if (FolderCardPath(*tab, s.hoverRow, path)) StartFolderJob(s, *tab, entry, path);
+        return;
+    }
     ui::QuickPreviewItem item;
     if (!QuickPreviewItemForRow(s, *tab, s.hoverRow, item)) return;
     s.renderer.PrefetchHoverPreview(item.path, item.attrs, item.size, item.modified);
@@ -167,11 +565,19 @@ void Show(AppState& s) {
     if (!tab || !tab->snapshot || tab->loading || s.hoverRow >= static_cast<int>(tab->EntryCount()))
         return;
     const fs::DirEntry& entry = tab->EntryAt(static_cast<size_t>(s.hoverRow));
-    // Folders open on click: a card on every folder on the way would only
-    // get in the way.
-    if (entry.is_dir || entry.change_record_only) return;
+    if (entry.change_record_only) return;
     ui::QuickPreviewItem item;
-    if (!QuickPreviewItemForRow(s, *tab, s.hoverRow, item)) return;
+    if (entry.is_dir) {
+        // A folder's card lists what is inside (its dwell is longer: folders
+        // open on click, and passing over them must not raise cards).
+        if (!FolderCardPath(*tab, s.hoverRow, item.path)) return;
+        if (PointOnDetailsTreeChevron(s, s.hoverPaneIndex, s.hoverPoint)) return;
+        item.name = entry.name;
+        item.attrs = entry.attrs;
+        item.modified = FileTimeValue(entry.mtime);
+    } else if (!QuickPreviewItemForRow(s, *tab, s.hoverRow, item)) {
+        return;
+    }
     card.visible = true;
     card.row = s.hoverRow;
     card.pane = s.hoverPaneIndex;
@@ -180,8 +586,9 @@ void Show(AppState& s) {
     card.attrs = item.attrs;
     card.size = item.size;
     card.modified = item.modified;
-    card.type_text = TypeName(card.name);
+    card.type_text = entry.is_dir ? FolderTypeName(entry) : TypeName(card.name);
     card.point = s.hoverPoint;
+    SetFolderCard(s, *tab, entry);
     // Browsing (the previous card just went): the card came after a short
     // delay, and a video waits for the card to settle before its player
     // opens. After the full dwell the pointer has already settled: the
@@ -190,8 +597,8 @@ void Show(AppState& s) {
     const ULONGLONG now = GetTickCount64();
     const bool browsing = card.hidden_at != 0 && now - card.hidden_at < 600;
     card.hidden_at = 0;
-    card.video = CardVideo(card.path);
-    card.slow = SlowToDecode(entry, card.path);
+    card.video = !entry.is_dir && CardVideo(card.path);
+    card.slow = !entry.is_dir && SlowToDecode(entry, card.path);
     card.shown_at = browsing ? now : now - 220;
     ClearDwell(s);
     SetFrameTimer(s, 33);  // the first frames settle the loading sweep / video
@@ -223,6 +630,7 @@ void HideHoverPreview(AppState& s) {
         KillTimer(s.hwnd, kTimerHoverPrefetch);
     }
     ClearDwell(s);
+    CancelFolderWork(s);
     if (!card.visible) return;
     card.visible = false;
     card.hidden_at = GetTickCount64();
@@ -232,6 +640,14 @@ void HideHoverPreview(AppState& s) {
 void NoteHoverPreviewRow(AppState& s) {
     HideHoverPreview(s);
     Arm(s);
+}
+
+bool HoverPreviewHoldsPointer(AppState& s, POINT point) {
+    if (!s.hwnd || !InFolderCard(s, point)) return false;
+    // Only while the pointer is really over this window (a hover refresh
+    // after it left passes the last point it had).
+    POINT screen = point;
+    return ClientToScreen(s.hwnd, &screen) && WindowFromPoint(screen) == s.hwnd;
 }
 
 bool HoverPreviewMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -279,13 +695,30 @@ bool HoverPreviewMessage(AppState& s, HWND hwnd, UINT msg, WPARAM wparam, LPARAM
     case WM_MBUTTONDOWN:
     case WM_XBUTTONDOWN:
     case WM_LBUTTONDBLCLK:
-    case WM_RBUTTONDBLCLK:
+    case WM_RBUTTONDBLCLK: {
+        // A click on a folder card goes no further than the card: the rows
+        // under it are not clicked.
+        const bool on_card = InFolderCard(s, POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)});
         Quiet(s, true);
-        return false;
+        return on_card;
+    }
     case WM_MOUSEWHEEL:
-    case WM_MOUSEHWHEEL:
+    case WM_MOUSEHWHEEL: {
+        // The wheel on a folder card scrolls its list.
+        POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        if (ScreenToClient(hwnd, &point) && InFolderCard(s, point)) {
+            if (msg == WM_MOUSEWHEEL) {
+                const float step = s.renderer.HoverFolderRowHeight() * 3.0f;
+                const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) / WHEEL_DELTA;
+                const float max_scroll = (std::max)(0.0f, s.renderer.HoverFolderScrollMax());
+                card.folder_scroll = std::clamp(card.folder_scroll - notches * step, 0.0f, max_scroll);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return true;
+        }
         Quiet(s, false);
         return false;
+    }
     case WM_ACTIVATE:
         if (LOWORD(wparam) == WA_INACTIVE) HideHoverPreview(s);
         return false;
@@ -339,16 +772,27 @@ bool StageHoverPreviewShot(AppState& s, int nth_file) {
     app::FillPaneViewModel(pane, *s.pane, &s.places);
     const D2D1_RECT_F bounds = FocusedPaneRect(s);
     const int count = static_cast<int>(tab->EntryCount());
+    // PULSE_TEST_HOVER_FOLDER=1: the Nth folder instead (its listing read
+    // before the shot); PULSE_TEST_HOVER_SCROLL=px scrolls its list.
+    wchar_t env[16]{};
+    const bool folders = GetEnvironmentVariableW(L"PULSE_TEST_HOVER_FOLDER", env, 16) > 0 && env[0] == L'1';
     int seen = 0;
     for (int row = 0; row < count; ++row) {
         const fs::DirEntry& entry = tab->EntryAt(static_cast<size_t>(row));
-        if (entry.is_dir || entry.change_record_only) continue;
+        if (entry.is_dir != folders || entry.change_record_only) continue;
         if (seen++ < nth_file) continue;
         const int index = pane.ViewIndex(row);
         if (index < 0) return false;
         const D2D1_RECT_F cell = s.renderer.ItemRectInPane(pane, bounds, index);
         ui::QuickPreviewItem item;
-        if (!QuickPreviewItemForRow(s, *tab, row, item)) return false;
+        if (folders) {
+            if (!FolderCardPath(*tab, row, item.path)) return false;
+            item.name = entry.name;
+            item.attrs = entry.attrs;
+            item.modified = FileTimeValue(entry.mtime);
+        } else if (!QuickPreviewItemForRow(s, *tab, row, item)) {
+            return false;
+        }
         auto& card = s.hoverPreview;
         s.hoverRegion = static_cast<int>(ui::HitTestResult::Row);
         s.hoverRow = row;
@@ -363,11 +807,14 @@ bool StageHoverPreviewShot(AppState& s, int nth_file) {
         card.attrs = item.attrs;
         card.size = item.size;
         card.modified = item.modified;
-        card.type_text = TypeName(card.name);
+        card.type_text = folders ? FolderTypeName(entry) : TypeName(card.name);
         card.point = s.hoverPoint;
-        card.video = CardVideo(card.path);
-        card.slow = SlowToDecode(entry, card.path);
+        card.video = !folders && CardVideo(card.path);
+        card.slow = !folders && SlowToDecode(entry, card.path);
         card.shown_at = GetTickCount64() - 1000;  // settled: a video opens at once
+        SetFolderCard(s, *tab, entry, true);
+        if (folders && GetEnvironmentVariableW(L"PULSE_TEST_HOVER_SCROLL", env, 16) > 0)
+            card.folder_scroll = static_cast<float>((std::max)(0, _wtoi(env)));
         return true;
     }
     return false;
@@ -408,6 +855,7 @@ void FillHoverPreviewView(AppState& s, const ui::WindowViewModel& vm, ui::HoverP
         return;
     }
     const auto drop = [&] {
+        CancelFolderWork(s);
         card.visible = false;
         card.hidden_at = 0;
     };
@@ -444,6 +892,16 @@ void FillHoverPreviewView(AppState& s, const ui::WindowViewModel& vm, ui::HoverP
     view.shown_ms = card.shown_at;
     view.size_step = app::NormalizeHoverCardSize(s.appPrefs.hover_card_size);
     view.instant = staged;
+    if (card.folder) {
+        view.folder = true;
+        view.drive = card.drive;
+        view.drive_locked = card.drive_locked;
+        view.drive_total = card.drive_total;
+        view.drive_free = card.drive_free;
+        if (card.folder_job) view.listing = card.folder_job->Result();
+        view.folder_scroll = card.folder_scroll;
+        if (!card.drive) FolderSizeFact(s, card.path, view.size_text, view.size_running);
+    }
     if (staged) {
         wchar_t zoom[4]{};
         view.zoom = GetEnvironmentVariableW(L"PULSE_TEST_HOVER_ZOOM", zoom, 4) > 0 && zoom[0] == L'1';
@@ -651,6 +1109,8 @@ void AfterHoverPreviewDraw(AppState& s) {
     UINT ms = s.renderer.HoverPreviewFrameMs();
     // A card whose video is still opening keeps polling until it plays.
     if (!ms && card.visible && card.video && GetTickCount64() - card.shown_at < 1500) ms = 33;
+    // A folder card whose listing is still coming in (subfolder counts).
+    if (card.visible && card.folder && card.folder_job && !card.folder_job->done) ms = ms ? (std::min)(ms, 120u) : 120u;
     SetFrameTimer(s, ms);
 }
 

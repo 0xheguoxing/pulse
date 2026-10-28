@@ -131,6 +131,12 @@ void Retention(const fs::path& root) {
     Check(!fs::exists(dir / L"live.writing"), "OS removes lease after abrupt writer exit");
     pulse::crash::ReportRecoverable(nullptr, "writer-exited");
     Check(Wait([&] { return !fs::exists(dir / L"live.json") && Groups(dir) == 10; }), "crashed writer cannot pin report forever");
+    // Idle means idle: the sweep used to re-create retention.lock every second.
+    Sleep(300);  // let the last sweep close its lock
+    HANDLE change = FindFirstChangeNotificationW(dir.c_str(), FALSE, FILE_NOTIFY_CHANGE_FILE_NAME);
+    const bool idle = change != INVALID_HANDLE_VALUE && WaitForSingleObject(change, 2500) == WAIT_TIMEOUT;
+    if (change != INVALID_HANDLE_VALUE) FindCloseChangeNotification(change);
+    Check(idle, "an idle process creates and deletes nothing in the reports folder");
     const auto before = GetTickCount64(); pulse::crash::Shutdown();
     Check(GetTickCount64() - before < 1000, "shutdown signals maintenance without joining filesystem I/O");
 }

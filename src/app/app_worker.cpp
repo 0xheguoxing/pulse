@@ -4,12 +4,20 @@
 #include "entry_sort.h"
 #include "entry_group.h"
 #include "link_resolve.h"
+#include "cloud_roots.h"
+#include "device_registry.h"
+#include "../common/localization.h"
 #include "../fs/fs_enum.h"
 #include "../fs/bitlocker_volume.h"
 #include "../fs/bounded_enumeration.h"
 #include "../fs/fs_recycle.h"
 #include "../fs/fs_net_cache.h"
+#include "../fs/fs_watch.h"
 #include "../common/runtime_log.h"
+#include <cstdlib>
+#include <exception>
+#include <string>
+#include "startup_trace.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -19,7 +27,7 @@ namespace pulse::app {
 namespace {
 
 std::wstring WorkKey(const std::wstring& path, ui::SortColumn col,
-                     ui::SortDirection dir, int group_by = 0) {
+                     ui::SortDirection dir, int group_by, FolderSortMode folders) {
     std::wstring key = path;
     key.push_back(L'\x1f');
     key += std::to_wstring(static_cast<int>(col));
@@ -29,6 +37,8 @@ std::wstring WorkKey(const std::wstring& path, ui::SortColumn col,
         key.push_back(L'g');
         key += std::to_wstring(group_by);
     }
+    key.push_back(L'f');
+    key += std::to_wstring(static_cast<int>(folders));
     return key;
 }
 
@@ -80,10 +90,11 @@ void WorkerPool::CancelGeneration(uint64_t generation) {
 
 uint64_t WorkerPool::Refresh(const std::wstring& path, ui::SortColumn col,
                              ui::SortDirection dir, int group_by,
-                             std::shared_ptr<const FolderSizeLookup> folder_sizes) {
+                             std::shared_ptr<const FolderSizeLookup> folder_sizes,
+                             FolderSortMode folders) {
     std::lock_guard<std::mutex> lock(mutex_);
     uint64_t gen = ++global_gen_;
-    const std::wstring key = WorkKey(path, col, dir, group_by);
+    const std::wstring key = WorkKey(path, col, dir, group_by, folders);
     current_gen_[key] = gen;
     // Only supersede the same path+sort request. Separate panes may show the
     // same directory with different sort orders.
@@ -97,6 +108,7 @@ uint64_t WorkerPool::Refresh(const std::wstring& path, ui::SortColumn col,
     WorkItem work{ path, key, gen, col, dir };
     work.cache_write = fs::BeginNetSnapshotWrite(path);
     work.group_by = group_by;
+    work.folder_sort = folders;
     work.folder_sizes = std::move(folder_sizes);
     queue_.push_back(std::move(work));
     diagnostics::runtime::Event("navigation_request", {{"generation", gen}, {"load_paths", 0}});
@@ -109,18 +121,19 @@ uint64_t WorkerPool::LoadPaths(const std::wstring& view_path,
                                ui::SortColumn col, ui::SortDirection dir,
                                bool preserve_order,
                                std::vector<uint64_t> display_times,
-                               int group_by) {
+                               int group_by, FolderSortMode folders) {
     std::lock_guard<std::mutex> lock(mutex_);
     const uint64_t gen = ++global_gen_;
     // Virtual consumers can share a path/sort but have different Recent
     // filters and payloads. Each request owns its cancellation identity.
-    const std::wstring key = WorkKey(view_path, col, dir, group_by) +
+    const std::wstring key = WorkKey(view_path, col, dir, group_by, folders) +
         L"\x1fpaths:" + std::to_wstring(gen);
     current_gen_[key] = gen;
     WorkItem item{ view_path, key, gen, col, dir };
     item.load_paths = true;
     item.preserve_order = preserve_order;
     item.group_by = group_by;
+    item.folder_sort = folders;
     item.paths = std::move(paths);
     item.display_times = std::move(display_times);
     queue_.push_back(std::move(item));
@@ -145,6 +158,38 @@ void WorkerPool::EnqueueSerialIo(std::function<void()> task) {
     cv_.notify_one();
 }
 
+namespace {
+
+// Why a listing failed, for navigation_error (#226: error=1 alone could not
+// tell a refusing server from Pulse's own listing quota). fs_enum reports
+// "...error=<win32>" or "...status=0x<ntstatus>"; bounded_enumeration.h
+// reports a timeout or a full quota.
+void LogListingFailure(uint64_t generation, const std::exception_ptr& failure) {
+    std::string what;
+    try {
+        if (failure) std::rethrow_exception(failure);
+    } catch (const std::exception& e) {
+        what = e.what();
+    } catch (...) {
+    }
+    uint64_t reason = 0;  // 0 other, 1 win32 error, 2 NTSTATUS, 3 timed out, 4 listing quota full
+    uint64_t code = 0;
+    if (const size_t at = what.find("error="); at != std::string::npos) {
+        reason = 1;
+        code = std::strtoull(what.c_str() + at + 6, nullptr, 10);
+    } else if (const size_t nt = what.find("status=0x"); nt != std::string::npos) {
+        reason = 2;
+        code = std::strtoull(what.c_str() + nt + 9, nullptr, 16);
+    } else if (what.find("timed out") != std::string::npos) {
+        reason = 3;
+    } else if (what.find("capacity exhausted") != std::string::npos) {
+        reason = 4;
+    }
+    diagnostics::runtime::Event("navigation_error", {{"generation", generation}, {"reason", reason}, {"code", code}});
+}
+
+} // namespace
+
 WorkResult WorkerPool::Process(const WorkItem& item) {
     WorkResult res;
     res.path = item.path;
@@ -158,6 +203,7 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
     if (item.load_paths && !fs::IsVirtualPath(item.path) && !fs::IsUncPath(item.path))
         res.git_root = FindGitRoot(item.path);
     auto t0 = std::chrono::steady_clock::now();
+    pulse::app::startup_trace::Mark("worker_listing");
     auto entries = std::make_shared<std::vector<fs::DirEntry>>();
     if (item.load_paths) {
         entries->reserve(item.paths.size());
@@ -203,6 +249,21 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
             }
             entries->push_back(std::move(entry));
         }
+    } else if (fs::IsDevicePath(item.path)) {
+        // A phone folder (device_registry.h): listed on the device thread.
+        const fs::DeviceError error = pulse::app::DeviceRegistry::Instance().ListFolder(
+            item.path, *entries, cancelled);
+        if (error == fs::DeviceError::Cancelled) {
+            res.cancelled = true;
+            return res;
+        }
+        if (error != fs::DeviceError::None) {
+            res.cancelled = cancelled();
+            res.error = !res.cancelled;
+            res.device_error = static_cast<uint8_t>(error);
+            res.snapshot = nullptr;
+            return res;
+        }
     } else if (fs::IsRecycleViewPath(item.path)) {
         try {
             fs::EnumerateRecycleBin(*entries, &res.recycle_info);
@@ -212,6 +273,10 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
             return res;
         }
     } else {
+        // A watch starting on this folder arms first (briefly bounded): its
+        // arm report then needs no second listing (fs::ArmedAt).
+        fs::WaitForStartingWatch(item.path, 2, fs::IsUncPath(item.path) ? 150 : 10);
+        res.listed_at = fs::WatchClock();
         try {
             struct Listing {
                 std::vector<fs::DirEntry> entries;
@@ -223,6 +288,36 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
                     Listing result;
                     fs::EnumerateDirectory(path, result.entries, &cancel);
                     if (cancel) throw fs::EnumerationCancelled();
+                    if (path.empty()) {
+                        // This PC: the program icons Windows shows there (网盘程序入口).
+                        for (auto& launcher : CurrentThisPcLaunchers()) {
+                            fs::DirEntry e;
+                            e.name = std::move(launcher.label);
+                            e.full_path = kThisPcLauncherPrefix + launcher.clsid;
+                            e.attrs = FILE_ATTRIBUTE_NORMAL;
+                            e.pc_launcher = launcher.brand;
+                            result.entries.push_back(std::move(e));
+                        }
+                        // Phones (the device thread's last listing, device_registry.h);
+                        // none: the "no phone connected" tile, which opens the help.
+                        const auto devices = pulse::app::DeviceRegistry::Instance().Devices();
+                        if (devices.empty()) {
+                            fs::DirEntry e;
+                            e.name = l10n::Get(l10n::StringId::DeviceNonePlaceholder);
+                            e.full_path = L"pulse:device:none";
+                            e.attrs = FILE_ATTRIBUTE_NORMAL;
+                            e.pc_device = fs::kPcDevicePlaceholder;
+                            result.entries.push_back(std::move(e));
+                        }
+                        for (const auto& device : devices) {
+                            fs::DirEntry e;
+                            e.name = device.name;
+                            e.full_path = fs::FormatDevicePath(fs::DevicePath{device.key, L"", {}});
+                            e.attrs = FILE_ATTRIBUTE_NORMAL;
+                            e.pc_device = fs::PcDeviceFlags(device);
+                            result.entries.push_back(std::move(e));
+                        }
+                    }
                     fs::QueryDirectoryIdentity(path, result.identity);
                     if (cancel) throw fs::EnumerationCancelled();
                     if (!fs::IsVirtualPath(path) && !fs::IsUncPath(path))
@@ -241,6 +336,7 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
                 const auto current = current_gen_.find(item.request_key);
                 res.cancelled = !running_ || current == current_gen_.end() || current->second != item.generation;
             }
+            if (!res.cancelled) LogListingFailure(item.generation, std::current_exception());
             res.error = !res.cancelled;
             res.bitlocker_locked = res.error && fs::IsBitLockerLocked(item.path);
             res.snapshot = nullptr;
@@ -261,7 +357,8 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
     }
 
     // Read link destinations on this worker before display (including .lnk targets).
-    if (!fs::IsRecycleViewPath(item.path)) {
+    // Not on a phone: reading a .lnk there means copying it off the device.
+    if (!fs::IsRecycleViewPath(item.path) && !fs::IsDevicePath(item.path)) {
         ResolveLinksInPlace(item.path, *entries, [&] {
             std::lock_guard<std::mutex> lock(mutex_);
             const auto it = current_gen_.find(item.request_key);
@@ -276,6 +373,7 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
     struct SortCancelled {};
     if (!item.preserve_order) {
         const ScopedEntryGrouping grouping(item.group_by, item.path);
+        const ScopedFolderSortMode folder_mode(item.folder_sort);
         const auto tick = [&] {
             if ((++comparisons & 8191u) == 0) {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -307,6 +405,7 @@ WorkResult WorkerPool::Process(const WorkItem& item) {
         }
     }
 
+    pulse::app::startup_trace::Mark("worker_sorted");
     res.snapshot = std::move(entries);
     if (item.load_paths || fs::IsRecycleViewPath(item.path))
         fs::QueryDirectoryIdentity(item.path, res.identity);

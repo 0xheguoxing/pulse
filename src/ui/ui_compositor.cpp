@@ -11,7 +11,11 @@
 #include <shlobj.h>
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <cstdio>
+#include <mutex>
+#include <thread>
+#include <vector>
 
 namespace pulse::ui {
 
@@ -34,6 +38,46 @@ struct SharedGraphics {
     unsigned users = 0;
 };
 thread_local SharedGraphics* t_shared_graphics = nullptr;
+
+HRESULT CreateD3DDevice(ComPtr<ID3D11Device>& device) {
+    UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+#ifdef _DEBUG
+    flags |= D3D11_CREATE_DEVICE_DEBUG;
+#endif
+    D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1 };
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+        levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, &device, nullptr, nullptr);
+    if (FAILED(hr)) {
+        device.reset();
+        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
+            levels, ARRAYSIZE(levels), D3D11_SDK_VERSION, &device, nullptr, nullptr);
+    }
+    return hr;
+}
+
+// PrefetchSharedDevice's hand-off. Never freed: a worker still inside the
+// driver at process exit must not find it destroyed.
+struct DevicePrefetch {
+    std::mutex mutex;
+    std::condition_variable ready;
+    bool started = false;
+    bool done = false;
+    ComPtr<ID3D11Device> device;  // null once taken or when creation failed
+};
+DevicePrefetch& Prefetch() {
+    static DevicePrefetch* prefetch = new DevicePrefetch;
+    return *prefetch;
+}
+
+// The prefetched device, once; null when none was started, it failed, or
+// it was taken already. Waits for a creation still in flight.
+ComPtr<ID3D11Device> TakePrefetchedDevice() {
+    DevicePrefetch& prefetch = Prefetch();
+    std::unique_lock<std::mutex> lock(prefetch.mutex);
+    if (!prefetch.started) return {};
+    prefetch.ready.wait(lock, [&] { return prefetch.done; });
+    return std::move(prefetch.device);
+}
 
 template <typename T>
 void AssignRef(ComPtr<T>& target, T* value) {
@@ -71,9 +115,17 @@ bool Compositor::IsDeviceLost(HRESULT hr) {
            hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR;
 }
 
+namespace {
+// Compositors of this thread (one shared device), for FrameSourceUnder.
+thread_local std::vector<Compositor*> t_compositors;
+std::atomic<Compositor::AcrylicPlateBuilder> g_acrylic_plate_builder{nullptr};
+}
+
 bool Compositor::Init(HWND hwnd) {
     initialization_error_.clear();
     hwnd_ = hwnd;
+    if (std::find(t_compositors.begin(), t_compositors.end(), this) == t_compositors.end())
+        t_compositors.push_back(this);
     device_lost_ = false;
     if (!InitD3D()) return false;
     RECT rc;
@@ -86,6 +138,7 @@ bool Compositor::Init(HWND hwnd) {
 }
 
 void Compositor::Shutdown() {
+    t_compositors.erase(std::remove(t_compositors.begin(), t_compositors.end(), this), t_compositors.end());
     if (!dc_.get() && !d3dDevice_.get()) return; // already shut down
     SharedGraphics* shared = t_shared_graphics;
     if (shared && d3dDevice_.get() && d3dDevice_.get() == shared->d3d.get() &&
@@ -96,6 +149,7 @@ void Compositor::Shutdown() {
     }
     if (lumaText_) lumaText_->Shutdown();
     frameCopy_.reset();
+    held_.reset();
     targetBitmap_.reset();
     if (dc_.get()) dc_->SetTarget(nullptr);
     if (compositionTarget_.get()) compositionTarget_->SetRoot(nullptr);
@@ -125,6 +179,31 @@ void Compositor::Shutdown() {
     device_lost_ = false;
 }
 
+void Compositor::PrefetchSharedDevice() {
+    DevicePrefetch& prefetch = Prefetch();
+    {
+        std::lock_guard<std::mutex> lock(prefetch.mutex);
+        if (prefetch.started) return;
+        prefetch.started = true;
+    }
+    try {
+        std::thread([] {
+            ComPtr<ID3D11Device> device;
+            const bool ok = SUCCEEDED(CreateD3DDevice(device));
+            DevicePrefetch& state = Prefetch();
+            {
+                std::lock_guard<std::mutex> lock(state.mutex);
+                if (ok) state.device = std::move(device);
+                state.done = true;
+            }
+            state.ready.notify_all();
+        }).detach();
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(prefetch.mutex);
+        prefetch.done = true;  // InitD3D creates the device itself
+    }
+}
+
 bool Compositor::InitD3D() {
     SharedGraphics* shared = t_shared_graphics;
     if (shared && shared->d3d->GetDeviceRemovedReason() != S_OK) {
@@ -137,20 +216,14 @@ bool Compositor::InitD3D() {
     HRESULT hr = S_OK;
     if (!shared) {
         auto created = std::make_unique<SharedGraphics>();
-        UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-#ifdef _DEBUG
-        flags |= D3D11_CREATE_DEVICE_DEBUG;
-#endif
-        D3D_FEATURE_LEVEL levels[] = { D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1 };
-        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
-            levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
-            &created->d3d, nullptr, nullptr);
-        if (FAILED(hr)) {
-            hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
-                levels, ARRAYSIZE(levels), D3D11_SDK_VERSION,
-                &created->d3d, nullptr, nullptr);
+        // D3D11 devices are free-threaded, so one created on the prefetch
+        // worker serves this thread like its own.
+        created->d3d = TakePrefetchedDevice();
+        if (created->d3d.get() && created->d3d->GetDeviceRemovedReason() != S_OK) created->d3d.reset();
+        if (!created->d3d.get()) {
+            hr = CreateD3DDevice(created->d3d);
+            if (!CheckGraphics(hr, L"D3D11CreateDevice (hardware/WARP)")) return false;
         }
-        if (!CheckGraphics(hr, L"D3D11CreateDevice (hardware/WARP)")) return false;
 
         hr = created->d3d->QueryInterface(&created->dxgi);
         if (!CheckGraphics(hr, L"IDXGIDevice1")) return false;
@@ -199,6 +272,36 @@ bool Compositor::DrawLumaText(std::wstring_view text, IDWriteTextFormat* format,
                               DWRITE_TEXT_ALIGNMENT alignment) {
     if (!lumaText_ || !lumaText_->Enabled() || !typography::UseLumaTextForUi()) return false;
     if (lumaText_->Draw(text, format, bounds, foreground, background, alignment)) {
+        return true;
+    }
+    lumaText_->RecordFallback();
+    return false;
+}
+
+void Compositor::DrawTextLayout(D2D1_POINT_2F origin, IDWriteTextLayout* layout,
+                                ID2D1SolidColorBrush* brush, D2D1_DRAW_TEXT_OPTIONS options) {
+    if (!dc_.get() || !layout || !brush) return;
+    // Colour fonts (emoji) keep DirectWrite's colour glyph path.
+    if (!(options & D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT) && LumaTextEnabled()) {
+        D2D1_COLOR_F color = brush->GetColor();
+        color.a *= brush->GetOpacity();
+        if (lumaText_->DrawLayout(origin, layout, color,
+                                  (options & D2D1_DRAW_TEXT_OPTIONS_CLIP) != 0)) {
+            return;
+        }
+        lumaText_->RecordFallback();
+    }
+    dc_->DrawTextLayout(origin, layout, brush, options);
+}
+
+bool Compositor::DrawLumaTextSplit(std::wstring_view text, IDWriteTextFormat* format,
+                                   const D2D1_RECT_F& bounds,
+                                   const D2D1_COLOR_F& foreground, std::uint32_t split,
+                                   const D2D1_COLOR_F& split_foreground,
+                                   const D2D1_COLOR_F& background) {
+    if (!lumaText_ || !lumaText_->Enabled() || !typography::UseLumaTextForUi()) return false;
+    if (lumaText_->DrawSplit(text, format, bounds, foreground, split, split_foreground,
+                             background)) {
         return true;
     }
     lumaText_->RecordFallback();
@@ -277,7 +380,8 @@ bool Compositor::CreateSwapChain() {
     desc.SampleDesc.Count = 1;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     desc.BufferCount = 2;
-    desc.SwapEffect = compat::ModernWindows()
+    // Partial redraw needs buffers that keep their pixels between presents.
+    desc.SwapEffect = compat::ModernWindows() && !PartialRedrawEnabled()
         ? DXGI_SWAP_EFFECT_FLIP_DISCARD : DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     desc.Scaling = DXGI_SCALING_STRETCH;
     desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
@@ -315,19 +419,45 @@ bool Compositor::CreateSwapChain() {
     }
 
     dxgiDevice_->SetMaximumFrameLatency(1);
+    partial_swap_ = PartialRedrawEnabled() && desc.SwapEffect == DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    full_next_ = true;
     return true;
+}
+
+bool Compositor::PartialRedrawEnabled() {
+    static const bool enabled = [] {
+        wchar_t value[8]{};
+        const DWORD n = GetEnvironmentVariableW(L"PULSE_PARTIAL_REDRAW", value, ARRAYSIZE(value));
+        return !(n == 1 && value[0] == L'0');
+    }();
+    return enabled;
 }
 
 void Compositor::ResizeSwapChain() {
     if (!swapChain_.get() || width_ <= 0 || height_ <= 0) return;
+    full_next_ = true;
     frameCopy_.reset();
+    held_.reset();
     targetBitmap_.reset();
     dc_->SetTarget(nullptr);
+    // D3D11 destroys released views lazily: the ones D2D made on the back
+    // buffer can still hold it, and ResizeBuffers then fails with
+    // DXGI_ERROR_INVALID_CALL. Flushing first is what Microsoft's
+    // DeviceResources template does for the same reason.
+    {
+        ComPtr<ID3D11DeviceContext> context;
+        if (d3dDevice_.get()) d3dDevice_->GetImmediateContext(&context);
+        if (context.get()) context->Flush();
+    }
+    // A failure below, lost device or not, rebuilds the swap chain: the new
+    // size is already recorded, so nothing would ask for it again and every
+    // frame would draw into no target (a white window after the monitor it
+    // was on went away).
     HRESULT hr = swapChain_->ResizeBuffers(0, (UINT)width_, (UINT)height_,
         DXGI_FORMAT_UNKNOWN, 0);
     if (FAILED(hr)) {
         CheckGraphics(hr, L"ResizeBuffers");
-        if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
+        NotifyDeviceLost(hr);
         return;
     }
 
@@ -335,7 +465,7 @@ void Compositor::ResizeSwapChain() {
     hr = swapChain_->GetBuffer(0, IID_PPV_ARGS(&surface));
     if (FAILED(hr)) {
         CheckGraphics(hr, L"SwapChain GetBuffer");
-        if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
+        NotifyDeviceLost(hr);
         return;
     }
     // Layout, hit-testing, and text formats already apply the window scale.
@@ -350,7 +480,7 @@ void Compositor::ResizeSwapChain() {
     hr = dc_->CreateBitmapFromDxgiSurface(surface.get(), &props, &targetBitmap_);
     if (FAILED(hr)) {
         CheckGraphics(hr, L"CreateBitmapFromDxgiSurface");
-        if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
+        NotifyDeviceLost(hr);
         return;
     }
     dc_->SetTarget(targetBitmap_.get());
@@ -475,15 +605,84 @@ void Compositor::CopyFrame() {
     // GPU to GPU; the frame's drawing has already ended.
     if (FAILED(frameCopy_->CopyFromBitmap(nullptr, targetBitmap_.get(), nullptr)))
         frameCopy_.reset();
+    else
+        ++frameCopySerial_;
 }
 
-void Compositor::Present() {
+void Compositor::SetAcrylicPlateBuilder(AcrylicPlateBuilder builder) noexcept {
+    g_acrylic_plate_builder.store(builder, std::memory_order_relaxed);
+}
+
+Compositor::AcrylicPlateBuilder Compositor::GetAcrylicPlateBuilder() noexcept {
+    return g_acrylic_plate_builder.load(std::memory_order_relaxed);
+}
+
+Compositor* Compositor::FrameSourceUnder(HWND dialog, const RECT& area) {
+    if (!dialog || t_compositors.empty()) return nullptr;
+    // Down the z-order from the dialog: the first window that overlaps it
+    // decides. Ours lends its frame; anything else means no acrylic.
+    int guard = 0;
+    for (HWND w = GetWindow(dialog, GW_HWNDNEXT); w && guard < 1024; w = GetWindow(w, GW_HWNDNEXT), ++guard) {
+        if (!IsWindowVisible(w) || IsIconic(w)) continue;
+        const LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
+        if ((ex & WS_EX_LAYERED) && (ex & WS_EX_TRANSPARENT)) continue;  // click-through, e.g. dialog shadows
+        BOOL cloaked = FALSE;
+        if (SUCCEEDED(DwmGetWindowAttribute(w, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked) continue;
+        RECT bounds{};
+        RECT overlap{};
+        if (!GetWindowRect(w, &bounds) || !IntersectRect(&overlap, &bounds, &area)) continue;
+        Compositor* best = nullptr;
+        long long best_area = 0;
+        for (Compositor* compositor : t_compositors) {
+            if (!compositor->frameCopy_.get() || !compositor->hwnd_ ||
+                GetAncestor(compositor->hwnd_, GA_ROOT) != w)
+                continue;
+            RECT client{};
+            GetClientRect(compositor->hwnd_, &client);
+            MapWindowPoints(compositor->hwnd_, nullptr, reinterpret_cast<POINT*>(&client), 2);
+            RECT part{};
+            if (!IntersectRect(&part, &client, &area)) continue;
+            const long long size = static_cast<long long>(part.right - part.left) * (part.bottom - part.top);
+            if (size > best_area) {
+                best_area = size;
+                best = compositor;
+            }
+        }
+        return best;
+    }
+    return nullptr;
+}
+
+void Compositor::Present(const RECT* dirty) {
     if (device_lost_) return;
     if (hwnd_) UpdateTextRenderingParams(
         MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST));
     CopyFrame();
+    if (captureNext_) {
+        captureNext_ = false;
+        held_.reset();
+        if (dc_.get() && targetBitmap_.get()) {
+            const auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,
+                targetBitmap_->GetPixelFormat(), 96.0f, 96.0f);
+            if (SUCCEEDED(dc_->CreateBitmap(targetBitmap_->GetPixelSize(), nullptr, 0, &props, &held_)) &&
+                FAILED(held_->CopyFromBitmap(nullptr, targetBitmap_.get(), nullptr)))
+                held_.reset();
+        }
+    }
     HRESULT hr = S_OK;
-    if (swapChain_.get()) hr = swapChain_->Present(1, 0);
+    if (swapChain_.get()) {
+        if (dirty && CanPresentPartial()) {
+            DXGI_PRESENT_PARAMETERS params{};
+            RECT rect = *dirty;
+            params.DirtyRectsCount = 1;
+            params.pDirtyRects = &rect;
+            hr = swapChain_->Present1(1, 0, &params);
+        } else {
+            hr = swapChain_->Present(1, 0);
+        }
+    }
+    // Only a frame that reached the screen whole lets the next one be partial.
+    full_next_ = FAILED(hr) || hr == DXGI_STATUS_OCCLUDED;
     if (FAILED(hr)) {
         if (IsDeviceLost(hr)) NotifyDeviceLost(hr);
         return;

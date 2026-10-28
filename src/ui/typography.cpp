@@ -48,18 +48,14 @@ bool FamilyExists(IDWriteFactory2* factory, const wchar_t* family) {
 
 const wchar_t* ResolveFamily(IDWriteFactory2* factory, FontRole role) {
     const bool traditional = TraditionalChinese();
-    const bool chinese = traditional ||
-        pulse::l10n::effective_language() == pulse::l10n::Language::ZhCN;
-    const wchar_t* const text_zh[] = {
-        L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
     // Taiwan glyph forms; YaHei only if JhengHei is missing.
     const wchar_t* const text_tw[] = {
         L"Microsoft JhengHei UI", L"Microsoft JhengHei", L"Microsoft YaHei UI", L"Segoe UI", nullptr};
+    // Simplified Chinese uses Segoe UI Variable for Latin too; Han text
+    // reaches PingFang SC / YaHei through the fallback in BuildFallback.
     const wchar_t* const text_en[] = {
         L"Segoe UI Variable Text", L"Segoe UI", L"Microsoft YaHei UI",
         L"Microsoft YaHei", nullptr};
-    const wchar_t* const display_zh[] = {
-        L"Microsoft YaHei UI", L"Microsoft YaHei", L"Segoe UI", nullptr};
     const wchar_t* const display_en[] = {
         L"Segoe UI Variable Display", L"Segoe UI Variable Text", L"Segoe UI",
         L"Microsoft YaHei UI", L"Microsoft YaHei", nullptr};
@@ -72,10 +68,10 @@ const wchar_t* ResolveFamily(IDWriteFactory2* factory, FontRole role) {
 
     const wchar_t* const* candidates = nullptr;
     switch (role) {
-    case FontRole::Display: candidates = traditional ? text_tw : chinese ? display_zh : display_en; break;
+    case FontRole::Display: candidates = traditional ? text_tw : display_en; break;
     case FontRole::Icon: candidates = icons; break;
     case FontRole::Monospace: candidates = traditional ? mono_tw : mono; break;
-    default: candidates = traditional ? text_tw : chinese ? text_zh : text_en; break;
+    default: candidates = traditional ? text_tw : text_en; break;
     }
     for (size_t i = 0; candidates[i]; ++i) {
         if (FamilyExists(factory, candidates[i])) return candidates[i];
@@ -93,7 +89,11 @@ bool BuildFallback(IDWriteFactory2* factory, bool traditional, IDWriteFontFallba
         {0x2E80, 0x303F}, {0x3400, 0x4DBF}, {0x4E00, 0x9FFF},
         {0xF900, 0xFAFF}, {0xFF00, 0xFFEF}, {0x20000, 0x2FA1F},
     };
-    const wchar_t* simplified[] = {L"Microsoft YaHei UI", L"Microsoft YaHei"};
+    // PingFang SC only when the user installed it (Pulse never ships it).
+    const bool pingfang = FamilyExists(factory, L"PingFang SC");
+    const wchar_t* simplified_pingfang[] = {L"PingFang SC", L"Microsoft YaHei UI", L"Microsoft YaHei"};
+    const wchar_t** simplified = pingfang ? simplified_pingfang : simplified_pingfang + 1;
+    const UINT32 simplified_count = pingfang ? 3u : 2u;
     const wchar_t* hant[] = {L"Microsoft JhengHei UI", L"Microsoft JhengHei",
                              L"Microsoft YaHei UI", L"Microsoft YaHei"};
     // Locale must be empty: a zh-CN mapping is skipped when the UI language
@@ -102,7 +102,7 @@ bool BuildFallback(IDWriteFactory2* factory, bool traditional, IDWriteFontFallba
     if (traditional)
         builder->AddMapping(cjk, ARRAYSIZE(cjk), hant, ARRAYSIZE(hant), nullptr, nullptr);
     else
-        builder->AddMapping(cjk, ARRAYSIZE(cjk), simplified, ARRAYSIZE(simplified), nullptr, nullptr);
+        builder->AddMapping(cjk, ARRAYSIZE(cjk), simplified, simplified_count, nullptr, nullptr);
 
     IDWriteFontFallback* system = nullptr;
     if (SUCCEEDED(factory->GetSystemFontFallback(&system)) && system) {
@@ -188,8 +188,10 @@ HRESULT CreateRenderingParams(IDWriteFactory2* factory, HMONITOR monitor,
     }
 
     // Sharp hints glyphs to the pixel grid (GDI-style stems) so small UI text
-    // stays crisp at 100-125% scaling; the default keeps symmetric smoothing.
+    // stays crisp at 100-125% scaling. Auto keeps symmetric smoothing but
+    // grid-fits vertically like the LumaText path; Smooth stays unhinted.
     const bool sharp = CurrentTextRenderMode() == TextRenderMode::Sharp;
+    const bool grid_fit = CurrentTextRenderMode() != TextRenderMode::Smooth;
     IDWriteFactory3* modern = nullptr;
     if (!compat::LegacyMode() && SUCCEEDED(factory->QueryInterface(IID_PPV_ARGS(&modern)))) {
         IDWriteRenderingParams3* modern_params = nullptr;
@@ -197,7 +199,7 @@ HRESULT CreateRenderingParams(IDWriteFactory2* factory, HMONITOR monitor,
             base->GetGamma(), base->GetEnhancedContrast(), grayscale_contrast,
             base->GetClearTypeLevel(), DWRITE_PIXEL_GEOMETRY_FLAT,
             sharp ? DWRITE_RENDERING_MODE1_GDI_CLASSIC : DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
-            sharp ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED,
+            grid_fit ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED,
             &modern_params);
         modern->Release();
         if (SUCCEEDED(result) && modern_params) {
@@ -210,7 +212,7 @@ HRESULT CreateRenderingParams(IDWriteFactory2* factory, HMONITOR monitor,
         base->GetGamma(), base->GetEnhancedContrast(), grayscale_contrast,
         base->GetClearTypeLevel(), DWRITE_PIXEL_GEOMETRY_FLAT,
         sharp ? DWRITE_RENDERING_MODE_GDI_CLASSIC : DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC,
-        sharp ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED, params);
+        grid_fit ? DWRITE_GRID_FIT_MODE_ENABLED : DWRITE_GRID_FIT_MODE_DISABLED, params);
     base->Release();
     return result;
 }

@@ -90,6 +90,27 @@ void TestConfirm() {
     Check(ConfirmFocusOrder(three) ==
               std::vector<int>{kConfirmCancel, kConfirmSecondary, kConfirmPrimary},
           "three-button focus order is cancel, secondary, primary");
+
+    // 备份与迁移: item rows as check boxes (ConfirmDialogSpec::item_checks).
+    ConfirmDialogSpec ticks;
+    ticks.secondary_text = L"Later";
+    ticks.items = {L"Settings", L"Tags"};
+    std::vector<bool> marks{true, false};
+    ticks.item_checks = &marks;
+    Check(ConfirmCheckable(ticks), "matching ticks make the rows check boxes");
+    Check(ConfirmFocusOrder(ticks) ==
+              std::vector<int>{kConfirmRowBase, kConfirmRowBase + 1, kConfirmCancel,
+                               kConfirmSecondary, kConfirmPrimary},
+          "check box rows come before the buttons in the focus order");
+    Check(ConfirmRowChecked(ticks, 0) && !ConfirmRowChecked(ticks, 1) && ConfirmAnyChecked(ticks),
+          "row ticks are read from the caller's flags");
+    marks[0] = false;
+    Check(!ConfirmAnyChecked(ticks), "no tick leaves nothing to confirm");
+    std::vector<bool> short_marks{true};
+    ticks.item_checks = &short_marks;
+    Check(!ConfirmCheckable(ticks) && ConfirmAnyChecked(ticks) &&
+              ConfirmFocusOrder(ticks).front() == kConfirmCancel,
+          "ticks that do not match the items leave plain rows");
     Check(ConfirmControlFor(ConfirmChoice::Confirm, false) == kConfirmPrimary &&
               ConfirmControlFor(ConfirmChoice::Cancel, true) == kConfirmCancel &&
               ConfirmControlFor(ConfirmChoice::Secondary, true) == kConfirmSecondary &&

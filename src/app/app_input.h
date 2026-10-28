@@ -36,6 +36,13 @@ float MaxScrollForActivePane(AppState& s, ui::PaneViewModel* out = nullptr);
 void ClampScroll(AppState& s);
 void EnsureRowVisible(AppState& s, app::Tab& tab, int index);
 bool PointInList(const AppState& s, int mx, int my);
+// 点空白取消选择: a click on blank chrome (toolbar gaps, status bar, sidebar
+// blank, the pane title strip, the tab strip) clears the active pane's
+// selection; the double click that maximizes from there puts it back.
+// `maximize`: the spot maximizes on a double click (toolbar gaps, status
+// bar). Restore with `maximizing` only takes back such a click.
+bool BlankClickDeselect(AppState& s, POINT client, bool maximize = false);
+bool RestoreBlankDeselect(AppState& s, POINT client, bool maximizing = false);
 void ResetMarquee(AppState& s);
 void ApplyMarqueeSelection(AppState& s);
 // Marquee start in current pane pixels (it moves with the scrolled content).
@@ -53,12 +60,12 @@ void UpdateMarqueeFrame(AppState& s);
 void HandleListRowClick(AppState& s, int index, bool ctrl, bool shift);
 void FinishListRowClick(AppState& s);
 void CancelRenameClick(AppState& s);
+// 悬停选中 (single click mode): resting on a row selects it. True when it did.
+bool TickHoverSelect(AppState& s, ULONGLONG now);
 bool PointInHitItemName(AppState& s, const ui::WindowViewModel& vm,
                                const ui::HitTestResult& hit, float x, float y);
 void CancelScrollAnimation(AppState& s);
-float TagEaseOutCubic(float x);
 float TagEaseInOutQuad(float t);
-void TickTagTransitions(AppState& s);
 void TickTabTransitions(AppState& s);
 void StartSmoothScroll(AppState& s, float delta, bool horizontal = false);
 void UpdateSmoothScroll(AppState& s, const HoverPointerApi& api = {});

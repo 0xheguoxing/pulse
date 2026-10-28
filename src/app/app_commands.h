@@ -3,7 +3,7 @@
 #include "app_runtime.h"
 #include "../ui/quick_preview_command.h"
 
-namespace pulse::ui { struct ToolbarCustomizeSpec; }
+namespace pulse::ui { struct ToolbarCustomizeSpec; struct ToolbarPickerTile; }
 namespace pulse::app { struct SelectionCaps; struct DriveVerbResult; }
 
 namespace pulse {
@@ -17,12 +17,20 @@ std::vector<app::TagAdsUpdate> BuildTagAdsUpdates(
         bool include_descendants = false);
 bool ToggleTagForSelection(AppState& s, const app::TagId& tag_id,
                                   const std::vector<std::wstring>& paths);
+// Alt+0: removes every tag from the files.
+bool ClearTagsForSelection(AppState& s, const std::vector<std::wstring>& paths);
 std::vector<uint32_t>& TagColorPalette(AppState& s);
 void AppendCustomTagColor(AppState& s, uint32_t rgb);
 void ShowTagPicker(AppState& s, POINT screen_pt,
                    const std::vector<std::wstring>* paths_override = nullptr);
 // Staging tray batch menu (right-click on the tray).
 void ShowTrayBatchMenu(AppState& s, POINT screen_pt);
+// Shelf ▾ menu: copy / move mode, 送到 targets, choose a folder.
+void ShowTrayReleaseMenu(AppState& s, POINT screen_pt);
+// 送到: release into dir without opening it (its chip flashes).
+void TraySendTo(AppState& s, const std::wstring& dir, bool move);
+// Shelf ZIP button: the staged items into the current folder.
+void TrayShelfZip(AppState& s);
 // Stale tray items: search everywhere for the first missing one / drop them all.
 void TrayFindStale(AppState& s);
 void TrayRemoveStale(AppState& s);
@@ -42,6 +50,16 @@ struct CreateTagPickerTestIo {
 CreateTagPickerTestIo* SetCreateTagPickerTestIo(CreateTagPickerTestIo* io);
 #endif
 void ShowTagSidebarMenu(AppState& s, const app::TagId& tag_id, POINT screen_pt);
+// The rename prompt of a tag (a menu with a text field).
+bool RenameTagInteractive(AppState& s, const app::TagId& tag_id, POINT screen_pt);
+// Right-click on a sidebar tag group header: rename / delete the group.
+void ShowTagGroupMenu(AppState& s, const std::wstring& group_id, POINT screen_pt);
+// Asks for a group name (menu with a text field); empty when cancelled.
+// Name for a smart view (a saved tag combination); empty when dismissed.
+std::wstring PromptSmartViewName(AppState& s, POINT screen_pt, const std::wstring& suggested);
+std::wstring CreateTagGroupInteractive(AppState& s, POINT screen_pt);
+// Folds or unfolds a sidebar tag group header row.
+void ToggleTagGroupRow(AppState& s, const std::wstring& path);
 void DispatchMenuCommand(AppState& s, int cmd);
 bool ClipboardHasFiles();
 // What the active selection can do by what it is (selection_caps.h): the
@@ -85,6 +103,12 @@ void RefreshOpenCtxMenu(AppState& s);
 bool HandleShellMenuCommand(AppState& s, int cmd);
 // from_chip: the selection chip's ⋯ (adds the pinned-app rows on top).
 void ShowItemContextMenu(AppState& s, POINT screen_pt, bool from_chip = false);
+// Shift+F10 / Apps key: the item menu under the focused item, else the background menu.
+void ShowKeyboardContextMenu(AppState& s);
+// 解散文件夹 of these folders (each into its own parent) under one undo
+// group; returns the tasks (the assistant's file.dissolve waits for them).
+std::vector<uint64_t> DissolveFolders(AppState& s, app::Tab& tab, const std::vector<std::wstring>& folders,
+                                      uint64_t group, const std::wstring& label);
 void ShowBackgroundContextMenu(AppState& s, POINT screen_pt);
 void ShowBreadcrumbMenu(AppState& s, std::wstring path, POINT screen_pt);
 void ShowNewDropdown(AppState& s);
@@ -95,7 +119,26 @@ void ShowStarredBadgeEditor(AppState& s, const std::wstring& path,
                                     POINT screen_pt);
 void ShowCuratedItemMenu(AppState& s, const std::wstring& path,
                                 bool recent, POINT screen_pt);
-void SetViewMode(AppState& s, ui::ViewMode mode);
+// anchor: client point of a zoom gesture (Ctrl+wheel); the item under it keeps
+// its place. Without one the focused item (if on screen) or the middle of the
+// visible range is kept in place.
+void SetViewMode(AppState& s, ui::ViewMode mode, const POINT* anchor = nullptr);
+// Continuous icon size (DIP): shown in the icon mode the size belongs to and
+// remembered with the folder's view.
+void SetIconSize(AppState& s, float icon_dip, const POINT* anchor = nullptr);
+// The header's icon button: the icon size used last in this tab.
+void ShowLastIconSize(AppState& s, const POINT* anchor = nullptr);
+// The header's icons / photo wall buttons: that size as a grid or as a photo
+// wall, remembered with the folder.
+void ShowIconWall(AppState& s, bool wall, const POINT* anchor = nullptr);
+// A view picked from the view menu or with Ctrl+Shift+1..8. An icon size
+// there means the plain grid, so it also leaves the photo wall; SetViewMode
+// keeps the wall (the size button returns to it).
+void ChooseViewMode(AppState& s, ui::ViewMode mode);
+// Ctrl+wheel: `step` notches through the icon sizes (ui::ZoomIconDip). Out of
+// the smallest goes to Details; in from other views returns to the last size.
+// leave_icons = false (the header slider) stays within the icon sizes.
+void ZoomIconSize(AppState& s, int step, const POINT* anchor = nullptr, bool leave_icons = true);
 // "Apply to all folders" (#31) for the active real folder. Returns true when
 // applied; confirm=false skips the dialog (self tests).
 bool ApplyViewToAllFolders(AppState& s, bool confirm = true);
@@ -105,6 +148,9 @@ void ShowViewDropdown(AppState& s, int pane_index);
 void ShowSortDropdown(AppState& s);
 // Toolbar "Group" button: the group-by choices on their own.
 void ShowGroupDropdown(AppState& s);
+void ShowToolbarPinMenu(AppState& s, int slot, POINT screen);
+// A pinned app (index into toolbar_apps): separator after it, unpin, 自定义工具栏.
+void ShowToolbarAppPinMenu(AppState& s, size_t app, POINT screen);
 void ShowToolbarMore(AppState& s);
 // Toolbar selection chip, linked to the Pulse item menu: the first plain
 // built-in commands of the item menu as the user configured it (order and
@@ -120,15 +166,25 @@ std::vector<ui::SelectionChipAction> ToolbarPinActions(AppState& s);
 // type" last saw a text document.
 bool ToolbarNewCreatesFolder(const AppState& s);
 // The 自定义工具栏 sheet; Done saves app.json.
-void ShowToolbarCustomize(AppState& s);
+// The 自定义工具栏 popover; page 0 tools, 1 apps.
+void ShowToolbarCustomize(AppState& s, int page = 0);
+// Toolbar picker T3c: a toolbar pin pressed while the picker is open.
+bool ToolbarPinDragging();
+void BeginToolbarPinDrag(AppState& s, int index, POINT pt);
+void MoveToolbarPinDrag(AppState& s, POINT pt);
+void EndToolbarPinDrag(AppState& s, bool cancel);
 // Pinned apps (自定义工具栏 → 固定的软件), app_toolbar_apps.cpp.
 // Toolbar entries in pin order, with their fit against the selection (or the
 // dragged items in drop mode).
 std::vector<ui::WindowViewModel::ToolbarAppPin> ToolbarAppPins(AppState& s);
 // Click: opens the selected items the app takes, or just starts it.
 void RunToolbarApp(AppState& s, size_t app);
+// Its display name ("" past the last pin): the assistant's toolbar.open_with.
+std::wstring ToolbarAppName(AppState& s, size_t app);
 // Opens `items` with pinned app `app`: only the types it opens unless `all`.
 void OpenWithToolbarApp(AppState& s, size_t app, const std::vector<std::wstring>& items, bool all);
+// The same for files dropped on the app's pin: the pin gulps, a note follows.
+void DropOnToolbarApp(AppState& s, size_t app, const std::vector<std::wstring>& items, bool all);
 // Adds a program (.exe or a shortcut to one) to the pins and saves.
 bool PinToolbarApp(AppState& s, const std::wstring& path);
 std::wstring ToolbarAppTooltip(AppState& s, size_t app);
@@ -146,10 +202,12 @@ bool RunToolbarAppMenuCommand(AppState& s, int command);
 // The 自定义工具栏 sheet's 固定的软件 section: pinned apps, two suggestions
 // for this folder and 添加软件…; Apply returns true when the pins changed.
 void FillToolbarAppRows(AppState& s, ui::ToolbarCustomizeSpec& spec);
-bool ApplyToolbarAppRows(AppState& s, const ui::ToolbarCustomizeSpec& spec);
+bool ApplyToolbarAppRows(AppState& s, const std::vector<ui::ToolbarPickerTile>& apps);
 // Pulse's file picker for a program (.exe or shortcut), opening in the Start menu.
 bool PickToolbarAppFile(AppState& s, HWND owner, std::wstring& path);
 void ShowOmnibar(AppState& s, OmnibarMode mode);
+// 管理别名: list, open and remove aliases; export / import them.
+void ShowAliasManager(AppState& s);
 void ShowAdvancedSearch(AppState& s, bool require_scope = false);
 void ShowSearchFilterMenu(AppState& s, int chip, RECT control_rect);
 void ShowRecyclePlaceMenu(AppState& s, POINT screen_pt);
@@ -157,6 +215,8 @@ void ShowRecyclePlaceMenu(AppState& s, POINT screen_pt);
 // searches). Used on startup, after a language switch, and when the volume set
 // changes (a plugged-in stick, a mounted image).
 void RefreshSidebarModel(AppState& s);
+// "手机连上了却看不到？" (pulse_devices_cloud.html): the three things to check.
+void ShowDeviceHelp(AppState& s);
 // Navigation-pane background menu: show or hide sections, expand or collapse them all.
 void ShowSidebarSectionsMenu(AppState& s, POINT screen_pt);
 // Menu for one section (header or empty space inside it): toggle its built-in
@@ -169,7 +229,13 @@ void SetEverySidebarSectionCollapsed(AppState& s, bool collapsed);
 void ApplyAppWindowChrome(AppState& s);
 // Pulse's own pickers (ui/folder_picker_dialog), owned by the main window.
 bool PickImageFile(AppState& s, std::wstring& path);
-bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title);
+// `history_key` names the entry point (#58-9): the picker opens where that
+// entry point last picked, and remembers the new pick for it.
+// A non-empty `initial` opens there instead of the entry point's history.
+bool PickFolder(AppState& s, std::wstring& path, const wchar_t* title, std::wstring_view history_key = {},
+                std::wstring_view initial = {});
+// Windows' JSON file dialog; file_name is the save dialog's suggestion.
+bool PickJsonFile(HWND owner, bool save, const wchar_t* file_name, std::wstring& out);
 D2D1_COLOR_F ResolveAccentColor(const app::AppPrefs& prefs, bool dark = false);
 void ApplyAccentFromPrefs(AppState& s, bool snap_picker);
 bool SelectedQuickPreviewItem(AppState& s, ui::QuickPreviewItem& item);
@@ -184,6 +250,10 @@ void HandleQuickPreviewCommand(AppState& s, const ui::QuickPreviewCommand& comma
 // snapshot refresh or directory notification: reloads a changed file,
 // re-anchors after an in-preview delete, closes when the entry is gone.
 void SyncQuickPreview(AppState& s);
+// 下载并预览 (C4b, details well / Quick Look card): brings one cloud-only file
+// onto this device on request; WM_CLOUD_DOWNLOAD reports progress and the end.
+void StartCloudPreviewDownload(AppState& s, const std::wstring& path, uint64_t size);
+void HandleCloudDownloadMessage(AppState& s, WPARAM event, LPARAM job);
 void ApplySettingsEffects(AppState& s, app::SettingsEffect effects);
 app::SettingsTaskCompletion SettingsCompletion(HWND hwnd);
 void SetThemeMode(AppState& s, int mode);

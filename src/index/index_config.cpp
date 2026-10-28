@@ -1,4 +1,5 @@
 #include "index_config.h"
+#include "../fs/drive_kind.h"
 #include "index_directory_security.h"
 #include "../common/config_json.h"
 #include "../common/json_utils.h"
@@ -134,6 +135,7 @@ std::wstring ConfigJson(const IndexConfig& config) {
     });
     std::wstring out = L"{\n  \"version\":" + std::to_wstring(config.version) +
                        L",\n  \"generation\":" + std::to_wstring(config.generation) +
+                       L",\n  \"search_enabled\":" + (config.search_enabled ? L"true" : L"false") +
                        L",\n  \"include_fixed_ntfs\":" +
                        (config.include_fixed_ntfs ? L"true" : L"false") +
                        L",\n  \"include_removable_ntfs\":" +
@@ -322,6 +324,7 @@ bool LoadIndexConfigFrom(const std::wstring& path, const std::wstring& default_i
     }
     loaded.version = static_cast<uint32_t>((std::max)(1, pulse::json::ExtractInt(json, L"version", 1)));
     loaded.generation = static_cast<uint64_t>((std::max)(1, pulse::json::ExtractInt(json, L"generation", 1)));
+    loaded.search_enabled = pulse::json::ExtractBool(json, L"search_enabled", true);
     loaded.include_fixed_ntfs = pulse::json::ExtractBool(json, L"include_fixed_ntfs", true);
     loaded.include_removable_ntfs = pulse::json::ExtractBool(json, L"include_removable_ntfs", true);
     loaded.index_path = pulse::json::ExtractString(json, L"index_path", default_index_path);
@@ -494,6 +497,9 @@ std::vector<VolumeInfo> EnumerateLocalVolumes(const IndexConfig& config) {
     for (const wchar_t* p = drives; *p; p += wcslen(p) + 1) {
         const UINT type = GetDriveTypeW(p);
         if (type != DRIVE_FIXED && type != DRIVE_REMOVABLE) continue;
+        // A cloud mount (WinFsp / Dokan) is a remote service, not a local volume;
+        // skipped before GetVolumeInformationW, which can hang on a stuck mount.
+        if (::pulse::fs::IsRemoteLikeDrive(p)) continue;
         VolumeInfo info;
         info.mount_point = p;
         info.kind = type == DRIVE_FIXED ? VolumeKind::Fixed : VolumeKind::Removable;
@@ -511,6 +517,7 @@ std::vector<VolumeInfo> EnumerateLocalVolumes(const IndexConfig& config) {
             info.label = label;
             info.file_system = fs;
         }
+        if (info.online && ::pulse::fs::IsRemoteLikeFileSystemName(info.file_system)) continue;
         info.supported = info.online && IsNtfs(info.file_system);
         const bool auto_include = info.kind == VolumeKind::Fixed
             ? config.include_fixed_ntfs : config.include_removable_ntfs;

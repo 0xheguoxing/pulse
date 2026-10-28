@@ -14,7 +14,8 @@
 //   client -> host : REQ_DELETE_RECYCLE / REQ_REALDELETE /
 //                    REQ_RENAME / REQ_NEW_FOLDER / REQ_NEW_FILE /
 //                    REQ_CANCEL / REQ_PING / REQ_SHUTDOWN / REQ_RESTORE_RECYCLE /
-//                    REQ_CTX_QUERY / REQ_CTX_INVOKE / REQ_CTX_CLOSE
+//                    REQ_CTX_QUERY / REQ_CTX_INVOKE / REQ_CTX_CLOSE /
+//                    REQ_SHELL_VERB / REQ_SHELL_TRANSFER
 //   host -> client : RSP_PROGRESS (0..N) then exactly one RSP_DONE per request,
 //                    RSP_PONG for REQ_PING, RSP_CTX_ITEMS for REQ_CTX_QUERY.
 //
@@ -42,6 +43,25 @@
 //   REQ_CTX_INVOKE           : session_id(u32) + item_id(u32) +
 //                              verb(string) + text(string)
 //   REQ_CTX_CLOSE            : session_id(u32)
+//   REQ_SHELL_VERB           : owner_hwnd(u32) + flags(u32, SVF_*) + verb(string) +
+//                              paths(string array). Runs one of Explorer's own
+//                              verbs (empty = the default verb; "paste" with
+//                              SVF_BACKGROUND pastes the clipboard into paths[0];
+//                              "drop:copy" / "drop:move" with SVF_BACKGROUND drop
+//                              paths[1..] on the folder paths[0])
+//                              on shell parsing names, e.g. phone items. RSP_DONE.
+//   REQ_SHELL_TRANSFER       : op(u32, STO_*) + flags(u32, STF_*) + dest(string) +
+//                              sources(string array) + names(string array).
+//                              One IFileOperation on shell parsing names or
+//                              paths (phones: MTP), run on its own STA thread so
+//                              a long copy never holds other requests. COPY /
+//                              MOVE: sources into the folder dest, names[i] the
+//                              new leaf name of sources[i] (empty = keep it).
+//                              NEW_FOLDER / NEW_FILE: names[0] made in dest,
+//                              no sources. DELETE: sources deleted for good
+//                              (dest empty). RSP_PROGRESS (percent of the whole
+//                              operation), then RSP_DONE. Never retried after
+//                              a host restart: a half-done copy is not re-run.
 //   RSP_PROGRESS             : percent(f32) + current_item(string) +
 //                              items_done(u32) + total_items(u32)
 //   RSP_DONE                 : result_hresult(u32) + cancelled(u32) + error_text(string)
@@ -89,10 +109,29 @@ enum MsgType : uint32_t {
     REQ_CTX_QUERY = 12,
     REQ_CTX_INVOKE = 13,
     REQ_CTX_CLOSE = 14,
+    REQ_SHELL_VERB = 15,
+    REQ_SHELL_TRANSFER = 16,
     RSP_PROGRESS = 100,
     RSP_DONE = 101,
     RSP_PONG = 102,
     RSP_CTX_ITEMS = 103,
+};
+
+// REQ_SHELL_VERB flags.
+enum ShellVerbFlags : uint32_t {
+    SVF_BACKGROUND = 1,  // paths[0] is a folder; the verb is its background verb
+};
+
+// REQ_SHELL_TRANSFER operations and flags.
+enum ShellTransferOp : uint32_t {
+    STO_COPY = 0,
+    STO_MOVE = 1,
+    STO_NEW_FOLDER = 2,
+    STO_NEW_FILE = 3,
+    STO_DELETE = 4,
+};
+enum ShellTransferFlags : uint32_t {
+    STF_RENAME_ON_COLLISION = 1,  // the shell names a colliding copy "a (2).jpg"
 };
 
 // REQ_CTX_QUERY flags.

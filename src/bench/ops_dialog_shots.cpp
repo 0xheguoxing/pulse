@@ -1,0 +1,497 @@
+// Renders the progress card (pulse_ops_dialogs.html §1–§4) in each state to
+// PNG and checks the 2.5 s auto-close. Usage: pulse_ops_dialog_shots [out-dir]
+#include "../common/windows_compat.h"
+#include "../common/localization.h"
+#include "../ui/file_operation_dialog.h"
+
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
+#include <string>
+#include <map>
+#include <optional>
+#include <vector>
+
+namespace pulse::ui {
+struct FileOperationWindowTestAccess {
+    static HWND Handle(FileOperationWindow& window) { return window.hwnd_; }
+    static void Size(FileOperationWindow& window, UINT dpi, bool detailed) {
+        window.detailed_ = detailed;
+        RECT rect{0, 0, MulDiv(440, dpi, 96), MulDiv(detailed ? 422 : 272, dpi, 96)};
+        SendMessageW(window.hwnd_, WM_DPICHANGED, MAKELONG(dpi, dpi), reinterpret_cast<LPARAM>(&rect));
+    }
+    static void Graph(FileOperationWindow& window, float upto, double base, bool by_progress = true) {
+        window.graph_.Reset();
+        window.graph_.by_progress = by_progress;
+        const int count = by_progress ? static_cast<int>(upto * 200.0f) : 90;
+        for (int i = 0; i <= count; ++i) {
+            const float x = by_progress ? upto * static_cast<float>(i) / static_cast<float>(count) : 0.0f;
+            const double t = static_cast<double>(i);
+            double v = base * (0.82 + 0.12 * std::sin(t * 0.21) + 0.06 * std::sin(t * 0.77));
+            if (i < 8) v *= 0.25 + 0.75 * t / 8.0;  // warm-up ramp
+            window.graph_.points.push_back({ x, v });
+        }
+    }
+    static void Elapsed(FileOperationWindow& window, ULONGLONG ms, bool ended) {
+        const ULONGLONG now = GetTickCount64();
+        window.task_start_tick_ = now - ms;
+        window.task_end_tick_ = ended ? now : 0;
+    }
+    static void Countdown(FileOperationWindow& window, ULONGLONG ago, bool hover) {
+        window.countdown_base_ = GetTickCount64() - ago;
+        window.countdown_hover_ = hover;
+    }
+    static bool Pending(FileOperationWindow& window) { return window.AutoClosePending(); }
+    static const ops::OpStatus& Shown(FileOperationWindow& window) { return window.status_; }
+    static void RetryRows(FileOperationWindow& window, const std::vector<size_t>& rows) {
+        window.RetryFailureRows(rows);
+    }
+    static int RowState(FileOperationWindow& window, size_t row) {
+        if (!window.board_ || row >= window.board_->rows.size()) return -1;
+        return static_cast<int>(window.board_->rows[row].state);
+    }
+    static bool Board(FileOperationWindow& window) { return window.board_.has_value(); }
+    static int Height(FileOperationWindow& window) {
+        RECT rect{};
+        GetWindowRect(window.hwnd_, &rect);
+        return rect.bottom - rect.top;
+    }
+    static bool CanRetry(FileOperationWindow& window) { return window.FailureView().can_retry; }
+    static bool Closing(FileOperationWindow& window) { return window.closing_; }
+    static void Tick(FileOperationWindow& window, ULONGLONG now) { window.TickAutoClose(now); }
+    static ULONGLONG Base(FileOperationWindow& window) { return window.countdown_base_; }
+    static void Keep(FileOperationWindow& window) { window.KeepOpen(); }
+    static void Place(FileOperationWindow& window, int x, int y) {
+        window.positioned_ = true;
+        SetWindowPos(window.hwnd_, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    static bool Snapshot(FileOperationWindow& window, const std::filesystem::path& path) {
+        window.backdrop_enabled_ = false;
+        window.Render();
+        window.Render();
+        return window.compositor_.SaveSnapshot(path.c_str());
+    }
+};
+}
+
+namespace {
+int failures = 0;
+void Check(bool pass, const char* label) {
+    std::printf("[%s] %s\n", pass ? "PASS" : "FAIL", label);
+    if (!pass) ++failures;
+}
+
+pulse::ops::OpStatus Running(pulse::ops::OpType type, float percent) {
+    using namespace pulse;
+    ops::OpStatus st;
+    st.task_id = 11;
+    st.active = true;
+    st.type = type;
+    st.phase = ops::OpPhase::Running;
+    st.percent = percent;
+    st.source_label = L"Downloads";
+    st.destination_label = L"D:\\Backup\\Projects 2026";
+    st.current_item = L"raw\\2026-10-17\\DSC_04187.NEF";
+    st.total_items = 2003;
+    st.completed_items = static_cast<uint64_t>(2003 * percent / 100.0f);
+    st.total_bytes = 18ull * 1024 * 1024 * 1024;
+    st.transferred_bytes = static_cast<uint64_t>(st.total_bytes * percent / 100.0);
+    st.bytes_per_second = 212.0 * 1024 * 1024;
+    st.peak_bytes_per_second = 248.0 * 1024 * 1024;
+    st.speed_basis = ops::OpSpeedBasis::Bytes;
+    st.eta_seconds = 34;
+    return st;
+}
+}
+
+int wmain(int argc, wchar_t** argv) {
+    using namespace pulse;
+    using Access = ui::FileOperationWindowTestAccess;
+    compat::EnableDpiAwareness();
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const wchar_t* locale = argc > 2 ? argv[2] : L"zh-CN";
+    l10n::Initialize(GetModuleHandleW(nullptr), locale);
+    std::filesystem::path output;
+    if (argc > 1) { output = argv[1]; std::filesystem::create_directories(output); }
+
+    int dismissed = 0;
+    ui::FileOperationCallbacks callbacks;
+    callbacks.dismiss = [&] { ++dismissed; };
+    // Partial failure retries: each call spawns one fake task per call.
+    struct RetryCall { uint64_t task; std::vector<size_t> items; };
+    std::vector<RetryCall> retry_calls;
+    uint64_t next_spawn = 41;
+    callbacks.retry_failed = [&](uint64_t task, const std::vector<size_t>& items) {
+        retry_calls.push_back({ task, items });
+        return std::vector<ops::OpsManager::RetrySpawn>{ { next_spawn++, items } };
+    };
+    std::map<uint64_t, ops::OpStatus> outcomes;
+    callbacks.task_outcome = [&](uint64_t task) -> std::optional<ops::OpStatus> {
+        const auto found = outcomes.find(task);
+        if (found == outcomes.end()) return std::nullopt;
+        return found->second;
+    };
+    std::vector<std::wstring> opened;
+    callbacks.open_folder = [&](const std::wstring& folder) { opened.push_back(folder); };
+    ui::FileOperationWindow window;
+    Check(window.Create(nullptr, std::move(callbacks)), "create hidden operation window");
+    const double mb = 1024.0 * 1024.0;
+
+    auto shot = [&](const std::wstring& name) {
+        if (output.empty()) return;
+        Check(Access::Snapshot(window, output / (name + L".png")), "save screenshot");
+    };
+
+    struct Scale { UINT dpi; const wchar_t* tag; };
+    const Scale scales[] = { {96, L"100"}, {144, L"150"}, {192, L"200"} };
+    for (const bool dark : {true, false}) {
+        window.SetTheme(dark, ui::HexColor(0x6474C7));
+        const std::wstring theme = dark ? L"dark" : L"light";
+        for (const auto& scale : scales) {
+            const bool full = scale.dpi == 96;
+            const std::wstring sfx = L"-" + theme + L"-" + scale.tag;
+            Access::Size(window, scale.dpi, false);
+
+            auto st = Running(ops::OpType::Copy, 63.0f);
+            window.Update(st);
+            Access::Graph(window, 0.63f, 212.0 * mb);
+            Access::Elapsed(window, 61000, false);
+            shot(L"01-running" + sfx);
+            if (!full) continue;
+
+            st.pause_requested = true;
+            window.Update(st);
+            shot(L"02-pausing" + sfx);
+            st.phase = ops::OpPhase::Paused;
+            window.Update(st);
+            shot(L"03-paused" + sfx);
+            st.pause_requested = false;
+            st.phase = ops::OpPhase::WaitingForConflict;
+            window.Update(st);
+            shot(L"04-waiting" + sfx);
+
+            auto done = Running(ops::OpType::Copy, 100.0f);
+            done.active = false;
+            done.phase = ops::OpPhase::Completed;
+            done.destination_dir = L"D:\\Backup\\Projects 2026";
+            window.Update(done);
+            Access::Graph(window, 1.0f, 212.0 * mb);
+            Access::Elapsed(window, 88000, true);
+            Access::Countdown(window, 1100, false);
+            shot(L"05-done-countdown" + sfx);
+            Access::Countdown(window, 0, true);
+            shot(L"06-done-hover" + sfx);
+            Access::Countdown(window, 0, false);
+            window.Hide();
+
+            auto fail = Running(ops::OpType::Move, 41.0f);
+            fail.task_id = 12;
+            fail.active = false;
+            fail.phase = ops::OpPhase::Failed;
+            fail.last_error = L"Access is denied.";
+            window.Update(fail);
+            Access::Graph(window, 0.41f, 150.0 * mb);
+            Access::Elapsed(window, 23000, true);
+            shot(L"07-failed" + sfx);
+
+            auto del = Running(ops::OpType::RecycleDelete, 37.0f);
+            del.task_id = 13;
+            del.destination_label.clear();
+            del.speed_basis = ops::OpSpeedBasis::Items;
+            del.items_per_second = 1480.0;
+            del.peak_items_per_second = 2210.0;
+            window.Update(del);
+            Access::Graph(window, 0.37f, 1480.0);
+            Access::Elapsed(window, 4200, false);
+            shot(L"08-delete" + sfx);
+
+            auto move = Running(ops::OpType::Move, 78.0f);
+            move.task_id = 14;
+            Access::Size(window, scale.dpi, true);
+            window.Update(move);
+            Access::Graph(window, 0.78f, 180.0 * mb);
+            Access::Elapsed(window, 140000, false);
+            shot(L"09-move-details" + sfx);
+            Access::Size(window, scale.dpi, false);
+
+            auto auth = Running(ops::OpType::Copy, 12.0f);
+            auth.task_id = 15;
+            auth.authorization = ops::AuthorizationState::ActionRequired;
+            auth.can_skip_authorization = true;
+            window.Update(auth);
+            shot(L"10-authorization" + sfx);
+
+            auto scan = Running(ops::OpType::Copy, -1.0f);
+            scan.task_id = 16;
+            scan.phase = ops::OpPhase::Scanning;
+            scan.total_items = 0;
+            scan.speed_basis = ops::OpSpeedBasis::None;
+            window.Update(scan);
+            shot(L"11-scanning" + sfx);
+        }
+    }
+
+    // Auto-close: a success seen while visible counts down 3 s, then zooms
+    // out and dismisses; a click on the finished card keeps it; failures
+    // never auto-close.
+    {
+        window.SetTheme(true, ui::HexColor(0x6474C7));
+        Access::Size(window, 96, false);
+        Access::Place(window, -4000, -4000);  // keep the pointer off the card
+        auto st = Running(ops::OpType::Copy, 50.0f);
+        st.task_id = 21;
+        window.Update(st);
+        window.Show(false);
+        Check(!Access::Pending(window), "no countdown while running");
+        auto done = st;
+        done.active = false;
+        done.phase = ops::OpPhase::Completed;
+        done.percent = 100.0f;
+        window.Update(done);
+        Check(Access::Pending(window), "countdown starts on a visible success");
+        const ULONGLONG base = Access::Base(window);
+        Access::Tick(window, base + 1200);
+        Check(window.IsVisible() && !Access::Closing(window), "still open at 1.2 s");
+        Access::Tick(window, base + 2600);
+        Check(window.IsVisible() && !Access::Closing(window), "still open at 2.6 s");
+        Access::Tick(window, base + 3100);
+        Check(Access::Closing(window), "exit animation starts after 3 s");
+        Access::Tick(window, base + 3100 + 250);
+        Check(!window.IsVisible() && dismissed == 1, "closed and dismissed after the zoom");
+
+        auto fail = st;
+        fail.task_id = 22;
+        window.Update(fail);
+        window.Show(false);
+        fail.active = false;
+        fail.phase = ops::OpPhase::Failed;
+        fail.last_error = L"Access is denied.";
+        window.Update(fail);
+        Check(!Access::Pending(window), "failure does not auto-close");
+        window.Hide();
+
+        auto late = done;
+        late.task_id = 23;
+        window.Update(late);
+        window.Show(false);
+        Check(!Access::Pending(window), "summary opened after the finish stays open");
+        window.Hide();
+
+        auto kept = st;
+        kept.task_id = 24;
+        window.Update(kept);
+        window.Show(false);
+        kept.active = false;
+        kept.phase = ops::OpPhase::Completed;
+        kept.percent = 100.0f;
+        window.Update(kept);
+        Check(Access::Pending(window), "a new task counts down again");
+        Access::Keep(window);
+        Check(!Access::Pending(window) && window.IsVisible(), "a click on the finished card keeps it open");
+        window.Update(kept);
+        Check(!Access::Pending(window), "kept stays kept on the next update");
+        window.Hide();
+    }
+
+    // Partial failure (部分失败): the rest went through; failed items are listed
+    // with reasons, retried one by one or together, and never auto-close.
+    auto partial_status = [&](uint64_t task, size_t listed, uint64_t failed_count) {
+        auto st = Running(ops::OpType::Copy, 100.0f);
+        st.task_id = task;
+        st.active = false;
+        st.phase = ops::OpPhase::Failed;
+        st.destination_dir = L"D:\\Backup\\Projects 2026";
+        st.completed_items = st.total_items;
+        const wchar_t* names[] = { L"\x62a5\x4ef7\x5355_v3.xlsx", L"setup.log", L"pagefile-copy.sys",
+                                   L"DSC_04187.NEF", L"meeting-notes-2026-10-17-final-final-long-name.docx" };
+        const wchar_t* reasons[] = { L"\x88ab Excel \x5360\x7528", L"\x9700\x8981\x7ba1\x7406\x5458\x6743\x9650",
+                                     L"\x7cfb\x7edf\x6587\x4ef6", L"\x88ab Lightroom Classic \x5360\x7528",
+                                     L"\x6587\x4ef6\x540d\x592a\x957f" };
+        for (size_t i = 0; i < listed; ++i)
+            st.failures.push_back({ std::wstring(L"C:\\Users\\User\\Downloads\\") + names[i % 5],
+                                    std::wstring(L"D:\\Backup\\Projects 2026\\") + names[i % 5],
+                                    reasons[i % 5], E_ACCESSDENIED });
+        st.failed_items = failed_count;
+        st.last_error = st.failures.empty() ? L"" : st.failures[0].reason + L" | " + st.failures[0].source;
+        return st;
+    };
+    auto finished = [&](uint64_t task, bool ok) {
+        auto st = Running(ops::OpType::Copy, 100.0f);
+        st.task_id = task;
+        st.active = false;
+        st.phase = ok ? ops::OpPhase::Completed : ops::OpPhase::Failed;
+        return st;
+    };
+    for (const bool dark : {true, false}) {
+        window.SetTheme(dark, ui::HexColor(0x6474C7));
+        const std::wstring sfx = dark ? L"-dark-100" : L"-light-100";
+        retry_calls.clear();
+        Access::Size(window, 96, false);
+        const int plain_h = Access::Height(window);
+        auto st = partial_status(dark ? 31 : 61, 5, 6);
+        window.Update(st);
+        Access::Graph(window, 1.0f, 212.0 * mb);
+        Access::Elapsed(window, 88000, true);
+        Check(Access::Board(window), "partial failure lists the failed items");
+        Check(Access::Height(window) == plain_h + MulDiv(90 + 4 * 36 + 22 + 2 + 14 - 216, 96, 96),
+              "window fits four rows and the more line");
+        Check(Access::Shown(window).failed_items == 6, "six items still failed");
+        Check(!Access::Pending(window), "partial failure does not auto-close");
+        Check(Access::CanRetry(window),
+              "footer offers to retry the failed items");
+        shot(L"12-partial" + sfx);
+
+        Access::RetryRows(window, { 0 });
+        Check(retry_calls.size() == 1 && retry_calls[0].task == st.task_id &&
+              retry_calls[0].items == std::vector<size_t>{ 0 }, "row retry asks for that item only");
+        Check(Access::RowState(window, 0) == 1, "row shows retrying");
+        const uint64_t first_spawn = next_spawn - 1;
+        Check(window.TracksRetry(first_spawn) && !window.TracksRetry(first_spawn + 100),
+              "the app can tell a list retry from another operation");
+        auto running = Running(ops::OpType::Copy, 40.0f);
+        running.task_id = first_spawn;
+        window.Update(running);
+        Check(Access::Board(window) && Access::Shown(window).task_id == st.task_id,
+              "card stays on the failed task while the retry runs");
+        shot(L"13-partial-retrying" + sfx);
+        window.Update(finished(first_spawn, true));
+        Check(Access::RowState(window, 0) == 2, "row done after its retry succeeds");
+        window.Update(finished(first_spawn, true));   // the app repeats the last status
+        Check(Access::Board(window) && Access::Shown(window).task_id == st.task_id,
+              "a repeated finish of the retry keeps the list");
+        Check(Access::Shown(window).failed_items == 5, "one less failed");
+        Access::RetryRows(window, { 0 });
+        Check(retry_calls.size() == 1, "a done row is not retried again");
+
+        Access::RetryRows(window, { 0, 1, 2, 3, 4 });
+        Check(retry_calls.size() == 2 && retry_calls[1].items == std::vector<size_t>({ 1, 2, 3, 4 }),
+              "retry all asks for the rows still failed");
+        auto again = finished(next_spawn - 1, false);
+        again.failures.push_back({ st.failures[2].source, st.failures[2].destination,
+                                   L"\x62d2\x7edd\x8bbf\x95ee", E_ACCESSDENIED });
+        again.failed_items = 1;
+        window.Update(again);
+        window.Update(again);
+        Check(Access::RowState(window, 2) == 0 && Access::RowState(window, 1) == 2 && Access::RowState(window, 4) == 2,
+              "the item that failed again is listed again, the rest are done");
+        Check(Access::Shown(window).failed_items == 2, "one listed and one unlisted still failed");
+        shot(L"14-partial-after" + sfx);
+        Access::RetryRows(window, { 2 });
+        Check(retry_calls.size() == 3 && retry_calls[2].task == again.task_id &&
+              retry_calls[2].items == std::vector<size_t>{ 0 }, "a second retry goes through the retry's list");
+        window.Update(finished(next_spawn - 1, true));
+        Check(Access::Shown(window).failed_items == 1 && !Access::Pending(window),
+              "the unlisted failure keeps the card open");
+
+        auto other = Running(ops::OpType::Copy, 10.0f);
+        other.task_id = dark ? 39 : 69;
+        window.Update(other);
+        Check(!Access::Board(window) && Access::Height(window) == plain_h, "another task clears the list");
+    }
+    {
+        // Everything retried successfully: reads as a success and closes itself.
+        window.SetTheme(true, ui::HexColor(0x6474C7));
+        Access::Size(window, 96, false);
+        Access::Place(window, -4000, -4000);
+        auto st = partial_status(71, 1, 1);
+        window.Update(st);
+        window.Show(false);
+        Access::RetryRows(window, { 0 });
+        window.Update(finished(next_spawn - 1, true));
+        Check(Access::Shown(window).phase == ops::OpPhase::Completed && Access::Shown(window).failed_items == 0,
+              "all retried: shown as completed");
+        Check(Access::Pending(window), "all retried: auto-close counts down");
+        window.Hide();
+        auto global = partial_status(72, 1, 1);
+        window.Update(global);
+        Access::RetryRows(window, { 0 });
+        auto stopped = finished(next_spawn - 1, false);
+        stopped.last_error = L"Access is denied. | C:\\x";
+        window.Update(stopped);
+        Check(Access::RowState(window, 0) == 0, "a retry that stops as a whole leaves the row failed");
+        window.Hide();
+
+        // Two retries back to back: only the second one is reported.
+        auto pair = partial_status(73, 2, 2);
+        window.Update(pair);
+        Access::RetryRows(window, { 0 });
+        const uint64_t first = next_spawn - 1;
+        Access::RetryRows(window, { 1 });
+        outcomes[first] = finished(first, true);
+        window.Update(finished(next_spawn - 1, true));
+        Check(Access::RowState(window, 0) == 2 && Access::RowState(window, 1) == 2 &&
+              Access::Shown(window).phase == ops::OpPhase::Completed,
+              "a retry finished while another was reported is looked up");
+        window.Hide();
+    }
+
+    // Acrylic: over one of our windows the card blurs what that window shows,
+    // the way menus do; anywhere else it keeps the plain surface.
+    {
+        ui::Compositor::SetFrameCopyEnabled(true);
+        Check(ui::Compositor::GetAcrylicPlateBuilder() != nullptr, "window_material registers the dialog acrylic");
+        WNDCLASSW cls{};
+        cls.lpfnWndProc = DefWindowProcW;
+        cls.hInstance = GetModuleHandleW(nullptr);
+        cls.lpszClassName = L"PulseOpsShotsSource";
+        RegisterClassW(&cls);
+        HWND source_hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, cls.lpszClassName, L"", WS_POPUP,
+                                           -4000, -4000, 900, 600, nullptr, nullptr, cls.hInstance, nullptr);
+        ShowWindow(source_hwnd, SW_SHOWNOACTIVATE);
+        ui::Compositor source;
+        const bool source_ok = source_hwnd && source.Init(source_hwnd);
+        Check(source_ok, "source window compositor");
+        auto paint = [&](bool dark) {
+            ID2D1DeviceContext* dc = source.Dc();
+            dc->BeginDraw();
+            dc->Clear(dark ? ui::HexColor(0x1C1C1C) : ui::HexColor(0xF7F7F7));
+            ui::ComPtr<ID2D1SolidColorBrush> brush;
+            dc->CreateSolidColorBrush(ui::HexColor(0x000000), &brush);
+            const uint32_t colors[] = { 0x0078D4, 0xE3008C, 0xFFB900, 0x107C10, 0x8764B8, 0xD83B01 };
+            for (int i = 0; i < 6; ++i) {
+                brush->SetColor(ui::HexColor(colors[i]));
+                const float x = 60.0f + static_cast<float>(i) * 135.0f;
+                dc->FillRectangle(D2D1::RectF(x, 120.0f, x + 110.0f, 300.0f), brush.get());
+            }
+            brush->SetColor(dark ? ui::HexColor(0xE0E0E0) : ui::HexColor(0x202020));
+            for (int row = 0; row < 12; ++row) {
+                const float y = 330.0f + static_cast<float>(row) * 22.0f;
+                const float w = 220.0f + static_cast<float>((row * 37) % 180);
+                dc->FillRectangle(D2D1::RectF(240.0f, y, 240.0f + w, y + 8.0f), brush.get());
+            }
+            dc->EndDraw();
+            source.Present();
+        };
+        const HWND card_hwnd = Access::Handle(window);
+        for (const bool dark : {true, false}) {
+            if (!source_ok) break;
+            paint(dark);
+            window.SetTheme(dark, ui::HexColor(0x6474C7));
+            Access::Size(window, 96, false);
+            auto st = Running(ops::OpType::Copy, 63.0f);
+            st.task_id = dark ? 81 : 82;
+            window.Update(st);
+            Access::Graph(window, 0.63f, 212.0 * mb);
+            Access::Elapsed(window, 61000, false);
+            Access::Place(window, -4000 + 230, -4000 + 160);
+            SetWindowPos(card_hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            RECT card{};
+            GetWindowRect(card_hwnd, &card);
+            Check(ui::Compositor::FrameSourceUnder(card_hwnd, card) == &source,
+                  "the window under the card lends its frame");
+            shot(L"15-acrylic-" + std::wstring(dark ? L"dark" : L"light"));
+        }
+        Access::Place(window, -4000 + 2000, -4000);
+        RECT away{};
+        GetWindowRect(card_hwnd, &away);
+        Check(ui::Compositor::FrameSourceUnder(card_hwnd, away) == nullptr, "nothing of ours under the card");
+        source.Shutdown();
+        if (source_hwnd) DestroyWindow(source_hwnd);
+        ui::Compositor::SetFrameCopyEnabled(false);
+    }
+
+    std::printf("%s\n", failures == 0 ? "ALL PASS" : "FAILURES");
+    window.Destroy();
+    CoUninitialize();
+    return failures == 0 ? 0 : 1;
+}

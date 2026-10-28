@@ -36,6 +36,8 @@ public:
     const std::wstring& PlainText() const noexcept { return plain_; }
     // Jupyter notebook converted by the host (I record): kernel and cells.
     bool IsNotebook() const noexcept { return notebook_; }
+    bool HasToc() const noexcept { return !toc_.empty(); }
+    void SetTocHidden(bool hidden) noexcept { toc_hidden_ = hidden; }
     const std::wstring& NotebookKernel() const noexcept { return kernel_; }
     uint32_t NotebookCells() const noexcept { return cells_; }
     // Document facts from the M record (DOCX, EPUB): format is "docx", "epub"
@@ -44,6 +46,7 @@ public:
     const std::wstring& DocTitle() const noexcept { return doc_title_; }
     const std::wstring& DocAuthor() const noexcept { return doc_author_; }
     uint32_t WordCount() const noexcept { return words_; }
+    uint32_t HeadingCount() const noexcept { return headings_; }
     // Chaptered payloads (P records, EPUB): one section is laid out at a time
     // while PlainText, find, selection and copy still span the whole book.
     int SectionCount() const noexcept { return static_cast<int>(sections_.size()); }
@@ -114,6 +117,7 @@ private:
                       const std::vector<Highlight>& matches);
     void DrawToc(ID2D1DeviceContext* dc, const D2D1_RECT_F& rect, const Theme& theme, bool dark);
     bool SidebarVisible(float width) const noexcept;
+    bool toc_hidden_ = false;  // the window's session-wide contents toggle
     int ActiveTocEntry() const;
     int TocRowAt(float x, float y) const;
     float BlockTop(int index) const;
@@ -143,7 +147,8 @@ private:
     std::wstring kernel_;
     uint32_t cells_ = 0;
     std::wstring format_, doc_title_, doc_author_;
-    uint32_t words_ = 0;
+    uint32_t words_ = 0;     // DOCX: from the host; Markdown: counted here
+    uint32_t headings_ = 0;
     // Chapters: every block of the book, and the section now in blocks_.
     std::vector<Block> all_blocks_;
     std::vector<Table> all_tables_;

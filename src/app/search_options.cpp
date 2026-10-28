@@ -3,6 +3,9 @@
 #include "../index/content_index.h"
 #include "../ui/address_search_layout.h"
 #include "../common/localization.h"
+#include "content_scope_mode.h"
+#include "keymap.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 
 namespace pulse {
@@ -93,6 +96,7 @@ void StartIndexedContentSearch(AppState& s, app::Tab& tab, const std::wstring& r
     request.generation = ++s.nextIndexReq;
     request.indexed = !scan;
     request.root = split.path_prefix;
+    if (request.root.empty()) request.roots = app::DefaultContentSearchRoots(config.shared_scope);
     request.filename_query = split.filename_needle;
     if (!s.appPrefs.search_pinyin) request.filename_query = L"nopinyin: " + request.filename_query;
     request.needles = split.content.needles;
@@ -168,7 +172,7 @@ void ShowSearchOptions(AppState& s, bool management) {
         }
         auto advanced = MenuItem(6, I::AdvancedSearch);
         advanced.text += L"…";
-        advanced.shortcut = L"Ctrl+Shift+F";
+        advanced.shortcut = app::ShownShortcut(L"Ctrl+Shift+F");
         items.insert(items.end() - 1, std::move(advanced));
         POINT anchor{};
         if (s.addressSearching) {

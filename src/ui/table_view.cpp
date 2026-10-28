@@ -91,6 +91,40 @@ std::wstring Grouped(size_t value) {
 
 bool Zh() { return pulse::l10n::IsChinese(); }
 
+// Column types shown under the header: what most filled cells look like.
+enum : uint8_t { kTypeNone = 0, kTypeText, kTypeNumber, kTypePercent, kTypeDate };
+
+bool LooksDate(std::wstring_view s) {
+    while (!s.empty() && s.front() == L' ') s.remove_prefix(1);
+    // 2026-10-22, 2026/10/22, 2026.10.22 (time may follow), or 10/22/2026.
+    size_t digits[3]{}, part = 0, i = 0;
+    wchar_t sep = 0;
+    for (; i < s.size() && part < 3; ++i) {
+        const wchar_t c = s[i];
+        if (c >= L'0' && c <= L'9') { ++digits[part]; continue; }
+        if ((c == L'-' || c == L'/' || c == L'.') && part < 2 && digits[part] && (!sep || c == sep)) {
+            sep = c; ++part; continue;
+        }
+        break;
+    }
+    if (part != 2 || !digits[2]) return false;
+    if (i < s.size() && s[i] != L' ' && s[i] != L'T') return false;
+    const bool ymd = digits[0] == 4 && digits[1] <= 2 && digits[2] <= 2;
+    const bool mdy = digits[0] <= 2 && digits[1] <= 2 && digits[2] == 4;
+    return ymd || mdy;
+}
+
+uint8_t CellType(const std::wstring& text, uint8_t flags) {
+    if (text.empty()) return kTypeNone;
+    if (LooksDate(text)) return kTypeDate;
+    if ((flags & kNumeric) || LooksNumeric(text)) {
+        size_t end = text.size();
+        while (end > 0 && text[end - 1] == L' ') --end;
+        return end > 0 && text[end - 1] == L'%' ? kTypePercent : kTypeNumber;
+    }
+    return kTypeText;
+}
+
 D2D1_RECT_F R(float l, float t, float r, float b) { return D2D1::RectF(l, t, r, b); }
 
 }  // namespace
@@ -231,14 +265,28 @@ void TableView::BuildPlain() {
 std::vector<std::wstring> TableView::StatusParts(uint32_t encoding) const {
     std::vector<std::wstring> parts;
     const Sheet* s = Current();
-    if (!s || spreadsheet_) return parts;
+    if (!s) return parts;
     const bool zh = Zh();
+    const auto shape = [&] {
+        const std::wstring rows = Grouped(BodyRows()), cols = Grouped(s->cols);
+        std::wstring size = zh ? rows + pulse::l10n::Cn(L" \x884C \x00D7 ") + cols + pulse::l10n::Cn(L" \x5217")
+                               : rows + L" rows \x00D7 " + cols + L" columns";
+        if (s->truncated) size = zh ? pulse::l10n::Cn(L"\x524D ") + size + pulse::l10n::Cn(L"\xFF08\x5DF2\x622A\x65AD\xFF09")
+                                    : L"first " + size + L" (truncated)";
+        return size;
+    };
+    if (spreadsheet_) {
+        // The window adds the format and size around: sheet name, then its shape.
+        if (!s->name.empty() && !footer_tabs_) parts.push_back(s->name);
+        parts.push_back(shape());
+        return parts;
+    }
     parts.push_back(s->detail == L"tab" ? L"TSV" : L"CSV");
     std::wstring detail;
-    if (s->detail == L"tab") detail = pulse::l10n::Pick(L"Tab \x5206\x9694", L"Tab");
-    else if (s->detail == L"semicolon") detail = pulse::l10n::Pick(L"\x5206\x53F7", L"Semicolon");
-    else if (s->detail == L"pipe") detail = pulse::l10n::Pick(L"\x7AD6\x7EBF", L"Pipe");
-    else detail = pulse::l10n::Pick(L"\x9017\x53F7", L"Comma");
+    if (s->detail == L"tab") detail = pulse::l10n::Get(pulse::l10n::StringId::Tab).c_str();
+    else if (s->detail == L"semicolon") detail = pulse::l10n::Get(pulse::l10n::StringId::Semicolon).c_str();
+    else if (s->detail == L"pipe") detail = pulse::l10n::Get(pulse::l10n::StringId::Pipe).c_str();
+    else detail = pulse::l10n::Get(pulse::l10n::StringId::Comma).c_str();
     std::wstring name;
     switch (static_cast<ipc::PreviewTextEncoding>(encoding)) {
     case ipc::PreviewTextEncoding::Utf8: name = L"UTF-8"; break;
@@ -257,14 +305,9 @@ std::vector<std::wstring> TableView::StatusParts(uint32_t encoding) const {
         break;
     default: break;
     }
-    if (!name.empty()) detail += L" \x00B7 " + name;
     parts.push_back(std::move(detail));
-    const std::wstring rows = Grouped(BodyRows()), cols = Grouped(s->cols);
-    std::wstring size = zh ? rows + pulse::l10n::Cn(L" \x884C \x00D7 ") + cols + pulse::l10n::Cn(L" \x5217")
-                           : rows + L" rows \x00D7 " + cols + L" columns";
-    if (s->truncated) size = zh ? pulse::l10n::Cn(L"\x524D ") + size + pulse::l10n::Cn(L"\xFF08\x5DF2\x622A\x65AD\xFF09")
-                                : L"first " + size + L" (truncated)";
-    parts.push_back(std::move(size));
+    if (!name.empty()) parts.push_back(std::move(name));
+    parts.push_back(shape());
     return parts;
 }
 
@@ -327,6 +370,29 @@ float TableView::Estimate(const std::wstring& text) const {
 }
 
 void TableView::EnsureWidths(Sheet& s) {
+    if (s.col_types.size() != s.cols) {
+        // A type wins a column when at least 80% of its filled cells agree.
+        s.col_types.assign(s.cols, kTypeNone);
+        const size_t first = s.header && !s.cells.empty() ? 1 : 0;
+        const size_t last = (std::min)(s.cells.size(), first + kMeasureRows);
+        for (size_t c = 0; c < s.cols; ++c) {
+            size_t counts[5]{};
+            size_t filled = 0;
+            for (size_t r = first; r < last; ++r) {
+                if (c >= s.cells[r].size()) continue;
+                const uint8_t type = CellType(s.cells[r][c], s.flags[r][c]);
+                if (type == kTypeNone) continue;
+                ++counts[type];
+                ++filled;
+            }
+            if (!filled) continue;
+            s.col_types[c] = kTypeText;
+            const size_t numeric = counts[kTypeNumber] + counts[kTypePercent];
+            if (counts[kTypeDate] * 5 >= filled * 4) s.col_types[c] = kTypeDate;
+            else if (counts[kTypePercent] * 5 >= filled * 4) s.col_types[c] = kTypePercent;
+            else if (numeric * 5 >= filled * 4) s.col_types[c] = kTypeNumber;
+        }
+    }
     if (s.measured_scale == scale_ && s.col_x.size() == s.cols + 1) return;
     s.measured_scale = scale_;
     const float pad = 10.0f * scale_;
@@ -357,10 +423,10 @@ TableView::Geometry TableView::Measure() const {
     const Sheet* s = Current();
     const float k = scale_;
     g.row_h = 26.0f * k;
-    g.head_h = 28.0f * k;
+    g.head_h = (s && !s->col_types.empty() ? 42.0f : 28.0f) * k;  // name over the inferred type
     g.pad = 10.0f * k;
     g.grid = view_;
-    if (spreadsheet_) {
+    if (spreadsheet_ && !footer_tabs_) {
         g.tabs = R(view_.left, view_.bottom - 34.0f * k, view_.right, view_.bottom);
         g.grid.bottom = g.tabs.top;
     }
@@ -368,7 +434,7 @@ TableView::Geometry TableView::Measure() const {
     g.body = R(g.grid.left + s->num_w, g.grid.top + g.head_h, g.grid.right, g.grid.bottom);
     g.content_w = s->col_x.empty() ? 0.0f : s->col_x.back();
     // CSV leaves room under the last row for the status pill.
-    g.content_h = static_cast<float>(BodyRows()) * g.row_h + (spreadsheet_ ? 8.0f : 48.0f) * k;
+    g.content_h = static_cast<float>(BodyRows()) * g.row_h + 48.0f * k;  // room for the end line
     g.max_sx = (std::max)(0.0f, g.content_w - (g.body.right - g.body.left));
     g.max_sy = (std::max)(0.0f, g.content_h - (g.body.bottom - g.body.top));
     return g;
@@ -427,17 +493,17 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
 
     dc->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     if (s.cols == 0 || s.cells.empty()) {
-        std::wstring empty = pulse::l10n::Pick(L"\x7A7A\x5DE5\x4F5C\x8868", L"Empty sheet");
+        std::wstring empty = pulse::l10n::Get(pulse::l10n::StringId::EmptySheet).c_str();
         if (spreadsheet_ && !s.detail.empty()) {
-            if (awaiting_sheet_) empty = pulse::l10n::Pick(L"正在加载工作表…", L"Loading sheet…");
-            else if (s.detail == L"hidden") empty = pulse::l10n::Pick(L"隐藏的工作表；请在原应用中查看", L"Hidden sheet; open in the original app");
-            else if (s.detail == L"not-loaded") empty = pulse::l10n::Pick(L"选择工作表后按需加载", L"Select a sheet to load its content");
-            else if (s.detail == L"time-limit") empty = pulse::l10n::Pick(L"未读取：已达到预览时间上限", L"Not loaded: preview time limit reached");
-            else if (s.detail == L"payload-limit") empty = pulse::l10n::Pick(L"未读取：已达到预览容量上限", L"Not loaded: preview size limit reached");
-            else if (s.detail == L"missing-relationship") empty = pulse::l10n::Pick(L"未读取：工作表引用缺失", L"Not loaded: missing worksheet relationship");
-            else empty = pulse::l10n::Pick(L"未读取：工作表内容读取失败", L"Not loaded: worksheet content could not be read");
+            if (awaiting_sheet_) empty = pulse::l10n::Get(pulse::l10n::StringId::LoadingSheet).c_str();
+            else if (s.detail == L"hidden") empty = pulse::l10n::Get(pulse::l10n::StringId::HiddenSheetOpenInTheOriginalApp).c_str();
+            else if (s.detail == L"not-loaded") empty = pulse::l10n::Get(pulse::l10n::StringId::SelectASheetToLoadItsContent).c_str();
+            else if (s.detail == L"time-limit") empty = pulse::l10n::Get(pulse::l10n::StringId::NotLoadedPreviewTimeLimitReached).c_str();
+            else if (s.detail == L"payload-limit") empty = pulse::l10n::Get(pulse::l10n::StringId::NotLoadedPreviewSizeLimitReached).c_str();
+            else if (s.detail == L"missing-relationship") empty = pulse::l10n::Get(pulse::l10n::StringId::NotLoadedMissingWorksheetRelationship).c_str();
+            else empty = pulse::l10n::Get(pulse::l10n::StringId::NotLoadedWorksheetContentCouldNotBeRead).c_str();
         } else if (spreadsheet_ && s.truncated) {
-            empty = pulse::l10n::Pick(L"没有可显示的单元格：预览内容已截断", L"No cells available: preview content was truncated");
+            empty = pulse::l10n::Get(pulse::l10n::StringId::NoCellsAvailablePreviewContentWasTruncated).c_str();
         }
         text_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         text_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
@@ -462,6 +528,15 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
     dc->PushAxisAlignedClip(g.body, D2D1_ANTIALIAS_MODE_ALIASED);
     for (size_t r = r0; r < r1; ++r)
         if (r % 2 == 1) fill(R(g.body.left, row_top(r), g.body.right, row_top(r) + g.row_h), zebra);
+    // Crosshair: the hovered row and column, faintly.
+    const D2D1_COLOR_F cross = WithAlpha(sel_line, dark ? 0.07f : 0.05f);
+    const bool crosshair = drag_ == Drag::None && hover_row_ >= 0 && hover_col_ >= 0 &&
+                           static_cast<size_t>(hover_row_) < body_rows && static_cast<size_t>(hover_col_) < s.cols;
+    if (crosshair) {
+        const size_t hr = static_cast<size_t>(hover_row_), hc = static_cast<size_t>(hover_col_);
+        fill(R(g.body.left, row_top(hr), (std::min)(g.body.right, col_left(s.cols)), row_top(hr) + g.row_h), cross);
+        fill(R(col_left(hc), g.body.top, col_left(hc + 1), (std::min)(g.body.bottom, row_top(body_rows))), cross);
+    }
     int sr0 = 0, sr1 = -1, sc0 = 0, sc1 = -1;
     if (sel_valid_) {
         sr0 = (std::min)(sel_r0_, sel_r1_); sr1 = (std::max)(sel_r0_, sel_r1_);
@@ -522,6 +597,17 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         const float x = std::floor(col_left(c + 1)) - 0.5f;
         dc->DrawLine(D2D1::Point2F(x, g.body.top), D2D1::Point2F(x, (std::min)(g.body.bottom, row_top(body_rows))), b, 1.0f);
     }
+    // Below the last row: how many rows there are and whether that is all.
+    if (body_rows > 0 && row_top(body_rows) < g.body.bottom) {
+        wchar_t line[160];
+        swprintf_s(line, pulse::l10n::Get(s.truncated ? pulse::l10n::StringId::PreviewTablePartialRows
+                                                      : pulse::l10n::StringId::PreviewTableAllRows).c_str(),
+                   Grouped(body_rows).c_str());
+        b->SetColor(dim);
+        dc->DrawTextW(line, static_cast<UINT32>(wcslen(line)), small_.Get(),
+                      R(g.body.left + 2.0f * g.pad - s.sx, row_top(body_rows) + 4.0f * k,
+                        g.body.right + 2000.0f * k, row_top(body_rows) + 40.0f * k), b);
+    }
     if (sel_valid_) {
         const D2D1_RECT_F box = R(col_left(static_cast<size_t>(sc0)) + 1.0f * k, row_top(static_cast<size_t>(sr0)) + 1.0f * k,
                                   col_left(static_cast<size_t>(sc1) + 1) - 1.0f * k, row_top(static_cast<size_t>(sr1) + 1) - 1.0f * k);
@@ -540,6 +626,7 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         if (r % 2 == 1) fill(cell, zebra);
         const bool selected = sel_valid_ && static_cast<int>(r) >= sr0 && static_cast<int>(r) <= sr1;
         if (selected) fill(cell, sel_fill);
+        else if (crosshair && static_cast<int>(r) == hover_row_) fill(cell, cross);
         const std::wstring n = std::to_wstring(r + 1);
         b->SetColor(selected ? theme.text : dim);
         dc->DrawTextW(n.data(), static_cast<UINT32>(n.size()), text_right_.Get(),
@@ -558,10 +645,25 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         for (size_t c = c0; c < c1; ++c) {
             const bool selected = sel_valid_ && static_cast<int>(c) >= sc0 && static_cast<int>(c) <= sc1;
             if (selected) fill(R(col_left(c), head.top, col_left(c + 1), head.bottom), sel_fill);
+            else if (crosshair && static_cast<int>(c) == hover_col_)
+                fill(R(col_left(c), head.top, col_left(c + 1), head.bottom), cross);
             const std::wstring label = hdr ? s.cells[0][c] : ColumnName(c);
             const float cw = s.col_x[c + 1] - s.col_x[c] - g.pad * 2.0f;
             auto layout = CellLayout(label, true, false, cw);
-            if (layout) layout->SetMaxHeight(head.bottom - head.top);
+            const bool typed = c < s.col_types.size() && s.col_types[c] != kTypeNone;
+            const float name_h = s.col_types.empty() ? head.bottom - head.top : 28.0f * k;
+            if (layout) layout->SetMaxHeight(name_h);
+            if (typed) {
+                static constexpr pulse::l10n::StringId kTypeNames[] = {
+                    pulse::l10n::StringId::PreviewColumnText, pulse::l10n::StringId::PreviewColumnText,
+                    pulse::l10n::StringId::PreviewColumnNumber, pulse::l10n::StringId::PreviewColumnPercent,
+                    pulse::l10n::StringId::PreviewColumnDate};
+                const std::wstring type = pulse::l10n::Get(kTypeNames[s.col_types[c]]).c_str();
+                b->SetColor(dim);
+                dc->DrawTextW(type.data(), static_cast<UINT32>(type.size()), small_.Get(),
+                              R(col_left(c) + g.pad, head.top + 22.0f * k, col_left(c + 1) - g.pad, head.bottom - 2.0f * k),
+                              b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            }
             if (hdr && layout) {
                 for (const auto& match : matches) {
                     size_t row = 0, col = 0;
@@ -617,90 +719,9 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         dc->FillRoundedRectangle(D2D1::RoundedRect(hthumb_, 2.0f * k, 2.0f * k), b);
     }
 
-    // Workbook sheet tabs.
-    tab_rects_.clear();
-    if (spreadsheet_) {
-        fill(g.tabs, dark ? HexColor(0x1B1B1B) : HexColor(0xEBEBEB));
-        b->SetColor(dark ? HexColor(0x333333) : HexColor(0xD6D6D6));
-        dc->DrawLine(D2D1::Point2F(g.tabs.left, g.tabs.top + 0.5f), D2D1::Point2F(g.tabs.right, g.tabs.top + 0.5f), b, 1.0f);
-        // Size on the right.
-        const bool zh = Zh();
-        std::wstring size = std::to_wstring(sheet_ + 1) + L"/" + std::to_wstring(total_sheets_) +
-            (zh ? L" 表 · 已读取 " : L" sheets · read ") + std::to_wstring(loaded_sheets_);
-        if (sheets_.size() < total_sheets_)
-            size += zh ? L" · 列表已截断（容量上限）" : L" · list capped (size limit)";
-        if (s.truncated) size += pulse::l10n::Pick(L" · 内容不完整", L" · incomplete");
-        WrlPtr<IDWriteTextLayout> size_layout;
-        const float status_width = (std::max)(1.0f, (g.tabs.right - g.tabs.left - 100.0f * k) * 0.55f);
-        factory->CreateTextLayout(size.data(), static_cast<UINT32>(size.size()), small_.Get(), status_width, 30.0f * k, &size_layout);
-        float size_w = 0.0f;
-        if (size_layout) {
-            size_layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-            WrlPtr<IDWriteInlineObject> ellipsis;
-            factory->CreateEllipsisTrimmingSign(small_.Get(), &ellipsis);
-            const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
-            size_layout->SetTrimming(&trimming, ellipsis.Get());
-            DWRITE_TEXT_METRICS m{};
-            size_layout->GetMetrics(&m);
-            size_w = (std::min)(m.width, (std::max)(0.0f, (g.tabs.right - g.tabs.left - 100.0f * k) * 0.55f));
-            b->SetColor(dim);
-            dc->PushAxisAlignedClip(R(g.tabs.right - 14.0f * k - size_w, g.tabs.top,
-                                     g.tabs.right - 14.0f * k, g.tabs.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
-            dc->DrawTextLayout(D2D1::Point2F(g.tabs.right - 14.0f * k - size_w,
-                                             (g.tabs.top + g.tabs.bottom) * 0.5f - 15.0f * k), size_layout.Get(), b);
-            dc->PopAxisAlignedClip();
-        }
-        previous_sheet_ = R(g.tabs.left + 4.0f * k, g.tabs.top, g.tabs.left + 30.0f * k, g.tabs.bottom);
-        next_sheet_ = R(g.tabs.left + 30.0f * k, g.tabs.top, g.tabs.left + 56.0f * k, g.tabs.bottom);
-        b->SetColor(sheet_ > 0 ? theme.text : dim);
-        dc->DrawTextW(L"‹", 1, text_.Get(), previous_sheet_, b);
-        b->SetColor(sheet_ + 1 < sheets_.size() ? theme.text : dim);
-        dc->DrawTextW(L"›", 1, text_.Get(), next_sheet_, b);
-        float x = g.tabs.left + 60.0f * k;
-        const float limit = (std::max)(x, g.tabs.right - size_w - 28.0f * k);
-        // Keep earlier tabs visible when they fit; selection is not a scroll origin.
-        std::vector<WrlPtr<IDWriteTextLayout>> layouts(sheets_.size());
-        std::vector<float> widths(sheets_.size(), 24.0f * k);
-        float selected_extent = 0.0f;
-        for (size_t i = 0; i < sheets_.size(); ++i) {
-            const auto& name = sheets_[i].name;
-            factory->CreateTextLayout(name.data(), static_cast<UINT32>(name.size()), small_.Get(),
-                400.0f * k, 24.0f * k, &layouts[i]);
-            if (layouts[i]) {
-                if (i == sheet_) layouts[i]->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
-                    DWRITE_TEXT_RANGE{0, static_cast<UINT32>(name.size())});
-                DWRITE_TEXT_METRICS metrics{};
-                layouts[i]->GetMetrics(&metrics);
-                widths[i] = (std::min)(metrics.width, 240.0f * k) + 24.0f * k;
-            }
-            if (i <= sheet_) selected_extent += widths[i] + 2.0f * k;
-        }
-        first_visible_sheet_ = 0;
-        while (first_visible_sheet_ < sheet_ && selected_extent - 2.0f * k > limit - x)
-            selected_extent -= widths[first_visible_sheet_++] + 2.0f * k;
-        dc->PushAxisAlignedClip(R(x, g.tabs.top, limit, g.tabs.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
-        for (size_t i = first_visible_sheet_; i < sheets_.size() && x < limit; ++i) {
-            const bool on = i == sheet_;
-            auto& layout = layouts[i];
-            const float w = widths[i];
-            const D2D1_RECT_F tab = R(x, g.tabs.top + 6.0f * k, x + w, g.tabs.bottom - 5.0f * k);
-            tab_rects_.push_back(R(tab.left, tab.top, (std::min)(tab.right, limit), tab.bottom));
-            if (on || static_cast<int>(i - first_visible_sheet_) == hover_tab_) {
-                b->SetColor(on ? (dark ? D2D1::ColorF(1, 1, 1, 0.09f) : HexColor(0xFFFFFF))
-                               : (dark ? D2D1::ColorF(1, 1, 1, 0.05f) : D2D1::ColorF(0, 0, 0, 0.04f)));
-                dc->FillRoundedRectangle(D2D1::RoundedRect(tab, 5.0f * k, 5.0f * k), b);
-            }
-            b->SetColor(on ? theme.text : WithAlpha(theme.text, 0.7f));
-            if (layout) {
-                layout->SetMaxWidth(w - 24.0f * k);
-                dc->PushAxisAlignedClip(tab, D2D1_ANTIALIAS_MODE_ALIASED);
-                dc->DrawTextLayout(D2D1::Point2F(tab.left + 12.0f * k, (tab.top + tab.bottom) * 0.5f - 12.0f * k), layout.Get(), b);
-                dc->PopAxisAlignedClip();
-            }
-            x += w + 2.0f * k;
-        }
-        dc->PopAxisAlignedClip();
-    }
+    // Workbook sheet tabs (the window may draw them in its footer instead).
+    if (spreadsheet_ && !footer_tabs_) DrawTabsIn(dc, factory, g.tabs, theme, dark, true);
+    else if (!spreadsheet_) tab_rects_.clear();
 
     // Full text of a clipped cell.
     if (tip_shown_ && tip_row_ >= 0 && tip_col_ >= 0 &&
@@ -728,6 +749,104 @@ void TableView::Draw(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D
         }
     }
     dc->PopAxisAlignedClip();
+}
+
+// Sheet tabs: under the grid (with the sheet count on the right), or in the
+// window's footer when the window hosts them there.
+float TableView::DrawTabsIn(ID2D1DeviceContext* dc, IDWriteFactory2* factory, const D2D1_RECT_F& tabs,
+                            const Theme& theme, bool dark, bool status) {
+    tab_rects_.clear();
+    Sheet* sheet = Current();
+    if (!dc || !factory || !sheet || !brush_ || !small_ || !text_) return tabs.left;
+    const Sheet& s = *sheet;
+    const float k = scale_;
+    ID2D1SolidColorBrush* b = brush_.Get();
+    const auto fill = [&](const D2D1_RECT_F& r, const D2D1_COLOR_F& c) { b->SetColor(c); dc->FillRectangle(r, b); };
+    const D2D1_COLOR_F dim = WithAlpha(theme.text, 0.45f);
+    if (status) {
+        fill(tabs, dark ? HexColor(0x1B1B1B) : HexColor(0xEBEBEB));
+        b->SetColor(dark ? HexColor(0x333333) : HexColor(0xD6D6D6));
+        dc->DrawLine(D2D1::Point2F(tabs.left, tabs.top + 0.5f), D2D1::Point2F(tabs.right, tabs.top + 0.5f), b, 1.0f);
+    }
+    // Size on the right.
+    const bool zh = Zh();
+    std::wstring size = std::to_wstring(sheet_ + 1) + L"/" + std::to_wstring(total_sheets_) +
+        (zh ? L" 表 · 已读取 " : L" sheets · read ") + std::to_wstring(loaded_sheets_);
+    if (sheets_.size() < total_sheets_)
+        size += zh ? L" · 列表已截断（容量上限）" : L" · list capped (size limit)";
+    if (s.truncated) size += pulse::l10n::Get(pulse::l10n::StringId::Incomplete).c_str();
+    WrlPtr<IDWriteTextLayout> size_layout;
+    const float status_width = (std::max)(1.0f, (tabs.right - tabs.left - 100.0f * k) * 0.55f);
+    factory->CreateTextLayout(size.data(), static_cast<UINT32>(size.size()), small_.Get(), status_width, 30.0f * k, &size_layout);
+    float size_w = 0.0f;
+    if (size_layout && status) {
+        size_layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        WrlPtr<IDWriteInlineObject> ellipsis;
+        factory->CreateEllipsisTrimmingSign(small_.Get(), &ellipsis);
+        const DWRITE_TRIMMING trimming{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+        size_layout->SetTrimming(&trimming, ellipsis.Get());
+        DWRITE_TEXT_METRICS m{};
+        size_layout->GetMetrics(&m);
+        size_w = (std::min)(m.width, (std::max)(0.0f, (tabs.right - tabs.left - 100.0f * k) * 0.55f));
+        b->SetColor(dim);
+        dc->PushAxisAlignedClip(R(tabs.right - 14.0f * k - size_w, tabs.top,
+                                 tabs.right - 14.0f * k, tabs.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
+        dc->DrawTextLayout(D2D1::Point2F(tabs.right - 14.0f * k - size_w,
+                                         (tabs.top + tabs.bottom) * 0.5f - 15.0f * k), size_layout.Get(), b);
+        dc->PopAxisAlignedClip();
+    }
+    previous_sheet_ = R(tabs.left + 4.0f * k, tabs.top, tabs.left + 30.0f * k, tabs.bottom);
+    next_sheet_ = R(tabs.left + 30.0f * k, tabs.top, tabs.left + 56.0f * k, tabs.bottom);
+    b->SetColor(sheet_ > 0 ? theme.text : dim);
+    dc->DrawTextW(L"‹", 1, text_.Get(), previous_sheet_, b);
+    b->SetColor(sheet_ + 1 < sheets_.size() ? theme.text : dim);
+    dc->DrawTextW(L"›", 1, text_.Get(), next_sheet_, b);
+    float x = tabs.left + 60.0f * k;
+    const float limit = (std::max)(x, tabs.right - size_w - 28.0f * k);
+    // Keep earlier tabs visible when they fit; selection is not a scroll origin.
+    std::vector<WrlPtr<IDWriteTextLayout>> layouts(sheets_.size());
+    std::vector<float> widths(sheets_.size(), 24.0f * k);
+    float selected_extent = 0.0f;
+    for (size_t i = 0; i < sheets_.size(); ++i) {
+        const auto& name = sheets_[i].name;
+        factory->CreateTextLayout(name.data(), static_cast<UINT32>(name.size()), small_.Get(),
+            400.0f * k, 24.0f * k, &layouts[i]);
+        if (layouts[i]) {
+            if (i == sheet_) layouts[i]->SetFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                DWRITE_TEXT_RANGE{0, static_cast<UINT32>(name.size())});
+            DWRITE_TEXT_METRICS metrics{};
+            layouts[i]->GetMetrics(&metrics);
+            widths[i] = (std::min)(metrics.width, 240.0f * k) + 24.0f * k;
+        }
+        if (i <= sheet_) selected_extent += widths[i] + 2.0f * k;
+    }
+    first_visible_sheet_ = 0;
+    while (first_visible_sheet_ < sheet_ && selected_extent - 2.0f * k > limit - x)
+        selected_extent -= widths[first_visible_sheet_++] + 2.0f * k;
+    dc->PushAxisAlignedClip(R(x, tabs.top, limit, tabs.bottom), D2D1_ANTIALIAS_MODE_ALIASED);
+    for (size_t i = first_visible_sheet_; i < sheets_.size() && x < limit; ++i) {
+        const bool on = i == sheet_;
+        auto& layout = layouts[i];
+        const float w = widths[i];
+        const float inset = (std::max)(2.0f * k, (tabs.bottom - tabs.top - 23.0f * k) * 0.5f);
+        const D2D1_RECT_F tab = R(x, tabs.top + inset, x + w, tabs.bottom - inset);
+        tab_rects_.push_back(R(tab.left, tab.top, (std::min)(tab.right, limit), tab.bottom));
+        if (on || static_cast<int>(i - first_visible_sheet_) == hover_tab_) {
+            b->SetColor(on ? (dark ? D2D1::ColorF(1, 1, 1, 0.09f) : HexColor(0xFFFFFF))
+                           : (dark ? D2D1::ColorF(1, 1, 1, 0.05f) : D2D1::ColorF(0, 0, 0, 0.04f)));
+            dc->FillRoundedRectangle(D2D1::RoundedRect(tab, 5.0f * k, 5.0f * k), b);
+        }
+        b->SetColor(on ? theme.text : WithAlpha(theme.text, 0.7f));
+        if (layout) {
+            layout->SetMaxWidth(w - 22.0f * k);  // a hair over the measured width: no false ellipsis
+            dc->PushAxisAlignedClip(tab, D2D1_ANTIALIAS_MODE_ALIASED);
+            dc->DrawTextLayout(D2D1::Point2F(tab.left + 12.0f * k, (tab.top + tab.bottom) * 0.5f - 12.0f * k), layout.Get(), b);
+            dc->PopAxisAlignedClip();
+        }
+        x += w + 2.0f * k;
+    }
+    dc->PopAxisAlignedClip();
+    return (std::min)(x, limit);
 }
 
 // ---------------------------------------------------------------- input
@@ -890,6 +1009,16 @@ void TableView::FailPendingSheetRequest(uint32_t index) {
     sheets_[sheet_].truncated = true;
 }
 
+bool TableView::TabClick(float x, float y) {
+    if (!spreadsheet_) return false;
+    const auto inside = [&](const D2D1_RECT_F& r) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; };
+    if (inside(previous_sheet_)) { if (sheet_ > 0) SwitchSheet(sheet_ - 1); return true; }
+    if (inside(next_sheet_)) { if (sheet_ + 1 < sheets_.size()) SwitchSheet(sheet_ + 1); return true; }
+    for (size_t i = 0; i < tab_rects_.size(); ++i)
+        if (inside(tab_rects_[i])) { SwitchSheet(first_visible_sheet_ + i); return true; }
+    return false;
+}
+
 bool TableView::MouseDown(float x, float y, bool shift) {
     Sheet* s = Current();
     if (!s) return false;
@@ -909,7 +1038,7 @@ bool TableView::MouseDown(float x, float y, bool shift) {
     for (size_t i = 0; i < tab_rects_.size(); ++i)
         if (inside(tab_rects_[i], 0.0f)) { SwitchSheet(first_visible_sheet_ + i); return true; }
     const Geometry g = Measure();
-    if (spreadsheet_ && y >= g.tabs.top) return true;
+    if (spreadsheet_ && !footer_tabs_ && y >= g.tabs.top) return true;
     if (vthumb_.bottom > vthumb_.top && inside(vthumb_, 4.0f * scale_)) {
         drag_ = Drag::VThumb; drag_origin_ = y; drag_scroll_ = s->sy; return true;
     }
@@ -1006,6 +1135,11 @@ bool TableView::Hover(float x, float y) {
         if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) tab = static_cast<int>(i);
     }
     if (tab != hover_tab_) { hover_tab_ = tab; repaint = true; }
+    {
+        int hr = -1, hc = -1;
+        if (drag_ != Drag::None || !CellAt(x, y, hr, hc, false)) hr = hc = -1;
+        if (hr != hover_row_ || hc != hover_col_) { hover_row_ = hr; hover_col_ = hc; repaint = true; }
+    }
     int r = -1, c = -1;
     if (drag_ != Drag::None || !CellAt(x, y, r, c, false) || !Clipped(r, c)) r = c = -1;
     if (r != tip_row_ || c != tip_col_) {
@@ -1020,8 +1154,8 @@ bool TableView::Hover(float x, float y) {
 }
 
 bool TableView::Leave() {
-    const bool repaint = hover_tab_ >= 0 || tip_shown_;
-    hover_tab_ = tip_row_ = tip_col_ = -1;
+    const bool repaint = hover_tab_ >= 0 || tip_shown_ || hover_row_ >= 0;
+    hover_tab_ = tip_row_ = tip_col_ = hover_row_ = hover_col_ = -1;
     tip_shown_ = false;
     return repaint;
 }

@@ -4,6 +4,7 @@
 #include "../common/localization.h"
 #include "../common/text_format.h"
 #include "../ui/fluent_menu.h"
+#include "../ui/ui_renderer.h"
 #include <algorithm>
 #include <cwctype>
 #include <unordered_set>
@@ -53,6 +54,8 @@ ui::ChangeBadge Badge(const index::ChangeSummary& summary, int days) {
     badge.count = static_cast<int>(summary.count);
     badge.has_deleted = summary.has_deleted;
     badge.status = summary.last_change < app::ChangeLocalMidnight(app::ChangeNow()) ? 1 : 0;
+    const FILETIME last = app::ChangeFileTime(summary.last_change);
+    badge.last_change = (static_cast<uint64_t>(last.dwHighDateTime) << 32) | last.dwLowDateTime;
     if (summary.count && summary.last_change >= app::ChangeSince(days, app::ChangeNow()))
         badge.label = AgeText(summary.last_change);
     badge.tooltip = DaysText(days) + L" · " + Text(I::ChangeIncludesChildren);

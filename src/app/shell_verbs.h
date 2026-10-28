@@ -11,6 +11,7 @@
 #include "../common/menu_icon.h"
 
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -29,6 +30,22 @@ struct StaticVerb {
     std::wstring icon;
     common::MenuIconRef icon_pixels;  // ResolveStaticVerbIcons' result for `icon`
 };
+
+// 以管理员身份运行 / 以其他用户身份运行: the registry command beside these verbs
+// (batfile: cmd.exe /C "%1") runs unelevated when started as a command line.
+// Only ShellExecuteEx with the verb itself asks Windows for the elevation.
+inline bool ShellOwnsStaticVerb(std::wstring_view verb) noexcept {
+    const auto same = [verb](std::wstring_view name) {  // registry keys: ASCII, any case
+        if (verb.size() != name.size()) return false;
+        for (size_t i = 0; i < name.size(); ++i) {
+            wchar_t c = verb[i];
+            if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+            if (c != name[i]) return false;
+        }
+        return true;
+    };
+    return same(L"runas") || same(L"runasuser");
+}
 
 // ext is ".dwg" (file), or a location key ":folder" / ":drive" / ":bg".
 // File keys return progid/OpenWith verbs plus "打开方式…". Location keys
