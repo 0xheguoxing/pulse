@@ -5517,11 +5517,10 @@ void TestSplitLayout() {
           L"chrome: title bar uses kTitleBarHeight");
     D2D1_RECT_F tab_rc{};
     Check(chrome.TabItemRect(chrome_vm, 1400.0f, 0, &tab_rc) &&
-          std::abs((tab_rc.bottom - tab_rc.top) -
-                   (ui::kTitleBarHeight - ui::kTabStripTopGapDip)) < 0.01f,
-          L"chrome: tab height is title bar minus the top gap");
-    Check(std::abs(tab_rc.top - ui::kTabStripTopGapDip) < 0.01f,
-          L"chrome: small breathing gap above the tab strip");
+          std::abs((tab_rc.bottom - tab_rc.top) - ui::kTabStripHeightDip) < 0.01f,
+          L"chrome: tab height is the fixed strip height");
+    Check(std::abs(tab_rc.top - (ui::kTitleBarHeight - ui::kTabStripHeightDip) * 0.5f) < 0.01f,
+          L"chrome: tab strip is centered in the title bar");
     Check(tab_rc.right - tab_rc.left > 170.0f,
           L"chrome: a single tab can grow past the old 176px cap");
 

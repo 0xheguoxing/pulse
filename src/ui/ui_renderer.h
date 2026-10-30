@@ -126,7 +126,7 @@ public:
     }
     FavoritesBarLayout FavoritesBarLayoutAt(const WindowViewModel& vm, float window_width) const;
     float ToolbarHeightDip() const {
-        return (vertical_tabs_ || embedded_ ? 44.0f : 88.0f) + (favorites_bar_ ? kFavoritesBarHeightDip : 0.0f);
+        return (vertical_tabs_ || embedded_ ? 44.0f : 84.0f) + (favorites_bar_ ? kFavoritesBarHeightDip : 0.0f);
     }
     // Hosted inside another window (the file picker): no title bar, tabs,
     // command row, status bar or details panel; only the address row, the
@@ -972,7 +972,7 @@ private:
     float embedded_bottom_dip_ = 0.0f;
     float scale_ = 1.0f;
     float title_bar_height_ = kTitleBarHeight;
-    float toolbar_height_ = 88.0f;
+    float toolbar_height_ = 84.0f;
     float status_height_ = 28.0f;
     float sidebar_width_ = 224.0f;
     float sidebar_width_dip_ = 224.0f;

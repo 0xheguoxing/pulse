@@ -52,7 +52,7 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     const float nav_step = NavigationStep(available, scale);
     float x = left + margin;
     for (int i=0;i<3;++i) {
-        out.navigation[i] = NavigationButtonAt(x, top + 6 * scale, scale, nav_step);
+        out.navigation[i] = NavigationButtonAt(x, top + 7 * scale, scale, nav_step);
         x += nav_step;
     }
     // A negative search_min_dip hides the field (search master switch off).
@@ -65,15 +65,15 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
         const float cap = width - margin - (x + margin + address_min) - nav_step - 2*margin;
         search_width = std::max(search_width, std::min(search_min_dip*scale, cap));
     }
-    out.search = {width-margin-search_width,top+4*scale,width-margin,top+40*scale};
-    out.address = {x+margin,top+4*scale,std::max(x+margin+60*scale,out.search.left-margin),top+40*scale};
+    out.search = {width-margin-search_width,top+6*scale,width-margin,top+40*scale};
+    out.address = {x+margin,top+6*scale,std::max(x+margin+60*scale,out.search.left-margin),top+40*scale};
     const bool overflow = available < 540*scale;
     if (available < 480*scale && !search_hidden) {
         out.search.left=out.search.right-32*scale;
     }
-    out.navigation[3] = NavigationButtonAt(out.search.left - margin - nav_step, top + 6 * scale, scale, nav_step);
+    out.navigation[3] = NavigationButtonAt(out.search.left - margin - nav_step, top + 7 * scale, scale, nav_step);
     out.address.right = out.navigation[3].left-margin;
-    out.create = {left+margin,top+50*scale,left+margin+create_width,top+82*scale};
+    out.create = {left+margin,top+46*scale,left+margin+create_width,top+78*scale};
     out.narrow = overflow;
     // Toolbar picker T3d: cut .. delete and split / details / columns are
     // tools like any other now (toolbar_tools), drawn as pins; `commands`
@@ -86,7 +86,7 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     // [排序][筛选][分组] | [layout][preview][columns] [more]; narrow: ... [more].
     // More is always there (prototype note 5): select all, terminal,
     // properties, 自定义工具栏, plus the folded commands when narrow.
-    out.overflow = {width-margin-32*scale,top+50*scale,width-margin,top+82*scale};
+    out.overflow = {width-margin-32*scale,top+46*scale,width-margin,top+78*scale};
     const float view_end = out.overflow.left-8*scale;
     // Pinned commands and apps (自定义工具栏) follow the file commands after a
     // divider, as many as leave the view group its icon-only minimum. The rest,
@@ -116,7 +116,7 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
         if (drop_mode && pin_options.label_width > 0.0f) {
             const float all = pin_options.label_width + 4*scale + static_cast<float>(count)*34*scale;
             if (px+all+8*scale+view_min <= view_end) {
-                out.pin_label = {px,top+50*scale,px+pin_options.label_width,top+82*scale};
+                out.pin_label = {px,top+46*scale,px+pin_options.label_width,top+78*scale};
                 px = out.pin_label.right + 4*scale;
                 left_end = px + 4*scale;
             }
@@ -128,7 +128,7 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
             if (px+lead+30*scale+8*scale+view_min > view_end) break;
             px += lead;
             if (divider) out.pin_dividers |= uint64_t{1} << i;
-            out.pins[i] = {px,top+50*scale,px+30*scale,top+82*scale};
+            out.pins[i] = {px,top+46*scale,px+30*scale,top+78*scale};
             px += 34*scale;
             left_end = px + 8*scale;
         }
@@ -168,18 +168,18 @@ inline ToolbarLayout MakeToolbarLayout(float width, float scale, float top, floa
     x = std::max(left_end, view_end-block_of(filter_w));
     // A hidden button keeps an empty rect (no paint, no hit) at its place.
     if (sort_shown) {
-        out.sort = {x,top+50*scale,x+sort_w,top+82*scale};
+        out.sort = {x,top+46*scale,x+sort_w,top+78*scale};
         x = out.sort.right + 6*scale;
     } else {
-        out.sort = {x,top+50*scale,x,top+82*scale};
+        out.sort = {x,top+46*scale,x,top+78*scale};
     }
     if (filter_shown) {
-        out.filter = {x,top+50*scale,x+filter_w,top+82*scale};
+        out.filter = {x,top+46*scale,x+filter_w,top+78*scale};
         x = out.filter.right + 6*scale;
     } else {
-        out.filter = {x,top+50*scale,x,top+82*scale};
+        out.filter = {x,top+46*scale,x,top+78*scale};
     }
-    out.group = {x,top+50*scale,group_width > 0.0f ? x+group_w : x,top+82*scale};
+    out.group = {x,top+46*scale,group_width > 0.0f ? x+group_w : x,top+78*scale};
     return out;
 }
 

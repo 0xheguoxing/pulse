@@ -312,11 +312,11 @@ ToolbarLayout MainRenderer::ToolbarLayoutAt(float w, float create_width, float f
                                  selection_span, pins);
     // Command row directly under the title bar; address row centered in it,
     // stopping short of the settings button.
-    ToolbarLayout out = MakeToolbarLayout(w, scale_, title_bar_height_ - 46.0f * scale_, margin_,
+    ToolbarLayout out = MakeToolbarLayout(w, scale_, title_bar_height_ - 42.0f * scale_, margin_,
                                           create_width, left, filter_expand, 0.0f, group_width, sort_width,
                                           filter_width, pin_count_, selection_span, pins);
     const TitleChrome chrome = MakeTitleChrome(w, scale_, title_bar_height_);
-    const float row_top = (title_bar_height_ - 36.0f * scale_) * 0.5f - 4.0f * scale_;
+    const float row_top = (title_bar_height_ - 34.0f * scale_) * 0.5f - 6.0f * scale_;
     const ToolbarLayout row = MakeToolbarLayout(chrome.settings_left - 4.0f * scale_, scale_, row_top,
                                                 margin_, create_width, left, 0.0f, search_hidden_ ? -1.0f : search_min_dip_);
     out.navigation = row.navigation;
@@ -1625,7 +1625,7 @@ void MainRenderer::DrawTitleBar(const WindowViewModel& vm, const D2D1_RECT_F& re
         shape.bottom_radius = shape.top_radius;
         shape.connect_bottom = false;
         const float tabTop = tabY;
-        const float tabBottom = std::round(h);
+        const float tabBottom = std::round(tabY + tabH);
         const D2D1_RECT_F tabRc = D2D1::RectF(left, tabTop, left + tabW, tabBottom);
         if (part == 2) {
             // Content over a plate drawn elsewhere.
@@ -2607,8 +2607,9 @@ MainRenderer::TabStripMetrics MainRenderer::ComputeTabStrip(
         m.overflow = true;
     }
     if (m.active < 0) m.active_w = m.w;
-    m.y = kTabStripTopGapDip * scale_;
-    m.h = title_bar_height_ - kTabStripTopGapDip * scale_;
+    // Tab strip: a fixed height, centered in the title bar.
+    m.y = (title_bar_height_ - kTabStripHeightDip * scale_) * 0.5f;
+    m.h = kTabStripHeightDip * scale_;
     m.pitch = m.w + control_gap_;
     const float stripLeft = m.x0;
     if (m.overflow) {
